@@ -34,7 +34,7 @@ class ValveDiagram(QWidget):
             "NCS1": (670, 671),
             "NCS2": (239, 541),
             "NCS3": (582, 531),
-            "NCS4": (582, 585),
+            # "NCS4": (582, 585),   # Removed by Simeon according to Austin's instruction on Aug 31
             "NCS5": (464, 72),
             "NCS6": (464, 5),
             "LA-BV1": (513, 226),
