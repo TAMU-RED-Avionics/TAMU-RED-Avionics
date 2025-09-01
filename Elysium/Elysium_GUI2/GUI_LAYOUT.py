@@ -7,6 +7,7 @@ from PyQt5.QtGui import QFont
 from GUI_LOGO import LogoWidget
 from GUI_DAQ import GUI_DAQ_Window
 from GUI_COMMS import EthernetClient
+from GUI_CONNECT import ConnectionWidget
 from GUI_VALVE_DIAGRAM import ValveDiagram
 from GUI_GRAPHS import SensorLabelGrid
 from GUI_VALVE_STATES import valve_states
@@ -128,34 +129,39 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         main_layout = QVBoxLayout()
 
+        logo_layout = QHBoxLayout()
         logo_widget = LogoWidget("RED Logo White.png")
-        main_layout.addWidget(logo_widget)
+        self.dark_mode_btn = QPushButton("Dark Mode")
+        self.dark_mode_btn.setFixedWidth(100)
+        self.dark_mode_btn.clicked.connect(self.toggle_dark_mode)
+        logo_layout.addWidget(logo_widget)
+        logo_layout.addWidget(self.dark_mode_btn)
+
+        main_layout.addLayout(logo_layout)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll_widget = QWidget()
         scroll_layout = QVBoxLayout(scroll_widget)
+        
+        # eth_layout = QHBoxLayout()
+        # self.ip_input = QLineEdit("192.168.1.174")
+        # self.port_input = QLineEdit("8888")
+        # connect_btn = QPushButton("Connect")
+        # connect_btn.clicked.connect(self.connect_ethernet)
 
-        eth_layout = QHBoxLayout()
-        self.ip_input = QLineEdit("192.168.1.174")
-        self.port_input = QLineEdit("8888")
-        connect_btn = QPushButton("Connect")
-        connect_btn.clicked.connect(self.connect_ethernet)
+        # self.dark_mode_btn = QPushButton("Dark Mode")
+        # self.dark_mode_btn.clicked.connect(self.toggle_dark_mode)
+        # eth_layout.addWidget(self.dark_mode_btn)
+        # eth_layout.addWidget(QLabel("IP Address:"))
+        # eth_layout.addWidget(self.ip_input)
+        # eth_layout.addWidget(QLabel("Port:"))
+        # eth_layout.addWidget(self.port_input)
+        # eth_layout.addWidget(connect_btn)
+        conn_widget = ConnectionWidget(ethernet_client=self.ethernet_client)
+        scroll_layout.addWidget(conn_widget)
 
-        self.dark_mode_btn = QPushButton("Dark Mode")
-        self.dark_mode_btn.clicked.connect(self.toggle_dark_mode)
-        eth_layout.addWidget(self.dark_mode_btn)
-        eth_layout.addWidget(QLabel("IP Address:"))
-        eth_layout.addWidget(self.ip_input)
-        eth_layout.addWidget(QLabel("Port:"))
-        eth_layout.addWidget(self.port_input)
-        eth_layout.addWidget(connect_btn)
-        scroll_layout.addLayout(eth_layout)
-
-        self.conn_status_label = QLabel("Not connected")
-        self.conn_status_label.setAlignment(Qt.AlignCenter)
-        self.conn_status_label.setFont(QFont("Arial", 10, QFont.Bold))
-        scroll_layout.addWidget(self.conn_status_label)
+        
         scroll_layout.addWidget(self.make_divider())
 
         scroll_layout.addWidget(self.daq_window.filename_input)
@@ -421,28 +427,28 @@ class MainWindow(QMainWindow):
             return
         self.daq_window.log_event(event_type, event_details)
 
-    def connect_ethernet(self):
-        # Get the IP and port from the input fields
-        ip = self.ip_input.text().strip()
-        port_text = self.port_input.text().strip()
-        if not port_text.isdigit():
-            self.conn_status_label.setText("Port must be a number")
-            return
-        port = int(port_text)
+    # def connect_ethernet(self):
+    #     # Get the IP and port from the input fields
+    #     ip = self.ip_input.text().strip()
+    #     port_text = self.port_input.text().strip()
+    #     if not port_text.isdigit():
+    #         self.conn_status_label.setText("Port must be a number")
+    #         return
+    #     port = int(port_text)
     
-        # Update the UI to show connecting state
-        self.conn_status_label.setText("Connecting...")
+    #     # Update the UI to show connecting state
+    #     self.conn_status_label.setText("Connecting...")
 
-        # Here we define the behavior we want from from the connection thread when
-        # it completes or times out
-        def connection_callback(success):
-            if success:
-                self.conn_status_label.setText("Connected successfully")
-            else:
-                self.conn_status_label.setText("Connection failed")
+    #     # Here we define the behavior we want from from the connection thread when
+    #     # it completes or times out
+    #     def connection_callback(success):
+    #         if success:
+    #             self.conn_status_label.setText("Connected successfully")
+    #         else:
+    #             self.conn_status_label.setText("Connection failed")
         
-        # Use asynchronous connection to avoid blocking the UI
-        self.ethernet_client.connect(ip, port, connection_callback)
+    #     # Use asynchronous connection to avoid blocking the UI
+    #     self.ethernet_client.connect(ip, port, connection_callback)
 
     def handle_received_data(self, data_str):
         self.comms_signals.data_received.emit(data_str)
