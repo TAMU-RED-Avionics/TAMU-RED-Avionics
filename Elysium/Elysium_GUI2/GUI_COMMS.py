@@ -11,6 +11,7 @@ class EthernetClient:
         self.log_event_callback = None
         self.heartbeat_active = False
         self.heartbeat_thread = None
+        self.listen_thread = None
 
     def connect(self, ip, port):
         try:
@@ -18,7 +19,10 @@ class EthernetClient:
             self.sock.settimeout(0.5)   # 500 milliseconds
             self.sock.connect((ip, port))
             self.connected = True
-            threading.Thread(target=self.listen, daemon=True).start()
+
+            # Start the listening thread in order to receive telemetry
+            self.listen_thread = threading.Thread(target=self.listen, daemon=True)
+            self.listen_thread.start()
             return True
         except Exception:
             return False
