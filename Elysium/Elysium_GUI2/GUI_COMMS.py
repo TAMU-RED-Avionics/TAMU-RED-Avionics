@@ -19,7 +19,6 @@ class EthernetClient:
             self.sock.connect((ip, port))
             self.connected = True
             threading.Thread(target=self.listen, daemon=True).start()
-            self.start_heartbeat()
             return True
         except Exception:
             return False

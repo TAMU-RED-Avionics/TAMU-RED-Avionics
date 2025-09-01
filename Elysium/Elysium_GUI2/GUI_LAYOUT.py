@@ -436,7 +436,6 @@ class MainWindow(QMainWindow):
             self.conn_status_label.setText("Connected successfully")
             # Start NOOP heartbeat (Req 25)
             self.ethernet_client.start_heartbeat()
-            #WARNING: start_heartbeat is already called inside ethernet_client.connect()...
         else:
             self.conn_status_label.setText("Connection failed")
 
