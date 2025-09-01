@@ -19,7 +19,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Rocket Engine Control Panel")
-        self.setGeometry(100, 100, 1000, 800)
+        self.setGeometry(100, 100, 1280, 720)
         self.dark_mode = False
         self.abort_active = False
         self.lockout_mode = False
@@ -128,7 +128,7 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         main_layout = QVBoxLayout()
 
-        logo_widget = LogoWidget("RED_logo.png", scale_width=200)
+        logo_widget = LogoWidget("RED Logo White.png")
         main_layout.addWidget(logo_widget)
 
         scroll = QScrollArea()
