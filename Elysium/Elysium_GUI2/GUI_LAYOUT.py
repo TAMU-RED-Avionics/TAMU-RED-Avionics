@@ -438,12 +438,6 @@ class MainWindow(QMainWindow):
         def connection_callback(success):
             if success:
                 self.conn_status_label.setText("Connected successfully")
-
-                #WARNING: I could see it being better potentially to move this logic to the back
-                # Start NOOP heartbeat (Req 25)
-                self.ethernet_client.start_heartbeat()
-                # Start the listening thread in order to receive telemetry
-                self.ethernet_client.start_listening()
             else:
                 self.conn_status_label.setText("Connection failed")
         

@@ -109,8 +109,13 @@ class EthernetClient:
                 # Tells the socket to connect to the MCU's IP and port
                 self.sock.connect((ip, port))
                 self.connected = True
-                
                 self.connecting = False
+
+                # Start NOOP heartbeat (Req 25)
+                self.start_heartbeat()
+                # Start the listening thread in order to receive telemetry
+                self.start_listening()
+
                 callback(True)  # Success
             
             # Handle errors, notably timeouts which will be common
