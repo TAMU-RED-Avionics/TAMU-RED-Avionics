@@ -429,11 +429,14 @@ class MainWindow(QMainWindow):
             return
         port = int(port_text)
 
+        # Note that this is being called on the main thread, the UI will be 
+        # unresponsive as we wait for the socket to correctly bind
         connected = self.ethernet_client.connect(ip, port)
         if connected:
             self.conn_status_label.setText("Connected successfully")
             # Start NOOP heartbeat (Req 25)
             self.ethernet_client.start_heartbeat()
+            #WARNING: start_heartbeat is already called inside ethernet_client.connect()...
         else:
             self.conn_status_label.setText("Connection failed")
 

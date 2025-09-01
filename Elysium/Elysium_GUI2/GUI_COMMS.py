@@ -15,6 +15,7 @@ class EthernetClient:
     def connect(self, ip, port):
         try:
             self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.sock.settimeout(0.5)   # 500 milliseconds
             self.sock.connect((ip, port))
             self.connected = True
             threading.Thread(target=self.listen, daemon=True).start()
