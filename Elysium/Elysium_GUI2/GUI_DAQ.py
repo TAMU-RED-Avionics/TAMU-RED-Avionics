@@ -56,7 +56,7 @@ class GUI_DAQ_Window(QWidget):
 
         throttle_gimbal_layout = QHBoxLayout()
         # throttle_gimbal_layout.setSpacing(0)
-        throttle_gimbal_layout.setContentsMargins(0, 0, 0, 0)   # To fit with the rest of the widgets
+        # throttle_gimbal_layout.setContentsMargins(0, 0, 0, 0)   # To fit with the rest of the widgets
         self.throttling_btn = QPushButton("Enable Throttling")
         # self.throttling_btn.setContentsMargins(0, 0, 0, 0)  # Remove button internal margins
         # self.throttling_btn.setStyleSheet("QPushButton { margin: 0px; padding: 0px; }")  # Remove button padding

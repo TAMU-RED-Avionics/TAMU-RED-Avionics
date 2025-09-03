@@ -161,8 +161,6 @@ class MainWindow(QMainWindow):
 
         self.daq_window = GUI_DAQ_Window(self.sensor_grid)
         self.daq_window.log_event_callback = self.log_event
-        self.daq_window.throttling_enabled = False
-        self.daq_window.gimbaling_enabled = False
 
         self.daq_window.manual_btn.clicked.connect(self.show_manual_valve_control)
         self.daq_window.abort_config_btn.clicked.connect(self.show_abort_control)
