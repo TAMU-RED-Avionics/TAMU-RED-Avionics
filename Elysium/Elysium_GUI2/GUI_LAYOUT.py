@@ -162,8 +162,9 @@ class MainWindow(QMainWindow):
         self.daq_window = GUI_DAQ_Window(self.sensor_grid)
         self.daq_window.log_event_callback = self.log_event
 
-        self.daq_window.manual_btn.clicked.connect(self.show_manual_valve_control)
-        self.daq_window.abort_config_btn.clicked.connect(self.show_abort_control)
+        # self.daq_window.manual_btn.clicked.connect(self.show_manual_valve_control)
+        # self.daq_window.abort_config_btn.clicked.connect(self.show_abort_control)
+        
         # scroll_layout.addWidget(self.daq_window.filename_input)
         # scroll_layout.addWidget(self.daq_window.start_button)
         # scroll_layout.addWidget(self.daq_window.stop_button)

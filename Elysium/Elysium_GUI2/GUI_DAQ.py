@@ -55,37 +55,47 @@ class GUI_DAQ_Window(QWidget):
         self.layout.addWidget(self.abort_config_btn)
 
         throttle_gimbal_layout = QHBoxLayout()
-        # throttle_gimbal_layout.setSpacing(0)
-        # throttle_gimbal_layout.setContentsMargins(0, 0, 0, 0)   # To fit with the rest of the widgets
         self.throttling_btn = QPushButton("Enable Throttling")
-        # self.throttling_btn.setContentsMargins(0, 0, 0, 0)  # Remove button internal margins
-        # self.throttling_btn.setStyleSheet("QPushButton { margin: 0px; padding: 0px; }")  # Remove button padding
         self.throttling_btn.clicked.connect(self.toggle_throttling)
         throttle_gimbal_layout.addWidget(self.throttling_btn)
+
         self.gimbaling_btn = QPushButton("Enable Gimbaling")
-        # self.gimbaling_btn.setContentsMargins(0, 0, 0, 0)  # Remove button internal margins
-        # self.gimbaling_btn.setStyleSheet("QPushButton { margin: 0px; padding: 0px; }")  # Remove button padding
         self.gimbaling_btn.clicked.connect(self.toggle_gimbaling)
         throttle_gimbal_layout.addWidget(self.gimbaling_btn)
-        self.layout.addLayout(throttle_gimbal_layout)
 
-        self.throttle_check.stateChanged.connect(
-            lambda state: self.throttling_btn.setText("Disable Throttling" if state == 2 else "Enable Throttling")
-        )
-        self.gimbal_check.stateChanged.connect(
-            lambda state: self.gimbaling_btn.setText("Disable Gimbaling" if state == 2 else "Enable Gimbaling")
-        )
+        # self.gimbaling_btn.clicked.connect(
+        #     lambda state: self.throttling_btn.setText("Disable Throttling" if state == 2 else "Enable Throttling")
+        # )
+        # self.throttle_check.stateChanged.connect(
+        #     lambda state: self.throttling_btn.setText("Disable Throttling" if state == 2 else "Enable Throttling")
+        # )
+        # self.gimbal_check.stateChanged.connect(
+        #     lambda state: self.gimbaling_btn.setText("Disable Gimbaling" if state == 2 else "Enable Gimbaling")
+        # )
+
+        self.layout.addLayout(throttle_gimbal_layout)
 
         self.setLayout(self.layout)
 
     def toggle_throttling(self, state):
-        self.throttling_enabled = state == 2
+        self.throttling_enabled = not self.throttling_enabled
+
+        self.throttling_btn.setText("Disable Throttling" if self.throttling_enabled else "Enable Throttling")
+
+        print("GUI_DAQ.py toggling throttling")
+
         if self.log_event_callback:
             status = "ENABLED" if self.throttling_enabled else "DISABLED"
             self.log_event_callback(f"THROTTLING:{status}")
 
     def toggle_gimbaling(self, state):
-        self.gimbaling_enabled = state == 2
+        
+        self.gimbaling_enabled = not self.gimbaling_enabled
+
+        self.gimbaling_btn.setText("Disable Gimbaling" if self.gimbaling_enabled else "Enable Gimbaling")
+        
+        print("GUI_DAQ.py toggling gimbaling")
+
         if self.log_event_callback:
             status = "ENABLED" if self.gimbaling_enabled else "DISABLED"
             self.log_event_callback(f"GIMBALING:{status}")
