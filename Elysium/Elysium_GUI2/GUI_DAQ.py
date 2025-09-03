@@ -18,17 +18,18 @@ class GUI_DAQ_Window(QWidget):
         self.log_event_callback = None
 
         self.layout = QVBoxLayout()
+        self.layout.setContentsMargins(0, 0, 0, 0)
         
         # Throttling and Gimbaling controls (Req 26)
         control_layout = QHBoxLayout()
         self.throttle_check = QCheckBox("Throttling Enabled")
         self.throttle_check.stateChanged.connect(self.toggle_throttling)
-        control_layout.addWidget(self.throttle_check)
+        # control_layout.addWidget(self.throttle_check)
         
         self.gimbal_check = QCheckBox("Gimbaling Enabled")
         self.gimbal_check.stateChanged.connect(self.toggle_gimbaling)
         control_layout.addWidget(self.gimbal_check)
-        self.layout.addLayout(control_layout)
+        # self.layout.addLayout(control_layout)
 
         self.filename_label = QLabel("Enter CSV filename:")
         self.layout.addWidget(self.filename_label)
@@ -44,6 +45,36 @@ class GUI_DAQ_Window(QWidget):
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self.stop_recording)
         self.layout.addWidget(self.stop_button)
+
+        self.manual_btn = QPushButton("Manual Valve Control")
+        # self.manual_btn.clicked.connect(self.show_manual_valve_control)
+        self.layout.addWidget(self.manual_btn)
+
+        self.abort_config_btn = QPushButton("Abort Configuration")
+        # self.abort_config_btn.clicked.connect(self.show_abort_control)
+        self.layout.addWidget(self.abort_config_btn)
+
+        throttle_gimbal_layout = QHBoxLayout()
+        # throttle_gimbal_layout.setSpacing(0)
+        throttle_gimbal_layout.setContentsMargins(0, 0, 0, 0)   # To fit with the rest of the widgets
+        self.throttling_btn = QPushButton("Enable Throttling")
+        # self.throttling_btn.setContentsMargins(0, 0, 0, 0)  # Remove button internal margins
+        # self.throttling_btn.setStyleSheet("QPushButton { margin: 0px; padding: 0px; }")  # Remove button padding
+        self.throttling_btn.clicked.connect(self.toggle_throttling)
+        throttle_gimbal_layout.addWidget(self.throttling_btn)
+        self.gimbaling_btn = QPushButton("Enable Gimbaling")
+        # self.gimbaling_btn.setContentsMargins(0, 0, 0, 0)  # Remove button internal margins
+        # self.gimbaling_btn.setStyleSheet("QPushButton { margin: 0px; padding: 0px; }")  # Remove button padding
+        self.gimbaling_btn.clicked.connect(self.toggle_gimbaling)
+        throttle_gimbal_layout.addWidget(self.gimbaling_btn)
+        self.layout.addLayout(throttle_gimbal_layout)
+
+        self.throttle_check.stateChanged.connect(
+            lambda state: self.throttling_btn.setText("Disable Throttling" if state == 2 else "Enable Throttling")
+        )
+        self.gimbal_check.stateChanged.connect(
+            lambda state: self.gimbaling_btn.setText("Disable Gimbaling" if state == 2 else "Enable Gimbaling")
+        )
 
         self.setLayout(self.layout)
 

@@ -45,11 +45,6 @@ class MainWindow(QMainWindow):
         self.sensor_grid = SensorLabelGrid()
         self.sensor_grid.signals.update_signal.connect(self.update_sensor_value)
 
-        self.daq_window = GUI_DAQ_Window(self.sensor_grid)
-        self.daq_window.log_event_callback = self.log_event
-        self.daq_window.throttling_enabled = False
-        self.daq_window.gimbaling_enabled = False
-
         self.init_abort_modes()
         self.init_ui()
         self.setup_abort_monitor()
@@ -143,7 +138,7 @@ class MainWindow(QMainWindow):
         scroll.setWidgetResizable(True)
         scroll_widget = QWidget()
         scroll_layout = QVBoxLayout(scroll_widget)
-        
+
         # eth_layout = QHBoxLayout()
         # self.ip_input = QLineEdit("192.168.1.174")
         # self.port_input = QLineEdit("8888")
@@ -158,39 +153,46 @@ class MainWindow(QMainWindow):
         # eth_layout.addWidget(QLabel("Port:"))
         # eth_layout.addWidget(self.port_input)
         # eth_layout.addWidget(connect_btn)
+
         conn_widget = ConnectionWidget(ethernet_client=self.ethernet_client)
         scroll_layout.addWidget(conn_widget)
 
-        
-        scroll_layout.addWidget(self.make_divider())
+        # scroll_layout.addWidget(self.make_divider())
 
-        scroll_layout.addWidget(self.daq_window.filename_input)
-        scroll_layout.addWidget(self.daq_window.start_button)
-        scroll_layout.addWidget(self.daq_window.stop_button)
+        self.daq_window = GUI_DAQ_Window(self.sensor_grid)
+        self.daq_window.log_event_callback = self.log_event
+        self.daq_window.throttling_enabled = False
+        self.daq_window.gimbaling_enabled = False
 
-        self.manual_btn = QPushButton("Manual Valve Control")
-        self.manual_btn.clicked.connect(self.show_manual_valve_control)
-        scroll_layout.addWidget(self.manual_btn)
+        self.daq_window.manual_btn.clicked.connect(self.show_manual_valve_control)
+        self.daq_window.abort_config_btn.clicked.connect(self.show_abort_control)
+        # scroll_layout.addWidget(self.daq_window.filename_input)
+        # scroll_layout.addWidget(self.daq_window.start_button)
+        # scroll_layout.addWidget(self.daq_window.stop_button)
+        scroll_layout.addWidget(self.daq_window)
 
-        self.abort_config_btn = QPushButton("Abort Configuration")
-        self.abort_config_btn.clicked.connect(self.show_abort_control)
-        scroll_layout.addWidget(self.abort_config_btn)
+        # self.manual_btn = QPushButton("Manual Valve Control")
+        # scroll_layout.addWidget(self.manual_btn)
 
-        throttle_gimbal_layout = QHBoxLayout()
-        self.throttling_btn = QPushButton("Enable Throttling")
-        self.throttling_btn.clicked.connect(self.toggle_throttling)
-        throttle_gimbal_layout.addWidget(self.throttling_btn)
-        self.gimbaling_btn = QPushButton("Enable Gimbaling")
-        self.gimbaling_btn.clicked.connect(self.toggle_gimbaling)
-        throttle_gimbal_layout.addWidget(self.gimbaling_btn)
-        scroll_layout.addLayout(throttle_gimbal_layout)
+        # self.abort_config_btn = QPushButton("Abort Configuration")
+        # self.abort_config_btn.clicked.connect(self.show_abort_control)
+        # scroll_layout.addWidget(self.abort_config_btn)
 
-        self.daq_window.throttle_check.stateChanged.connect(
-            lambda state: self.throttling_btn.setText("Disable Throttling" if state == 2 else "Enable Throttling")
-        )
-        self.daq_window.gimbal_check.stateChanged.connect(
-            lambda state: self.gimbaling_btn.setText("Disable Gimbaling" if state == 2 else "Enable Gimbaling")
-        )
+        # throttle_gimbal_layout = QHBoxLayout()
+        # self.throttling_btn = QPushButton("Enable Throttling")
+        # self.throttling_btn.clicked.connect(self.toggle_throttling)
+        # throttle_gimbal_layout.addWidget(self.throttling_btn)
+        # self.gimbaling_btn = QPushButton("Enable Gimbaling")
+        # self.gimbaling_btn.clicked.connect(self.toggle_gimbaling)
+        # throttle_gimbal_layout.addWidget(self.gimbaling_btn)
+        # scroll_layout.addLayout(throttle_gimbal_layout)
+
+        # self.daq_window.throttle_check.stateChanged.connect(
+        #     lambda state: self.throttling_btn.setText("Disable Throttling" if state == 2 else "Enable Throttling")
+        # )
+        # self.daq_window.gimbal_check.stateChanged.connect(
+        #     lambda state: self.gimbaling_btn.setText("Disable Gimbaling" if state == 2 else "Enable Gimbaling")
+        # )
 
         scroll_layout.addWidget(self.make_divider())
 
