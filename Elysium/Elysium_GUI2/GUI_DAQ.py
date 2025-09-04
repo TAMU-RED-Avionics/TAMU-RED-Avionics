@@ -47,11 +47,11 @@ class GUI_DAQ_Window(QWidget):
         self.layout.addWidget(self.stop_button)
 
         self.manual_btn = QPushButton("Manual Valve Control")
-        # self.manual_btn.clicked.connect(self.show_manual_valve_control)
+        # self.manual_btn.clicked.connect(self.show_manual_valve_control)   # can't internalize because lockout mode is in GUI_LAYOUT
         self.layout.addWidget(self.manual_btn)
 
         self.abort_config_btn = QPushButton("Abort Configuration")
-        # self.abort_config_btn.clicked.connect(self.show_abort_control)
+        # self.abort_config_btn.clicked.connect(self.show_abort_control)    # can't internalize because lockout mode is in GUI_LAYOUT
         self.layout.addWidget(self.abort_config_btn)
 
         throttle_gimbal_layout = QHBoxLayout()
@@ -62,16 +62,6 @@ class GUI_DAQ_Window(QWidget):
         self.gimbaling_btn = QPushButton("Enable Gimbaling")
         self.gimbaling_btn.clicked.connect(self.toggle_gimbaling)
         throttle_gimbal_layout.addWidget(self.gimbaling_btn)
-
-        # self.gimbaling_btn.clicked.connect(
-        #     lambda state: self.throttling_btn.setText("Disable Throttling" if state == 2 else "Enable Throttling")
-        # )
-        # self.throttle_check.stateChanged.connect(
-        #     lambda state: self.throttling_btn.setText("Disable Throttling" if state == 2 else "Enable Throttling")
-        # )
-        # self.gimbal_check.stateChanged.connect(
-        #     lambda state: self.gimbaling_btn.setText("Disable Gimbaling" if state == 2 else "Enable Gimbaling")
-        # )
 
         self.layout.addLayout(throttle_gimbal_layout)
 
@@ -173,3 +163,38 @@ class GUI_DAQ_Window(QWidget):
             "ON" if self.gimbaling_enabled else "OFF",
             "", event_type, event_details
         ])
+
+    def show_manual_valve_control(self):
+        if self.lockout_mode:
+            QMessageBox.warning(self, "Lockout Active", "Manual control is disabled during abort")
+            return
+            
+        # Close existing dialog if open
+        if self.manual_valve_dialog:
+            self.manual_valve_dialog.close()
+            
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Manual Valve Control")
+        dialog.setModal(False)  # Allow interaction with main window
+        layout = QVBoxLayout(dialog)
+        
+        # Store reference to dialog
+        self.manual_valve_dialog = dialog
+        
+        # Get actual valve names from diagram
+        valve_names = list(self.diagram.valve_states.keys())
+        
+        # Create buttons and store references
+        self.manual_valve_buttons = {}
+        for valve in valve_names:
+            current_state = self.diagram.valve_states[valve]
+            btn = QPushButton(valve)
+            color = "green" if current_state else "red"
+            btn.setStyleSheet(f"background-color: {color}; color: white;")
+            # Store button reference
+            self.manual_valve_buttons[valve] = btn
+            # Connect click handler with valve name
+            btn.clicked.connect(lambda checked, v=valve: self.toggle_valve_and_update_button(v))
+            layout.addWidget(btn)
+            
+        dialog.show()

@@ -20,7 +20,7 @@ class ValveDiagram(QWidget):
             "NCS1": False,
             "NCS2": False,
             "NCS3": False,
-            "NCS4": False,
+            # "NCS4": False,
             "NCS5": False,
             "NCS6": False,
             "LA-BV1": False,

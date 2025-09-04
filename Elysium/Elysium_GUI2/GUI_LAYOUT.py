@@ -10,7 +10,7 @@ from GUI_COMMS import EthernetClient
 from GUI_CONNECT import ConnectionWidget
 from GUI_VALVE_DIAGRAM import ValveDiagram
 from GUI_GRAPHS import SensorLabelGrid
-from GUI_VALVE_STATES import valve_states
+from GUI_VALVE_CONTROL import ValveControlPanel
 
 class CommsSignals(QObject):
     data_received = pyqtSignal(str)
@@ -162,9 +162,9 @@ class MainWindow(QMainWindow):
         self.daq_window = GUI_DAQ_Window(self.sensor_grid)
         self.daq_window.log_event_callback = self.log_event
 
-        # self.daq_window.manual_btn.clicked.connect(self.show_manual_valve_control)
-        # self.daq_window.abort_config_btn.clicked.connect(self.show_abort_control)
-        
+        self.daq_window.manual_btn.clicked.connect(self.show_manual_valve_control)
+        self.daq_window.abort_config_btn.clicked.connect(self.show_abort_control)
+
         # scroll_layout.addWidget(self.daq_window.filename_input)
         # scroll_layout.addWidget(self.daq_window.start_button)
         # scroll_layout.addWidget(self.daq_window.stop_button)
@@ -200,8 +200,6 @@ class MainWindow(QMainWindow):
         self.manual_abort_btn.clicked.connect(self.trigger_manual_abort)
         scroll_layout.addWidget(self.manual_abort_btn)
 
-        scroll_layout.addWidget(self.make_divider())
-
         self.safe_state_btn = QPushButton("CONFIRM SAFE STATE")
         self.safe_state_btn.setStyleSheet("""background-color: green; color: white; font-weight: bold; font-size: 16pt; min-height: 60px;""")
         self.safe_state_btn.clicked.connect(self.confirm_safe_state)
@@ -211,26 +209,29 @@ class MainWindow(QMainWindow):
         scroll_layout.addWidget(self.make_divider())
 
         top_layout = QHBoxLayout()
-        operations_layout = QVBoxLayout()
+        # operations_layout = QVBoxLayout()
 
-        for op in valve_states:
-            if op in ["Pressurization", "Fire", "Kill and Vent"]:
-                continue
-            btn = QPushButton(op)
-            btn.setFont(QFont("Arial", 10, QFont.Bold))
-            btn.setMinimumHeight(40)
-            btn.clicked.connect(lambda checked, o=op: self.apply_valve_state(o))
-            operations_layout.addWidget(btn)
-            if op == "Oxidizer Fill":
-                self.fire_sequence_btn = QPushButton("Auto Fire Sequence")
-                self.fire_sequence_btn.setFont(QFont("Arial", 10, QFont.Bold))
-                self.fire_sequence_btn.setMinimumHeight(40)
-                self.fire_sequence_btn.clicked.connect(self.show_fire_sequence_dialog)
-                operations_layout.addWidget(self.fire_sequence_btn)
+        # for op in valve_states:
+        #     if op in ["Pressurization", "Fire", "Kill and Vent"]:
+        #         continue
+        #     btn = QPushButton(op)
+        #     btn.setFont(QFont("Arial", 10, QFont.Bold))
+        #     btn.setMinimumHeight(40)
+        #     btn.clicked.connect(lambda checked, o=op: self.apply_valve_state(o))
+        #     operations_layout.addWidget(btn)
+        #     if op == "Oxidizer Fill":
+        #         self.fire_sequence_btn = QPushButton("Auto Fire Sequence")
+        #         self.fire_sequence_btn.setFont(QFont("Arial", 10, QFont.Bold))
+        #         self.fire_sequence_btn.setMinimumHeight(40)
+        #         self.fire_sequence_btn.clicked.connect(self.show_fire_sequence_dialog)
+        #         operations_layout.addWidget(self.fire_sequence_btn)
 
-        top_layout.addLayout(operations_layout)
+        self.valve_control = ValveControlPanel(parent=self, apply_valve_state=self.apply_valve_state, 
+                                                show_fire_sequence_dialog=self.show_fire_sequence_dialog)
+        top_layout.addWidget(self.valve_control)
         self.diagram = ValveDiagram()
         top_layout.addWidget(self.diagram)
+
         scroll_layout.addLayout(top_layout)
 
         self.status_label = QLabel("Current State: None")
@@ -406,7 +407,7 @@ class MainWindow(QMainWindow):
         
         # Disable/enable valve state buttons
         for btn in self.findChildren(QPushButton):
-            if btn.text() in valve_states:
+            if btn.text() in ValveControlPanel.valve_states:
                 btn.setEnabled(not self.lockout_mode)
 
     def confirm_safe_state(self):
@@ -461,7 +462,7 @@ class MainWindow(QMainWindow):
         if self.lockout_mode:
             return
             
-        active_valves = valve_states.get(operation, [])
+        active_valves = ValveControlPanel.valve_states.get(operation, [])
         for name in self.diagram.valve_states:
             state = name in active_valves
             self.diagram.set_valve_state(name, state)
@@ -583,7 +584,7 @@ class MainWindow(QMainWindow):
         """Toggle valve state and update button color"""
         if self.lockout_mode:
             return
-            
+        
         # Toggle current state
         new_state = not self.diagram.valve_states[valve_name]
         self.diagram.set_valve_state(valve_name, new_state)
