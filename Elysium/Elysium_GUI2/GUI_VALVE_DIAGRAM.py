@@ -1,7 +1,6 @@
 # --- GUI_VALVE_DIAGRAM.py ---
 from PyQt5.QtWidgets import QWidget, QLabel, QPushButton, QVBoxLayout
 from PyQt5.QtGui import QPixmap
-from PyQt5.QtCore import Qt
 
 class ValveDiagram(QWidget):
     def __init__(self, parent=None):

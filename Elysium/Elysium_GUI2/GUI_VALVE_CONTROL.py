@@ -1,8 +1,4 @@
-from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QPushButton, QScrollArea, QDialog, QLabel,
-    QDialogButtonBox, QHBoxLayout, QLineEdit, QCheckBox, QFrame, QMessageBox, QGroupBox
-)
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer, QDateTime
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton
 from PyQt5.QtGui import QFont
 
 # Each named valve will open when the valve state is clicked in the GUI.

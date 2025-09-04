@@ -1,9 +1,4 @@
-from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QPushButton, QScrollArea, QDialog, QLabel,
-    QDialogButtonBox, QHBoxLayout, QLineEdit, QCheckBox, QFrame, QMessageBox, QGroupBox
-)
-from PyQt5.QtGui import QFont
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QLineEdit
 from PyQt5.QtCore import Qt
 
 from GUI_COMMS import EthernetClient
@@ -36,7 +31,6 @@ class ConnectionWidget(QWidget):
         eth_layout.addLayout(eth_input_layout)
 
         self.setLayout(eth_layout)
-
 
 
     def connect_ethernet(self):

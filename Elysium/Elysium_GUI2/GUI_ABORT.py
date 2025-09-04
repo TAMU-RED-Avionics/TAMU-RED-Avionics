@@ -1,11 +1,5 @@
 # GUI_ABORT.py
-import csv
-import os
-from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QPushButton, QScrollArea, QDialog, QLabel,
-    QDialogButtonBox, QHBoxLayout, QLineEdit, QCheckBox, QFrame, QMessageBox, QGroupBox
-)
-from PyQt5.QtCore import QDateTime
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton
 
 class AbortMenu(QWidget):
     def __init__(self, trigger_manual_abort: ()=None, confirm_safe_state: ()=None):

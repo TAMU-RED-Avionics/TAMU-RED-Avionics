@@ -123,6 +123,7 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         main_layout = QVBoxLayout()
 
+        # Logo layout
         logo_layout = QHBoxLayout()
         logo_widget = LogoWidget("RED Logo White.png")
         self.dark_mode_btn = QPushButton("Dark Mode")
@@ -130,89 +131,36 @@ class MainWindow(QMainWindow):
         self.dark_mode_btn.clicked.connect(self.toggle_dark_mode)
         logo_layout.addWidget(logo_widget)
         logo_layout.addWidget(self.dark_mode_btn)
-
         main_layout.addLayout(logo_layout)
 
+        # Initialization of scroll layout
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll_widget = QWidget()
         scroll_layout = QVBoxLayout(scroll_widget)
 
-        # eth_layout = QHBoxLayout()
-        # self.ip_input = QLineEdit("192.168.1.174")
-        # self.port_input = QLineEdit("8888")
-        # connect_btn = QPushButton("Connect")
-        # connect_btn.clicked.connect(self.connect_ethernet)
-
-        # self.dark_mode_btn = QPushButton("Dark Mode")
-        # self.dark_mode_btn.clicked.connect(self.toggle_dark_mode)
-        # eth_layout.addWidget(self.dark_mode_btn)
-        # eth_layout.addWidget(QLabel("IP Address:"))
-        # eth_layout.addWidget(self.ip_input)
-        # eth_layout.addWidget(QLabel("Port:"))
-        # eth_layout.addWidget(self.port_input)
-        # eth_layout.addWidget(connect_btn)
-
+        # Setup of connection widget
         conn_widget = ConnectionWidget(ethernet_client=self.ethernet_client)
         scroll_layout.addWidget(conn_widget)
 
-        # scroll_layout.addWidget(self.make_divider())
-
+        # Declaration of sensor grid
         self.sensor_grid = SensorLabelGrid()
         self.sensor_grid.signals.update_signal.connect(self.update_sensor_value)
 
+        # Setup of the DAQ window
         self.daq_window = GUI_DAQ_Window(self.sensor_grid)
         self.daq_window.log_event_callback = self.log_event
-
         self.daq_window.manual_btn.clicked.connect(self.show_manual_valve_control)
         self.daq_window.abort_config_btn.clicked.connect(self.show_abort_control)
-
-        # scroll_layout.addWidget(self.daq_window.filename_input)
-        # scroll_layout.addWidget(self.daq_window.start_button)
-        # scroll_layout.addWidget(self.daq_window.stop_button)
         scroll_layout.addWidget(self.daq_window)
 
-        # self.manual_btn = QPushButton("Manual Valve Control")
-        # scroll_layout.addWidget(self.manual_btn)
-
-        # self.abort_config_btn = QPushButton("Abort Configuration")
-        # self.abort_config_btn.clicked.connect(self.show_abort_control)
-        # scroll_layout.addWidget(self.abort_config_btn)
-
-        # throttle_gimbal_layout = QHBoxLayout()
-        # self.throttling_btn = QPushButton("Enable Throttling")
-        # self.throttling_btn.clicked.connect(self.toggle_throttling)
-        # throttle_gimbal_layout.addWidget(self.throttling_btn)
-        # self.gimbaling_btn = QPushButton("Enable Gimbaling")
-        # self.gimbaling_btn.clicked.connect(self.toggle_gimbaling)
-        # throttle_gimbal_layout.addWidget(self.gimbaling_btn)
-        # scroll_layout.addLayout(throttle_gimbal_layout)
-
-        # self.daq_window.throttle_check.stateChanged.connect(
-        #     lambda state: self.throttling_btn.setText("Disable Throttling" if state == 2 else "Enable Throttling")
-        # )
-        # self.daq_window.gimbal_check.stateChanged.connect(
-        #     lambda state: self.gimbaling_btn.setText("Disable Gimbaling" if state == 2 else "Enable Gimbaling")
-        # )
-
+        # Setup of abort menu
         scroll_layout.addWidget(self.make_divider())
-
-        # self.manual_abort_btn = QPushButton("MANUAL ABORT")
-        # self.manual_abort_btn.setStyleSheet("""background-color: red; color: white; font-weight: bold; font-size: 20pt; min-height: 80px;""")
-        # self.manual_abort_btn.clicked.connect(self.trigger_manual_abort)
-        # scroll_layout.addWidget(self.manual_abort_btn)
-
-        # self.safe_state_btn = QPushButton("CONFIRM SAFE STATE")
-        # self.safe_state_btn.setStyleSheet("""background-color: green; color: white; font-weight: bold; font-size: 16pt; min-height: 60px;""")
-        # self.safe_state_btn.clicked.connect(self.confirm_safe_state)
-        # self.safe_state_btn.setVisible(False)
-        # scroll_layout.addWidget(self.safe_state_btn)
-
         self.abort_menu = AbortMenu(trigger_manual_abort=self.trigger_manual_abort, confirm_safe_state=self.confirm_safe_state)
         scroll_layout.addWidget(self.abort_menu)
-
         scroll_layout.addWidget(self.make_divider())
 
+        # Setup of the valve control panel
         top_layout = QHBoxLayout()
         self.valve_control = ValveControlPanel(parent=self, apply_valve_state=self.apply_valve_state, 
                                                 show_fire_sequence_dialog=self.show_fire_sequence_dialog)
@@ -417,29 +365,6 @@ class MainWindow(QMainWindow):
         if not self.daq_window:
             return
         self.daq_window.log_event(event_type, event_details)
-
-    # def connect_ethernet(self):
-    #     # Get the IP and port from the input fields
-    #     ip = self.ip_input.text().strip()
-    #     port_text = self.port_input.text().strip()
-    #     if not port_text.isdigit():
-    #         self.conn_status_label.setText("Port must be a number")
-    #         return
-    #     port = int(port_text)
-    
-    #     # Update the UI to show connecting state
-    #     self.conn_status_label.setText("Connecting...")
-
-    #     # Here we define the behavior we want from from the connection thread when
-    #     # it completes or times out
-    #     def connection_callback(success):
-    #         if success:
-    #             self.conn_status_label.setText("Connected successfully")
-    #         else:
-    #             self.conn_status_label.setText("Connection failed")
-        
-    #     # Use asynchronous connection to avoid blocking the UI
-    #     self.ethernet_client.connect(ip, port, connection_callback)
 
     def handle_received_data(self, data_str):
         self.comms_signals.data_received.emit(data_str)
