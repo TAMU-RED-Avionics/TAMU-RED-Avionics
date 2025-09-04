@@ -2,8 +2,8 @@
 import csv
 import os
 from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, 
-    QMessageBox, QHBoxLayout, QCheckBox
+    QMainWindow, QWidget, QVBoxLayout, QPushButton, QScrollArea, QDialog, QLabel,
+    QDialogButtonBox, QHBoxLayout, QLineEdit, QCheckBox, QFrame, QMessageBox, QGroupBox
 )
 from PyQt5.QtCore import QDateTime
 

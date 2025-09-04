@@ -1,9 +1,11 @@
+from re import S
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QPushButton, QScrollArea, QDialog, QLabel,
     QDialogButtonBox, QHBoxLayout, QLineEdit, QCheckBox, QFrame, QMessageBox, QGroupBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer, QDateTime
 from PyQt5.QtGui import QFont
+from GUI_ABORT import AbortMenu
 from GUI_LOGO import LogoWidget
 from GUI_DAQ import GUI_DAQ_Window
 from GUI_COMMS import EthernetClient
@@ -41,9 +43,6 @@ class MainWindow(QMainWindow):
         self.ethernet_client = EthernetClient()
         self.ethernet_client.receive_callback = self.handle_received_data
         self.ethernet_client.log_event_callback = self.log_event
-
-        self.sensor_grid = SensorLabelGrid()
-        self.sensor_grid.signals.update_signal.connect(self.update_sensor_value)
 
         self.init_abort_modes()
         self.init_ui()
@@ -159,6 +158,9 @@ class MainWindow(QMainWindow):
 
         # scroll_layout.addWidget(self.make_divider())
 
+        self.sensor_grid = SensorLabelGrid()
+        self.sensor_grid.signals.update_signal.connect(self.update_sensor_value)
+
         self.daq_window = GUI_DAQ_Window(self.sensor_grid)
         self.daq_window.log_event_callback = self.log_event
 
@@ -195,51 +197,38 @@ class MainWindow(QMainWindow):
 
         scroll_layout.addWidget(self.make_divider())
 
-        self.manual_abort_btn = QPushButton("MANUAL ABORT")
-        self.manual_abort_btn.setStyleSheet("""background-color: red; color: white; font-weight: bold; font-size: 20pt; min-height: 80px;""")
-        self.manual_abort_btn.clicked.connect(self.trigger_manual_abort)
-        scroll_layout.addWidget(self.manual_abort_btn)
+        # self.manual_abort_btn = QPushButton("MANUAL ABORT")
+        # self.manual_abort_btn.setStyleSheet("""background-color: red; color: white; font-weight: bold; font-size: 20pt; min-height: 80px;""")
+        # self.manual_abort_btn.clicked.connect(self.trigger_manual_abort)
+        # scroll_layout.addWidget(self.manual_abort_btn)
 
-        self.safe_state_btn = QPushButton("CONFIRM SAFE STATE")
-        self.safe_state_btn.setStyleSheet("""background-color: green; color: white; font-weight: bold; font-size: 16pt; min-height: 60px;""")
-        self.safe_state_btn.clicked.connect(self.confirm_safe_state)
-        self.safe_state_btn.setVisible(False)
-        scroll_layout.addWidget(self.safe_state_btn)
+        # self.safe_state_btn = QPushButton("CONFIRM SAFE STATE")
+        # self.safe_state_btn.setStyleSheet("""background-color: green; color: white; font-weight: bold; font-size: 16pt; min-height: 60px;""")
+        # self.safe_state_btn.clicked.connect(self.confirm_safe_state)
+        # self.safe_state_btn.setVisible(False)
+        # scroll_layout.addWidget(self.safe_state_btn)
+
+        self.abort_menu = AbortMenu(trigger_manual_abort=self.trigger_manual_abort, confirm_safe_state=self.confirm_safe_state)
+        scroll_layout.addWidget(self.abort_menu)
 
         scroll_layout.addWidget(self.make_divider())
 
         top_layout = QHBoxLayout()
-        # operations_layout = QVBoxLayout()
-
-        # for op in valve_states:
-        #     if op in ["Pressurization", "Fire", "Kill and Vent"]:
-        #         continue
-        #     btn = QPushButton(op)
-        #     btn.setFont(QFont("Arial", 10, QFont.Bold))
-        #     btn.setMinimumHeight(40)
-        #     btn.clicked.connect(lambda checked, o=op: self.apply_valve_state(o))
-        #     operations_layout.addWidget(btn)
-        #     if op == "Oxidizer Fill":
-        #         self.fire_sequence_btn = QPushButton("Auto Fire Sequence")
-        #         self.fire_sequence_btn.setFont(QFont("Arial", 10, QFont.Bold))
-        #         self.fire_sequence_btn.setMinimumHeight(40)
-        #         self.fire_sequence_btn.clicked.connect(self.show_fire_sequence_dialog)
-        #         operations_layout.addWidget(self.fire_sequence_btn)
-
         self.valve_control = ValveControlPanel(parent=self, apply_valve_state=self.apply_valve_state, 
                                                 show_fire_sequence_dialog=self.show_fire_sequence_dialog)
         top_layout.addWidget(self.valve_control)
         self.diagram = ValveDiagram()
         top_layout.addWidget(self.diagram)
-
         scroll_layout.addLayout(top_layout)
 
+        # Current states and sensor grid
         self.status_label = QLabel("Current State: None")
         self.status_label.setAlignment(Qt.AlignCenter)
         self.status_label.setFont(QFont("Arial", 14, QFont.Bold))
         scroll_layout.addWidget(self.status_label)
         scroll_layout.addWidget(self.sensor_grid)
 
+        # Final configuration of main window
         scroll.setWidget(scroll_widget)
         main_layout.addWidget(scroll)
         central_widget.setLayout(main_layout)
@@ -348,7 +337,7 @@ class MainWindow(QMainWindow):
             ("NCS3", True),     # Open NCS3
             ("NCS1", False),    # Close NCS1
             ("NCS2", False),    # Close NCS2
-            ("NCS4", False),    # Close NCS4
+            # ("NCS4", False),    # Close NCS4
             ("NCS5", False),    # Close NCS5
             ("NCS6", False),    # Close NCS6
             ("LA-BV1", False),  # Close LA-BV1
@@ -373,7 +362,7 @@ class MainWindow(QMainWindow):
         self.update_lockout_state()
         
         # Show safe state button
-        self.safe_state_btn.setVisible(True)
+        self.abort_menu.safe_state_btn.setVisible(True)
         
         # Log abort event
         self.log_event("ABORT", f"{abort_type}:{reason}")
@@ -381,7 +370,7 @@ class MainWindow(QMainWindow):
     def update_lockout_state(self):
         """Update UI based on lockout state (Req 24)"""
         # Enable/disable control buttons
-        self.manual_btn.setEnabled(not self.lockout_mode)
+        self.daq_window.manual_btn.setEnabled(not self.lockout_mode)
         
         # Disable fire sequence button during abort
         if self.fire_sequence_btn:
@@ -389,7 +378,7 @@ class MainWindow(QMainWindow):
         
         # Change manual abort button color during lockout
         if self.lockout_mode:
-            self.manual_abort_btn.setStyleSheet("""
+            self.abort_menu.manual_abort_btn.setStyleSheet("""
                 background-color: darkred; 
                 color: gray; 
                 font-weight: bold; 
@@ -397,7 +386,7 @@ class MainWindow(QMainWindow):
                 min-height: 80px;
             """)
         else:
-            self.manual_abort_btn.setStyleSheet("""
+            self.abort_menu.manual_abort_btn.setStyleSheet("""
                 background-color: red; 
                 color: white; 
                 font-weight: bold; 
@@ -415,7 +404,7 @@ class MainWindow(QMainWindow):
         self.abort_active = False
         self.lockout_mode = False
         self.update_lockout_state()
-        self.safe_state_btn.setVisible(False)
+        self.abort_menu.safe_state_btn.setVisible(False)
         
         # Update status
         self.status_label.setText("System in Safe State")
