@@ -35,6 +35,8 @@ class SensorPopupGraph(QDialog):
         
         layout = QVBoxLayout()
         layout.addWidget(self.canvas)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         self.setLayout(layout)
         
         self.line.set_data([], [])

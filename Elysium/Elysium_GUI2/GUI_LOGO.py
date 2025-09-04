@@ -6,6 +6,8 @@ class LogoWidget(QWidget):
     def __init__(self, image_path="RED_logo.png", scale_width=150):
         super().__init__()
         layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         self.setLayout(layout)
 
         # self.setStyleSheet("background-color: black;")

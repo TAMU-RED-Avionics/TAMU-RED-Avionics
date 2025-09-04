@@ -9,6 +9,8 @@ class AbortMenu(QWidget):
         self.confirm_safe_state=confirm_safe_state
 
         layout = QVBoxLayout()
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         
         self.manual_abort_btn = QPushButton("MANUAL ABORT")
         self.manual_abort_btn.setStyleSheet("""background-color: red; color: white; font-weight: bold; font-size: 20pt; min-height: 80px;""")

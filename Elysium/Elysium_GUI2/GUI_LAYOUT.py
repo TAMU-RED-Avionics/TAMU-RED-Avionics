@@ -122,10 +122,16 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         central_widget = QWidget()
         main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
         # Logo layout
         logo_layout = QHBoxLayout()
+        logo_layout.setContentsMargins(0, 0, 0, 0)
+        logo_layout.setSpacing(0)
+
         logo_widget = LogoWidget("RED Logo White.png")
+        # logo_widget.setStyleSheet("border: 2px solid red;")
         self.dark_mode_btn = QPushButton("Dark Mode")
         self.dark_mode_btn.setFixedWidth(100)
         self.dark_mode_btn.clicked.connect(self.toggle_dark_mode)
@@ -133,17 +139,24 @@ class MainWindow(QMainWindow):
         logo_layout.addWidget(self.dark_mode_btn)
         main_layout.addLayout(logo_layout)
 
-        # Initialization of scroll layout
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll_widget = QWidget()
-        scroll_layout = QVBoxLayout(scroll_widget)
+        # Initialization of the main body
+        body_horizontal_layout = QHBoxLayout()
+        body_lhs_layout = QVBoxLayout()
+        body_rhs_layout = QVBoxLayout()
+        body_horizontal_layout.setContentsMargins(0, 0, 0, 0)
+        body_lhs_layout.setContentsMargins(0, 0, 0, 0)
+        body_rhs_layout.setContentsMargins(0, 0, 0, 0)
+        body_horizontal_layout.setSpacing(0)
+        body_lhs_layout.setSpacing(0)
+        body_rhs_layout.setSpacing(0)
+        body_rhs_layout.setAlignment(Qt.AlignTop)
 
         # Setup of connection widget
         conn_widget = ConnectionWidget(ethernet_client=self.ethernet_client)
-        scroll_layout.addWidget(conn_widget)
+        # conn_widget.setStyleSheet("border: 2px solid red;")
+        body_lhs_layout.addWidget(conn_widget)
 
-        # Declaration of sensor grid
+        # Declaration of sensor grid, will be added further down
         self.sensor_grid = SensorLabelGrid()
         self.sensor_grid.signals.update_signal.connect(self.update_sensor_value)
 
@@ -152,33 +165,40 @@ class MainWindow(QMainWindow):
         self.daq_window.log_event_callback = self.log_event
         self.daq_window.manual_btn.clicked.connect(self.show_manual_valve_control)
         self.daq_window.abort_config_btn.clicked.connect(self.show_abort_control)
-        scroll_layout.addWidget(self.daq_window)
+        # self.daq_window.setStyleSheet("border: 2px solid red;")
+        body_lhs_layout.addWidget(self.daq_window)
 
         # Setup of abort menu
-        scroll_layout.addWidget(self.make_divider())
         self.abort_menu = AbortMenu(trigger_manual_abort=self.trigger_manual_abort, confirm_safe_state=self.confirm_safe_state)
-        scroll_layout.addWidget(self.abort_menu)
-        scroll_layout.addWidget(self.make_divider())
+        body_lhs_layout.addWidget(self.abort_menu)
 
         # Setup of the valve control panel
-        top_layout = QHBoxLayout()
+        # valve_control_layout = QHBoxLayout()
         self.valve_control = ValveControlPanel(parent=self, apply_valve_state=self.apply_valve_state, 
                                                 show_fire_sequence_dialog=self.show_fire_sequence_dialog)
-        top_layout.addWidget(self.valve_control)
-        self.diagram = ValveDiagram()
-        top_layout.addWidget(self.diagram)
-        scroll_layout.addLayout(top_layout)
+        # self.valve_control.setStyleSheet("border: 2px solid red;")
+        # valve_control_layout.addWidget(self.valve_control)
+        # self.diagram = ValveDiagram()
+        # valve_control_layout.addWidget(self.diagram)
+        body_lhs_layout.addWidget(self.valve_control)
 
         # Current states and sensor grid
         self.status_label = QLabel("Current State: None")
         self.status_label.setAlignment(Qt.AlignCenter)
-        self.status_label.setFont(QFont("Arial", 14, QFont.Bold))
-        scroll_layout.addWidget(self.status_label)
-        scroll_layout.addWidget(self.sensor_grid)
+        # self.status_label.setFont(QFont("Arial", 14, QFont.Bold))
+        body_lhs_layout.addWidget(self.status_label)
+        body_lhs_layout.addWidget(self.sensor_grid)
+
+        self.diagram = ValveDiagram()
+        body_rhs_layout.addWidget(self.diagram)
+
+        
 
         # Final configuration of main window
-        scroll.setWidget(scroll_widget)
-        main_layout.addWidget(scroll)
+        body_horizontal_layout.addLayout(body_lhs_layout)
+        body_horizontal_layout.addLayout(body_rhs_layout)
+        main_layout.addLayout(body_horizontal_layout)
+
         central_widget.setLayout(main_layout)
         self.setCentralWidget(central_widget)
         self.apply_stylesheet()
