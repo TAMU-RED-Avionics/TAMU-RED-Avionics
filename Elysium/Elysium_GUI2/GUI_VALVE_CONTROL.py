@@ -89,11 +89,10 @@ class ValveControlPanel(QWidget):
         "Vent Pressure": ["NCS1", "NCS3", "LA-BV1"],
         
         
-        # Auto Fire Sequence will be manually added above
+        "Postfire Purge": ["NCS1", "GV-1", "LA-BV1"],
         "Fuel Fill 2": ["NCS5", "LA-BV1"],
         "Prefire Purge 1": ["GV-1", "LA-BV1"],
         "Prefire Purge 2": ["GV-1", "LA-BV1"],
-        "Postfire Purge": ["NCS1", "GV-1", "LA-BV1"],
         "Close Pressure 2": ["NCS3", "LA-BV1"],
         "Power down": [],
 

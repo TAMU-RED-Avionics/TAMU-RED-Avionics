@@ -146,7 +146,7 @@ class MainWindow(QMainWindow):
         body_horizontal_layout.setContentsMargins(0, 0, 0, 0)
         body_lhs_layout.setContentsMargins(0, 0, 0, 0)
         body_rhs_layout.setContentsMargins(0, 0, 0, 0)
-        body_horizontal_layout.setSpacing(0)
+        body_horizontal_layout.setSpacing(20)
         body_lhs_layout.setSpacing(0)
         body_rhs_layout.setSpacing(0)
         body_rhs_layout.setAlignment(Qt.AlignTop)
