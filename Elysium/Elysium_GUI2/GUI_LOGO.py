@@ -3,7 +3,7 @@ from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt
 
 class LogoWidget(QWidget):
-    def __init__(self, image_path="RED_logo.png", scale_width=150):
+    def __init__(self, image_path="RED_logo.png", scale_width=120):
         super().__init__()
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)

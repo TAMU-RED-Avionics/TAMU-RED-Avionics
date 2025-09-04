@@ -20,8 +20,8 @@ class GUI_DAQ_Window(QWidget):
 
         # Filename input
         self.csv_input_layout = QHBoxLayout()
-        self.csv_input_layout.setContentsMargins(0, 0, 0, 0)
-        self.csv_input_layout.setSpacing(0)
+        self.csv_input_layout.setContentsMargins(10, 0, 10, 0)
+        self.csv_input_layout.setSpacing(10)
 
         self.filename_label = QLabel("Enter CSV filename:")
         self.csv_input_layout.addWidget(self.filename_label)
@@ -32,12 +32,12 @@ class GUI_DAQ_Window(QWidget):
     
         self.buttons_layout = QHBoxLayout()
         self.buttons_layout.setContentsMargins(0, 0, 0, 0)
-        self.buttons_layout.setSpacing(0)
+        self.buttons_layout.setSpacing(10)
 
         # Recording controls
         self.buttons_recording_layout = QVBoxLayout()
         self.buttons_recording_layout.setContentsMargins(0, 0, 0, 0)
-        self.buttons_recording_layout.setSpacing(0)
+        # self.buttons_recording_layout.setSpacing(0)
 
         self.start_button = QPushButton("Start Recording")
         self.start_button.clicked.connect(self.start_recording)
@@ -51,7 +51,7 @@ class GUI_DAQ_Window(QWidget):
         # Valve controls
         self.buttons_valve_layout = QVBoxLayout()
         self.buttons_valve_layout.setContentsMargins(0, 0, 0, 0)
-        self.buttons_valve_layout.setSpacing(0)
+        # self.buttons_valve_layout.setSpacing(0)
 
         self.manual_btn = QPushButton("Manual Valve Control")
         # self.manual_btn.clicked.connect(self.show_manual_valve_control)   # can't internalize because lockout mode is in GUI_LAYOUT
@@ -65,7 +65,7 @@ class GUI_DAQ_Window(QWidget):
         # Throttling and Gimbaling controls (Req 26)
         self.buttons_throttle_gimbal_layout = QVBoxLayout()
         self.buttons_throttle_gimbal_layout.setContentsMargins(0, 0, 0, 0)
-        self.buttons_throttle_gimbal_layout.setSpacing(0)
+        # self.buttons_throttle_gimbal_layout.setSpacing(0)
 
         self.throttling_btn = QPushButton("Enable Throttling")
         self.throttling_btn.clicked.connect(self.toggle_throttling)

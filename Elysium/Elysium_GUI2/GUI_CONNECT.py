@@ -9,7 +9,7 @@ class ConnectionWidget(QWidget):
         self.ethernet_client = ethernet_client
         
         eth_layout = QVBoxLayout()
-        eth_layout.setContentsMargins(0, 0, 0, 0)
+        eth_layout.setContentsMargins(10, 0, 10, 0)
         eth_layout.setSpacing(0)
 
         self.conn_status_label = QLabel("Not connected")
@@ -19,7 +19,7 @@ class ConnectionWidget(QWidget):
 
         eth_input_layout = QHBoxLayout()
         eth_input_layout.setContentsMargins(0, 0, 0, 0)
-        eth_input_layout.setSpacing(0)
+        eth_input_layout.setSpacing(10)
         
         self.ip_input = QLineEdit("192.168.1.174")
         self.port_input = QLineEdit("8888")
