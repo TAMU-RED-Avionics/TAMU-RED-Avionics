@@ -98,7 +98,6 @@ class ValveControlPanel(QWidget):
 
         "Fire": ["GV-1", "GV-2", "NCS1", "LA-BV1"],
         "Kill and Vent": ["NCS3", "GV-1", "GV-2", "LA-BV1"],
-        
     }
 
     
