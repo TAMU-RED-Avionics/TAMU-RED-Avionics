@@ -16,51 +16,55 @@ class GUI_DAQ_Window(QWidget):
 
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(0, 0, 0, 0)
-        
-        # Throttling and Gimbaling controls (Req 26)
-        control_layout = QHBoxLayout()
-        self.throttle_check = QCheckBox("Throttling Enabled")
-        self.throttle_check.stateChanged.connect(self.toggle_throttling)
-        # control_layout.addWidget(self.throttle_check)
-        
-        self.gimbal_check = QCheckBox("Gimbaling Enabled")
-        self.gimbal_check.stateChanged.connect(self.toggle_gimbaling)
-        control_layout.addWidget(self.gimbal_check)
-        # self.layout.addLayout(control_layout)
 
+        # Filename input
+        self.csv_input_layout = QHBoxLayout()
         self.filename_label = QLabel("Enter CSV filename:")
-        self.layout.addWidget(self.filename_label)
+        self.csv_input_layout.addWidget(self.filename_label)
 
         self.filename_input = QLineEdit()
-        self.layout.addWidget(self.filename_input)
+        self.csv_input_layout.addWidget(self.filename_input)
+        self.layout.addLayout(self.csv_input_layout)
+    
+        self.buttons_layout = QHBoxLayout()
 
+        # Recording controls
+        self.buttons_recording_layout = QVBoxLayout()
         self.start_button = QPushButton("Start Recording")
         self.start_button.clicked.connect(self.start_recording)
-        self.layout.addWidget(self.start_button)
+        self.buttons_recording_layout.addWidget(self.start_button)
 
         self.stop_button = QPushButton("Stop Recording")
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self.stop_recording)
-        self.layout.addWidget(self.stop_button)
+        self.buttons_recording_layout.addWidget(self.stop_button)
 
+        # Valve controls
+        self.buttons_valve_layout = QVBoxLayout()
         self.manual_btn = QPushButton("Manual Valve Control")
         # self.manual_btn.clicked.connect(self.show_manual_valve_control)   # can't internalize because lockout mode is in GUI_LAYOUT
-        self.layout.addWidget(self.manual_btn)
+        self.buttons_valve_layout.addWidget(self.manual_btn)
 
         self.abort_config_btn = QPushButton("Abort Configuration")
         # self.abort_config_btn.clicked.connect(self.show_abort_control)    # can't internalize because lockout mode is in GUI_LAYOUT
-        self.layout.addWidget(self.abort_config_btn)
+        self.buttons_valve_layout.addWidget(self.abort_config_btn)
 
-        throttle_gimbal_layout = QHBoxLayout()
+
+        # Throttling and Gimbaling controls (Req 26)
+        self.buttons_throttle_gimbal_layout = QVBoxLayout()
         self.throttling_btn = QPushButton("Enable Throttling")
         self.throttling_btn.clicked.connect(self.toggle_throttling)
-        throttle_gimbal_layout.addWidget(self.throttling_btn)
+        self.buttons_throttle_gimbal_layout.addWidget(self.throttling_btn)
 
         self.gimbaling_btn = QPushButton("Enable Gimbaling")
         self.gimbaling_btn.clicked.connect(self.toggle_gimbaling)
-        throttle_gimbal_layout.addWidget(self.gimbaling_btn)
+        self.buttons_throttle_gimbal_layout.addWidget(self.gimbaling_btn)
 
-        self.layout.addLayout(throttle_gimbal_layout)
+        # Final Configuration
+        self.buttons_layout.addLayout(self.buttons_recording_layout)
+        self.buttons_layout.addLayout(self.buttons_valve_layout)
+        self.buttons_layout.addLayout(self.buttons_throttle_gimbal_layout)
+        self.layout.addLayout(self.buttons_layout)
 
         self.setLayout(self.layout)
 
