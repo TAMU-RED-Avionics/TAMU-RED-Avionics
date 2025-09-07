@@ -1,15 +1,18 @@
+from re import S
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QPushButton, QScrollArea, QDialog, QLabel,
     QDialogButtonBox, QHBoxLayout, QLineEdit, QCheckBox, QFrame, QMessageBox, QGroupBox
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer, QDateTime
 from PyQt5.QtGui import QFont
+from GUI_ABORT import AbortMenu
 from GUI_LOGO import LogoWidget
 from GUI_DAQ import GUI_DAQ_Window
 from GUI_COMMS import EthernetClient
+from GUI_CONNECT import ConnectionWidget
 from GUI_VALVE_DIAGRAM import ValveDiagram
 from GUI_GRAPHS import SensorLabelGrid
-from GUI_VALVE_STATES import valve_states
+from GUI_VALVE_CONTROL import ValveControlPanel
 
 class CommsSignals(QObject):
     data_received = pyqtSignal(str)
@@ -19,7 +22,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Rocket Engine Control Panel")
-        self.setGeometry(100, 100, 1000, 800)
+        self.setGeometry(100, 100, 1280, 720)
         self.dark_mode = False
         self.abort_active = False
         self.lockout_mode = False
@@ -40,14 +43,6 @@ class MainWindow(QMainWindow):
         self.ethernet_client = EthernetClient()
         self.ethernet_client.receive_callback = self.handle_received_data
         self.ethernet_client.log_event_callback = self.log_event
-
-        self.sensor_grid = SensorLabelGrid()
-        self.sensor_grid.signals.update_signal.connect(self.update_sensor_value)
-
-        self.daq_window = GUI_DAQ_Window(self.sensor_grid)
-        self.daq_window.log_event_callback = self.log_event
-        self.daq_window.throttling_enabled = False
-        self.daq_window.gimbaling_enabled = False
 
         self.init_abort_modes()
         self.init_ui()
@@ -127,113 +122,83 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         central_widget = QWidget()
         main_layout = QVBoxLayout()
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
 
-        logo_widget = LogoWidget("RED_logo.png", scale_width=200)
-        main_layout.addWidget(logo_widget)
+        # Logo layout
+        logo_layout = QHBoxLayout()
+        logo_layout.setContentsMargins(0, 0, 0, 0)
+        logo_layout.setSpacing(0)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll_widget = QWidget()
-        scroll_layout = QVBoxLayout(scroll_widget)
-
-        eth_layout = QHBoxLayout()
-        self.ip_input = QLineEdit("192.168.1.174")
-        self.port_input = QLineEdit("8888")
-        connect_btn = QPushButton("Connect")
-        connect_btn.clicked.connect(self.connect_ethernet)
-
+        logo_widget = LogoWidget("RED Logo White.png")
+        # logo_widget.setStyleSheet("border: 2px solid red;")
         self.dark_mode_btn = QPushButton("Dark Mode")
+        self.dark_mode_btn.setFixedWidth(100)
         self.dark_mode_btn.clicked.connect(self.toggle_dark_mode)
-        eth_layout.addWidget(self.dark_mode_btn)
-        eth_layout.addWidget(QLabel("IP Address:"))
-        eth_layout.addWidget(self.ip_input)
-        eth_layout.addWidget(QLabel("Port:"))
-        eth_layout.addWidget(self.port_input)
-        eth_layout.addWidget(connect_btn)
-        scroll_layout.addLayout(eth_layout)
+        logo_layout.addWidget(logo_widget)
+        logo_layout.addWidget(self.dark_mode_btn)
+        main_layout.addLayout(logo_layout)
 
-        self.conn_status_label = QLabel("Not connected")
-        self.conn_status_label.setAlignment(Qt.AlignCenter)
-        self.conn_status_label.setFont(QFont("Arial", 10, QFont.Bold))
-        scroll_layout.addWidget(self.conn_status_label)
-        scroll_layout.addWidget(self.make_divider())
+        # Initialization of the main body
+        body_horizontal_layout = QHBoxLayout()
+        body_lhs_layout = QVBoxLayout()
+        body_rhs_layout = QVBoxLayout()
+        body_horizontal_layout.setContentsMargins(0, 0, 0, 0)
+        body_lhs_layout.setContentsMargins(0, 0, 0, 0)
+        body_rhs_layout.setContentsMargins(0, 0, 0, 0)
+        body_horizontal_layout.setSpacing(20)
+        body_lhs_layout.setSpacing(0)
+        body_rhs_layout.setSpacing(0)
+        body_rhs_layout.setAlignment(Qt.AlignTop)
 
-        scroll_layout.addWidget(self.daq_window.filename_input)
-        scroll_layout.addWidget(self.daq_window.start_button)
-        scroll_layout.addWidget(self.daq_window.stop_button)
+        # Setup of connection widget
+        conn_widget = ConnectionWidget(ethernet_client=self.ethernet_client)
+        # conn_widget.setStyleSheet("border: 2px solid red;")
+        body_lhs_layout.addWidget(conn_widget)
 
-        self.manual_btn = QPushButton("Manual Valve Control")
-        self.manual_btn.clicked.connect(self.show_manual_valve_control)
-        scroll_layout.addWidget(self.manual_btn)
+        # Declaration of sensor grid, will be added further down
+        self.sensor_grid = SensorLabelGrid()
+        self.sensor_grid.signals.update_signal.connect(self.update_sensor_value)
 
-        self.abort_config_btn = QPushButton("Abort Configuration")
-        self.abort_config_btn.clicked.connect(self.show_abort_control)
-        scroll_layout.addWidget(self.abort_config_btn)
+        # Setup of the DAQ window
+        self.daq_window = GUI_DAQ_Window(self.sensor_grid)
+        self.daq_window.log_event_callback = self.log_event
+        self.daq_window.manual_btn.clicked.connect(self.show_manual_valve_control)
+        self.daq_window.abort_config_btn.clicked.connect(self.show_abort_control)
+        # self.daq_window.setStyleSheet("border: 2px solid red;")
+        body_lhs_layout.addWidget(self.daq_window)
 
-        throttle_gimbal_layout = QHBoxLayout()
-        self.throttling_btn = QPushButton("Enable Throttling")
-        self.throttling_btn.clicked.connect(self.toggle_throttling)
-        throttle_gimbal_layout.addWidget(self.throttling_btn)
-        self.gimbaling_btn = QPushButton("Enable Gimbaling")
-        self.gimbaling_btn.clicked.connect(self.toggle_gimbaling)
-        throttle_gimbal_layout.addWidget(self.gimbaling_btn)
-        scroll_layout.addLayout(throttle_gimbal_layout)
+        # Setup of abort menu
+        self.abort_menu = AbortMenu(trigger_manual_abort=self.trigger_manual_abort, confirm_safe_state=self.confirm_safe_state)
+        body_lhs_layout.addWidget(self.abort_menu)
 
-        self.daq_window.throttle_check.stateChanged.connect(
-            lambda state: self.throttling_btn.setText("Disable Throttling" if state == 2 else "Enable Throttling")
-        )
-        self.daq_window.gimbal_check.stateChanged.connect(
-            lambda state: self.gimbaling_btn.setText("Disable Gimbaling" if state == 2 else "Enable Gimbaling")
-        )
+        # Setup of the valve control panel
+        # valve_control_layout = QHBoxLayout()
+        self.valve_control = ValveControlPanel(parent=self, apply_valve_state=self.apply_valve_state, 
+                                                show_fire_sequence_dialog=self.show_fire_sequence_dialog)
+        # self.valve_control.setStyleSheet("border: 2px solid red;")
+        # valve_control_layout.addWidget(self.valve_control)
+        # self.diagram = ValveDiagram()
+        # valve_control_layout.addWidget(self.diagram)
+        body_lhs_layout.addWidget(self.valve_control)
 
-        scroll_layout.addWidget(self.make_divider())
-
-        self.manual_abort_btn = QPushButton("MANUAL ABORT")
-        self.manual_abort_btn.setStyleSheet("""background-color: red; color: white; font-weight: bold; font-size: 20pt; min-height: 80px;""")
-        self.manual_abort_btn.clicked.connect(self.trigger_manual_abort)
-        scroll_layout.addWidget(self.manual_abort_btn)
-
-        scroll_layout.addWidget(self.make_divider())
-
-        self.safe_state_btn = QPushButton("CONFIRM SAFE STATE")
-        self.safe_state_btn.setStyleSheet("""background-color: green; color: white; font-weight: bold; font-size: 16pt; min-height: 60px;""")
-        self.safe_state_btn.clicked.connect(self.confirm_safe_state)
-        self.safe_state_btn.setVisible(False)
-        scroll_layout.addWidget(self.safe_state_btn)
-
-        scroll_layout.addWidget(self.make_divider())
-
-        top_layout = QHBoxLayout()
-        operations_layout = QVBoxLayout()
-
-        for op in valve_states:
-            if op in ["Pressurization", "Fire", "Kill and Vent"]:
-                continue
-            btn = QPushButton(op)
-            btn.setFont(QFont("Arial", 10, QFont.Bold))
-            btn.setMinimumHeight(40)
-            btn.clicked.connect(lambda checked, o=op: self.apply_valve_state(o))
-            operations_layout.addWidget(btn)
-            if op == "Oxidizer Fill":
-                self.fire_sequence_btn = QPushButton("Auto Fire Sequence")
-                self.fire_sequence_btn.setFont(QFont("Arial", 10, QFont.Bold))
-                self.fire_sequence_btn.setMinimumHeight(40)
-                self.fire_sequence_btn.clicked.connect(self.show_fire_sequence_dialog)
-                operations_layout.addWidget(self.fire_sequence_btn)
-
-        top_layout.addLayout(operations_layout)
-        self.diagram = ValveDiagram()
-        top_layout.addWidget(self.diagram)
-        scroll_layout.addLayout(top_layout)
-
+        # Current states and sensor grid
         self.status_label = QLabel("Current State: None")
         self.status_label.setAlignment(Qt.AlignCenter)
-        self.status_label.setFont(QFont("Arial", 14, QFont.Bold))
-        scroll_layout.addWidget(self.status_label)
-        scroll_layout.addWidget(self.sensor_grid)
+        # self.status_label.setFont(QFont("Arial", 14, QFont.Bold))
+        body_lhs_layout.addWidget(self.status_label)
+        body_lhs_layout.addWidget(self.sensor_grid)
 
-        scroll.setWidget(scroll_widget)
-        main_layout.addWidget(scroll)
+        self.diagram = ValveDiagram()
+        body_rhs_layout.addWidget(self.diagram)
+
+        
+
+        # Final configuration of main window
+        body_horizontal_layout.addLayout(body_lhs_layout)
+        body_horizontal_layout.addLayout(body_rhs_layout)
+        main_layout.addLayout(body_horizontal_layout)
+
         central_widget.setLayout(main_layout)
         self.setCentralWidget(central_widget)
         self.apply_stylesheet()
@@ -340,7 +305,7 @@ class MainWindow(QMainWindow):
             ("NCS3", True),     # Open NCS3
             ("NCS1", False),    # Close NCS1
             ("NCS2", False),    # Close NCS2
-            ("NCS4", False),    # Close NCS4
+            # ("NCS4", False),    # Close NCS4
             ("NCS5", False),    # Close NCS5
             ("NCS6", False),    # Close NCS6
             ("LA-BV1", False),  # Close LA-BV1
@@ -365,7 +330,7 @@ class MainWindow(QMainWindow):
         self.update_lockout_state()
         
         # Show safe state button
-        self.safe_state_btn.setVisible(True)
+        self.abort_menu.safe_state_btn.setVisible(True)
         
         # Log abort event
         self.log_event("ABORT", f"{abort_type}:{reason}")
@@ -373,7 +338,7 @@ class MainWindow(QMainWindow):
     def update_lockout_state(self):
         """Update UI based on lockout state (Req 24)"""
         # Enable/disable control buttons
-        self.manual_btn.setEnabled(not self.lockout_mode)
+        self.daq_window.manual_btn.setEnabled(not self.lockout_mode)
         
         # Disable fire sequence button during abort
         if self.fire_sequence_btn:
@@ -381,7 +346,7 @@ class MainWindow(QMainWindow):
         
         # Change manual abort button color during lockout
         if self.lockout_mode:
-            self.manual_abort_btn.setStyleSheet("""
+            self.abort_menu.manual_abort_btn.setStyleSheet("""
                 background-color: darkred; 
                 color: gray; 
                 font-weight: bold; 
@@ -389,7 +354,7 @@ class MainWindow(QMainWindow):
                 min-height: 80px;
             """)
         else:
-            self.manual_abort_btn.setStyleSheet("""
+            self.abort_menu.manual_abort_btn.setStyleSheet("""
                 background-color: red; 
                 color: white; 
                 font-weight: bold; 
@@ -399,7 +364,7 @@ class MainWindow(QMainWindow):
         
         # Disable/enable valve state buttons
         for btn in self.findChildren(QPushButton):
-            if btn.text() in valve_states:
+            if btn.text() in ValveControlPanel.valve_states:
                 btn.setEnabled(not self.lockout_mode)
 
     def confirm_safe_state(self):
@@ -407,7 +372,7 @@ class MainWindow(QMainWindow):
         self.abort_active = False
         self.lockout_mode = False
         self.update_lockout_state()
-        self.safe_state_btn.setVisible(False)
+        self.abort_menu.safe_state_btn.setVisible(False)
         
         # Update status
         self.status_label.setText("System in Safe State")
@@ -421,22 +386,6 @@ class MainWindow(QMainWindow):
             return
         self.daq_window.log_event(event_type, event_details)
 
-    def connect_ethernet(self):
-        ip = self.ip_input.text().strip()
-        port_text = self.port_input.text().strip()
-        if not port_text.isdigit():
-            self.conn_status_label.setText("Port must be a number")
-            return
-        port = int(port_text)
-
-        connected = self.ethernet_client.connect(ip, port)
-        if connected:
-            self.conn_status_label.setText("Connected successfully")
-            # Start NOOP heartbeat (Req 25)
-            self.ethernet_client.start_heartbeat()
-        else:
-            self.conn_status_label.setText("Connection failed")
-
     def handle_received_data(self, data_str):
         self.comms_signals.data_received.emit(data_str)
 
@@ -447,7 +396,7 @@ class MainWindow(QMainWindow):
         if self.lockout_mode:
             return
             
-        active_valves = valve_states.get(operation, [])
+        active_valves = ValveControlPanel.valve_states.get(operation, [])
         for name in self.diagram.valve_states:
             state = name in active_valves
             self.diagram.set_valve_state(name, state)
@@ -569,7 +518,7 @@ class MainWindow(QMainWindow):
         """Toggle valve state and update button color"""
         if self.lockout_mode:
             return
-            
+        
         # Toggle current state
         new_state = not self.diagram.valve_states[valve_name]
         self.diagram.set_valve_state(valve_name, new_state)

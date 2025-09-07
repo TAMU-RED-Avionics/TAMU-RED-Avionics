@@ -1,10 +1,7 @@
 # GUI_DAQ.py
 import csv
 import os
-from PyQt5.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QLineEdit, QPushButton, 
-    QMessageBox, QHBoxLayout, QCheckBox
-)
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QDialog, QLabel, QHBoxLayout, QLineEdit, QCheckBox, QMessageBox
 from PyQt5.QtCore import QDateTime
 
 class GUI_DAQ_Window(QWidget):
@@ -18,43 +15,93 @@ class GUI_DAQ_Window(QWidget):
         self.log_event_callback = None
 
         self.layout = QVBoxLayout()
-        
-        # Throttling and Gimbaling controls (Req 26)
-        control_layout = QHBoxLayout()
-        self.throttle_check = QCheckBox("Throttling Enabled")
-        self.throttle_check.stateChanged.connect(self.toggle_throttling)
-        control_layout.addWidget(self.throttle_check)
-        
-        self.gimbal_check = QCheckBox("Gimbaling Enabled")
-        self.gimbal_check.stateChanged.connect(self.toggle_gimbaling)
-        control_layout.addWidget(self.gimbal_check)
-        self.layout.addLayout(control_layout)
+        self.layout.setContentsMargins(0, 0, 0, 0)
+        self.layout.setSpacing(0)
+
+        # Filename input
+        self.csv_input_layout = QHBoxLayout()
+        self.csv_input_layout.setContentsMargins(10, 0, 10, 0)
+        self.csv_input_layout.setSpacing(10)
 
         self.filename_label = QLabel("Enter CSV filename:")
-        self.layout.addWidget(self.filename_label)
+        self.csv_input_layout.addWidget(self.filename_label)
 
         self.filename_input = QLineEdit()
-        self.layout.addWidget(self.filename_input)
+        self.csv_input_layout.addWidget(self.filename_input)
+        self.layout.addLayout(self.csv_input_layout)
+    
+        self.buttons_layout = QHBoxLayout()
+        self.buttons_layout.setContentsMargins(0, 0, 0, 0)
+        self.buttons_layout.setSpacing(10)
+
+        # Recording controls
+        self.buttons_recording_layout = QVBoxLayout()
+        self.buttons_recording_layout.setContentsMargins(0, 0, 0, 0)
+        # self.buttons_recording_layout.setSpacing(0)
 
         self.start_button = QPushButton("Start Recording")
         self.start_button.clicked.connect(self.start_recording)
-        self.layout.addWidget(self.start_button)
+        self.buttons_recording_layout.addWidget(self.start_button)
 
         self.stop_button = QPushButton("Stop Recording")
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self.stop_recording)
-        self.layout.addWidget(self.stop_button)
+        self.buttons_recording_layout.addWidget(self.stop_button)
+
+        # Valve controls
+        self.buttons_valve_layout = QVBoxLayout()
+        self.buttons_valve_layout.setContentsMargins(0, 0, 0, 0)
+        # self.buttons_valve_layout.setSpacing(0)
+
+        self.manual_btn = QPushButton("Manual Valve Control")
+        # self.manual_btn.clicked.connect(self.show_manual_valve_control)   # can't internalize because lockout mode is in GUI_LAYOUT
+        self.buttons_valve_layout.addWidget(self.manual_btn)
+
+        self.abort_config_btn = QPushButton("Abort Configuration")
+        # self.abort_config_btn.clicked.connect(self.show_abort_control)    # can't internalize because lockout mode is in GUI_LAYOUT
+        self.buttons_valve_layout.addWidget(self.abort_config_btn)
+
+
+        # Throttling and Gimbaling controls (Req 26)
+        self.buttons_throttle_gimbal_layout = QVBoxLayout()
+        self.buttons_throttle_gimbal_layout.setContentsMargins(0, 0, 0, 0)
+        # self.buttons_throttle_gimbal_layout.setSpacing(0)
+
+        self.throttling_btn = QPushButton("Enable Throttling")
+        self.throttling_btn.clicked.connect(self.toggle_throttling)
+        self.buttons_throttle_gimbal_layout.addWidget(self.throttling_btn)
+
+        self.gimbaling_btn = QPushButton("Enable Gimbaling")
+        self.gimbaling_btn.clicked.connect(self.toggle_gimbaling)
+        self.buttons_throttle_gimbal_layout.addWidget(self.gimbaling_btn)
+
+        # Final Configuration
+        self.buttons_layout.addLayout(self.buttons_recording_layout)
+        self.buttons_layout.addLayout(self.buttons_valve_layout)
+        self.buttons_layout.addLayout(self.buttons_throttle_gimbal_layout)
+        self.layout.addLayout(self.buttons_layout)
 
         self.setLayout(self.layout)
 
     def toggle_throttling(self, state):
-        self.throttling_enabled = state == 2
+        self.throttling_enabled = not self.throttling_enabled
+
+        self.throttling_btn.setText("Disable Throttling" if self.throttling_enabled else "Enable Throttling")
+
+        print("GUI_DAQ.py toggling throttling")
+
         if self.log_event_callback:
             status = "ENABLED" if self.throttling_enabled else "DISABLED"
             self.log_event_callback(f"THROTTLING:{status}")
 
     def toggle_gimbaling(self, state):
-        self.gimbaling_enabled = state == 2
+        
+        self.gimbaling_enabled = not self.gimbaling_enabled
+
+        self.gimbaling_btn.setText("Disable Gimbaling" if self.gimbaling_enabled else "Enable Gimbaling")
+        
+        print("GUI_DAQ.py toggling gimbaling")
+
         if self.log_event_callback:
             status = "ENABLED" if self.gimbaling_enabled else "DISABLED"
             self.log_event_callback(f"GIMBALING:{status}")
@@ -132,3 +179,40 @@ class GUI_DAQ_Window(QWidget):
             "ON" if self.gimbaling_enabled else "OFF",
             "", event_type, event_details
         ])
+
+    def show_manual_valve_control(self):
+        if self.lockout_mode:
+            QMessageBox.warning(self, "Lockout Active", "Manual control is disabled during abort")
+            return
+            
+        # Close existing dialog if open
+        if self.manual_valve_dialog:
+            self.manual_valve_dialog.close()
+            
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Manual Valve Control")
+        dialog.setModal(False)  # Allow interaction with main window
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        
+        # Store reference to dialog
+        self.manual_valve_dialog = dialog
+        
+        # Get actual valve names from diagram
+        valve_names = list(self.diagram.valve_states.keys())
+        
+        # Create buttons and store references
+        self.manual_valve_buttons = {}
+        for valve in valve_names:
+            current_state = self.diagram.valve_states[valve]
+            btn = QPushButton(valve)
+            color = "green" if current_state else "red"
+            btn.setStyleSheet(f"background-color: {color}; color: white;")
+            # Store button reference
+            self.manual_valve_buttons[valve] = btn
+            # Connect click handler with valve name
+            btn.clicked.connect(lambda checked, v=valve: self.toggle_valve_and_update_button(v))
+            layout.addWidget(btn)
+            
+        dialog.show()

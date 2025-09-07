@@ -18,6 +18,19 @@ class SensorPopupGraph(QDialog):
         self.resize(800, 500)
         self.sensor_name = sensor_name
         self.setModal(False)
+
+        self.sensor_graph = SensorGraph(sensor_name=self.sensor_name, parent=parent)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.sensor_graph)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.setLayout(layout)
+
+
+class SensorGraph(QWidget):
+    def __init__(self, sensor_name, parent=None):
+        super().__init__(parent)
         
         self.timestamps = deque(maxlen=100)
         self.values = deque(maxlen=100)
@@ -35,6 +48,8 @@ class SensorPopupGraph(QDialog):
         
         layout = QVBoxLayout()
         layout.addWidget(self.canvas)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
         self.setLayout(layout)
         
         self.line.set_data([], [])
@@ -235,7 +250,7 @@ class SensorLabelGrid(QWidget):
     def open_graph(self, sensor):
         if sensor not in self.graphs:
             self.graphs[sensor] = SensorPopupGraph(sensor)
-            self.graphs[sensor].set_dark_mode(self.dark_mode)
+            self.graphs[sensor].sensor_graph.set_dark_mode(self.dark_mode)
             
             history = self.sensor_history.get(sensor, [])
             for ts, val in history:
