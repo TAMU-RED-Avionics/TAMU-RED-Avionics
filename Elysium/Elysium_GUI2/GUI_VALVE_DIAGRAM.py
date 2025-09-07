@@ -11,7 +11,7 @@ class ValveDiagram(QWidget):
         layout.setSpacing(0)
 
         # Adjusts the size of this picture
-        self.scalingFactor = 0.5
+        self.scalingFactor = 0.65
 
         # Load and display the P&ID image
         self.label = QLabel(self)
