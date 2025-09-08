@@ -1,7 +1,13 @@
 # GUI_COMMS.py
+# This file hosts the EthernetClient, which manages the connection between this GUI and the flight MCU
 import socket
 import threading
 import time
+from PyQt5.QtCore import QObject, pyqtSignal
+
+class CommsSignals(QObject):
+    data_received = pyqtSignal(str)
+    abort_triggered = pyqtSignal(str, str)
 
 class EthernetClient:
     def __init__(self):
@@ -104,7 +110,7 @@ class EthernetClient:
             try:
                 # Create the socket
                 self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.sock.settimeout(3.0)   # 3 seconds
+                self.sock.settimeout(1)   # 1 second
 
                 # Tells the socket to connect to the MCU's IP and port
                 self.sock.connect((ip, port))

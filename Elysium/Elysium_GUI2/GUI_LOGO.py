@@ -1,8 +1,10 @@
+# GUI_LOGO.py
+# This file displays the RED logo with some scaling
 from PyQt5.QtWidgets import QLabel, QWidget, QVBoxLayout
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt
 
-class LogoWidget(QWidget):
+class LogoWindow(QWidget):
     def __init__(self, image_path="RED_logo.png", scale_width=120):
         super().__init__()
         layout = QVBoxLayout()
@@ -23,6 +25,3 @@ class LogoWidget(QWidget):
 
         self.logo_label.setAlignment(Qt.AlignLeading)
         layout.addWidget(self.logo_label)
-
-    def setAlignment(self, alignment):
-        self.logo_label.setAlignment(alignment)

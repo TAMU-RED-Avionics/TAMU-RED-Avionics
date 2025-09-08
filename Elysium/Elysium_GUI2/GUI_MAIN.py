@@ -1,3 +1,5 @@
+# GUI_MAIN.py
+# This file is the starting point for the Elysium2 GUI
 import sys
 from PyQt5.QtWidgets import QApplication
 from GUI_LAYOUT import MainWindow

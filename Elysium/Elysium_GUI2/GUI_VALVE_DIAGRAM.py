@@ -1,9 +1,11 @@
-# --- GUI_VALVE_DIAGRAM.py ---
+# GUI_VALVE_DIAGRAM.py
+# This file will display a diagram of the various valves in the Elysium 2 system.
+# They will update automatically according to various settings
 from stat import SF_APPEND
 from PyQt5.QtWidgets import QWidget, QLabel, QPushButton, QVBoxLayout
 from PyQt5.QtGui import QPixmap
 
-class ValveDiagram(QWidget):
+class ValveDiagramWindow(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
@@ -55,13 +57,13 @@ class ValveDiagram(QWidget):
             sf = self.scalingFactor
 
             btn = QPushButton("", self.label)
-            # btn.setGeometry(x * sf, y * sf, 40 * sf, 40 * sf)
-            btn.setGeometry(x * sf, y * sf, 25, 25)
-            btn.setStyleSheet("background-color: red; border-radius: 12px;")
+            btn.setGeometry(x * sf, y * sf, 30, 30)
+            btn.setStyleSheet("background-color: red; border-radius: 15px;")
             btn.setEnabled(False)  # Make non-clickable
             self.valve_buttons[name] = btn
+    
 
     def set_valve_state(self, name, state):
         self.valve_states[name] = state
         color = "green" if state else "red"
-        self.valve_buttons[name].setStyleSheet(f"background-color: {color}; border-radius: 12px;")
+        self.valve_buttons[name].setStyleSheet(f"background-color: {color}; border-radius: 15px;")

@@ -1,8 +1,7 @@
+# GUI_GRAPHS.py
+# This file hosts the UI elements for plotting data from various sensors aboard the flight hardware
 from collections import deque
-from PyQt5.QtWidgets import (
-    QWidget, QLabel, QGridLayout, QDialog, 
-    QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy
-)
+from PyQt5.QtWidgets import QWidget, QLabel, QGridLayout, QDialog, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy
 from PyQt5.QtCore import Qt, QDateTime, pyqtSignal, QObject
 from PyQt5.QtGui import QFont
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -39,7 +38,7 @@ class SensorGraph(QWidget):
         self.canvas = FigureCanvas(self.figure)
         self.ax = self.figure.add_subplot(111)
         
-        unit = self._get_unit(sensor_name)
+        unit = self.get_unit(sensor_name)
         self.ax.set_title(f"{sensor_name} ({unit})")
         self.ax.set_xlabel("Time (seconds ago)")
         self.ax.set_ylabel(f"Value ({unit})")
@@ -56,7 +55,7 @@ class SensorGraph(QWidget):
         self.ax.set_xlim(-10, 0)
         self.canvas.draw()
 
-    def _get_unit(self, sensor_name):
+    def get_unit(self, sensor_name):
         if sensor_name.startswith('P'):
             return 'psi'
         elif sensor_name.startswith('TC'):
@@ -112,7 +111,7 @@ class SensorGraph(QWidget):
             self.line.set_color('green')
         self.canvas.draw()
 
-class SensorLabelGrid(QWidget):
+class SensorGridWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.signals = SensorSignals()
@@ -167,7 +166,7 @@ class SensorLabelGrid(QWidget):
         frame_layout.addWidget(value_label)
         
         # Unit label (right-aligned, borderless) - larger font (14pt)
-        unit = self._get_unit(name)
+        unit = self.get_unit(name)
         unit_label = QLabel(unit)
         unit_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         unit_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
@@ -190,7 +189,7 @@ class SensorLabelGrid(QWidget):
         # Apply initial styling
         self.update_sensor_style(name)
 
-    def _get_unit(self, sensor_name):
+    def get_unit(self, sensor_name):
         if sensor_name.startswith('P'):
             return 'psi'
         elif sensor_name.startswith('TC'):
