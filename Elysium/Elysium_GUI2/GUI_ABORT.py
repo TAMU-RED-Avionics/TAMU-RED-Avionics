@@ -1,4 +1,5 @@
 # GUI_ABORT.py
+# This window displays an abort button, with a confirmation button that pops up if a safe state is entered
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton
 
 class AbortWindow(QWidget):

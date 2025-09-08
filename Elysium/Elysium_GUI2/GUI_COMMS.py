@@ -1,4 +1,5 @@
 # GUI_COMMS.py
+# This file hosts the EthernetClient, which manages the connection between this GUI and the flight MCU
 import socket
 import threading
 import time

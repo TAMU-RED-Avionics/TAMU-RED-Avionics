@@ -1,8 +1,7 @@
+# GUI_GRAPHS.py
+# This file hosts the UI elements for plotting data from various sensors aboard the flight hardware
 from collections import deque
-from PyQt5.QtWidgets import (
-    QWidget, QLabel, QGridLayout, QDialog, 
-    QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy
-)
+from PyQt5.QtWidgets import QWidget, QLabel, QGridLayout, QDialog, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy
 from PyQt5.QtCore import Qt, QDateTime, pyqtSignal, QObject
 from PyQt5.QtGui import QFont
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas

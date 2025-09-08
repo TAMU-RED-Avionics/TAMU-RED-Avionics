@@ -1,15 +1,9 @@
 # GUI_CONTROLLER.py
 # This file will manage all UI related states, and stores functions that will manipulate them
-import csv
-import os
+import csv, os
 from ast import Dict
-from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QPushButton, QScrollArea, QDialog, QLabel,
-    QDialogButtonBox, QHBoxLayout, QLineEdit, QCheckBox, QFrame, QMessageBox, QGroupBox
-)
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer, QDateTime
-from PyQt5.QtGui import QFont
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer, QDateTime
+from PyQt5.QtWidgets import QVBoxLayout, QPushButton, QDialog, QLabel, QDialogButtonBox, QCheckBox, QMessageBox, QGroupBox
+from PyQt5.QtCore import Qt, QTimer, QDateTime
 from PyQt5.QtGui import QFont
 from GUI_ABORT import AbortWindow
 from GUI_LOGO import LogoWindow
@@ -325,10 +319,6 @@ class GUIController:
         self.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
 
     # DAQ RECORDING ------------------------------------------------------------------------------------------------
-    # def log_event(self, event_type, event_details=""):
-    #     """Log event to DAQ system (Req 15)"""
-    #     self.daq_window.log_event(event_type, event_details)
-
     def log_event(self, event_type, event_details=""):
         """Log an event to CSV (Req 15)"""
         if not self.csv_writer:

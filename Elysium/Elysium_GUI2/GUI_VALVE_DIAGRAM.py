@@ -1,4 +1,6 @@
-# --- GUI_VALVE_DIAGRAM.py ---
+# GUI_VALVE_DIAGRAM.py
+# This file will display a diagram of the various valves in the Elysium 2 system.
+# They will update automatically according to various settings
 from stat import SF_APPEND
 from PyQt5.QtWidgets import QWidget, QLabel, QPushButton, QVBoxLayout
 from PyQt5.QtGui import QPixmap

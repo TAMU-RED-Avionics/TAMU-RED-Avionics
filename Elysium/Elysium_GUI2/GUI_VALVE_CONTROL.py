@@ -1,9 +1,7 @@
-from threading import currentThread
-from PyQt5.QtWidgets import QBoxLayout, QWidget, QVBoxLayout, QHBoxLayout, QPushButton
-from PyQt5.QtGui import QFont
-from PyQt5.QtCore import Qt
-
+# GUI_VALVE_CONTROL.py
+# This window showcases an array of buttons for various valve control related functions
 # Each named valve will open when the valve state is clicked in the GUI.
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton
 
 class ValveControlWindow(QWidget):
     def __init__(self, parent=None, show_fire_sequence_dialog=None, apply_valve_state=None):

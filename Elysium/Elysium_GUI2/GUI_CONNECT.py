@@ -1,3 +1,6 @@
+# GUI_CONNECT.py
+# This window displays a form to enter in information about how to connect to the MCU, 
+# with associated information on the state of the connection
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QLineEdit
 from PyQt5.QtCore import Qt
 

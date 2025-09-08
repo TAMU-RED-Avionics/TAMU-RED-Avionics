@@ -1,18 +1,9 @@
+# GUI_LAYOUT.py
+# This is the master file that determines the overall layout of the various UI elements
 from re import S
-from PyQt5.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QPushButton, QScrollArea, QDialog, QLabel,
-    QDialogButtonBox, QHBoxLayout, QLineEdit, QCheckBox, QFrame, QMessageBox, QGroupBox
-)
-from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer, QDateTime
-from PyQt5.QtGui import QFont
-from GUI_ABORT import AbortWindow
+from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QFrame
+from PyQt5.QtCore import Qt
 from GUI_LOGO import LogoWindow
-from GUI_DAQ import DAQWindow
-from GUI_COMMS import EthernetClient
-from GUI_CONNECT import ConnectionWindow
-from GUI_VALVE_DIAGRAM import ValveDiagramWindow
-from GUI_GRAPHS import SensorGridWindow
-from GUI_VALVE_CONTROL import ValveControlWindow
 from GUI_CONTROLLER import GUIController
 
 class MainWindow(QMainWindow):

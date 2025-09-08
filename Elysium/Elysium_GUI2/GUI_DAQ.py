@@ -1,8 +1,6 @@
 # GUI_DAQ.py
-import csv
-import os
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QDialog, QLabel, QHBoxLayout, QLineEdit, QCheckBox, QMessageBox
-from PyQt5.QtCore import QDateTime
+# This window hosts controls over Data Acquisition (DAQ), along with buttons for throttling and gimbaling
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QLineEdit
 
 class DAQWindow(QWidget):
     def __init__(self, controller):
