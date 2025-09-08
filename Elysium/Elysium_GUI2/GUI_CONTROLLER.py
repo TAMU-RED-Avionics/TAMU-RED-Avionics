@@ -111,7 +111,7 @@ class GUIController:
         self.status_label.setText("System in Safe State")
         
         # Log safe state confirmation
-        self.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
+        self.daq_window.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
 
     def log_event(self, event_type, event_details=""):
         """Log event to DAQ system (Req 15)"""
@@ -224,7 +224,7 @@ class GUIController:
         if self.manual_valve_dialog:
             self.manual_valve_dialog.close()
             
-        dialog = QDialog(self)
+        dialog = QDialog(self.daq_window)
         dialog.setWindowTitle("Manual Valve Control")
         dialog.setModal(False)  # Allow interaction with main window
         layout = QVBoxLayout(dialog)
@@ -282,7 +282,7 @@ class GUIController:
 
     def show_abort_control(self):
         """Abort configuration dialog (Req 9)"""
-        dialog = QDialog(self)
+        dialog = QDialog(self.daq_window)
         dialog.setWindowTitle("Abort Configuration")
         layout = QVBoxLayout(dialog)
         
@@ -315,7 +315,7 @@ class GUIController:
         """Enable/disable specific abort mode (Req 9)"""
         self.abort_modes[mode] = state == 2
         status = "ENABLED" if state == 2 else "DISABLED"
-        self.log_event("ABORT_MODE", f"{mode}:{status}")
+        self.daq_window.log_event("ABORT_MODE", f"{mode}:{status}")
 
 
     def handle_abort(self, abort_type, reason):
@@ -350,7 +350,7 @@ class GUIController:
         
         # Show abort popup (Req 20)
         QMessageBox.critical(
-            self, 
+            self.valve_control, # has to bind to a real widget
             "ABORT TRIGGERED", 
             f"Abort Type: {abort_type}\nReason: {reason}"
         )
@@ -362,7 +362,7 @@ class GUIController:
         self.abort_menu.safe_state_btn.setVisible(True)
         
         # Log abort event
-        self.log_event("ABORT", f"{abort_type}:{reason}")
+        self.daq_window.log_event("ABORT", f"{abort_type}:{reason}")
 
     # def update_lockout_state(self):
     #     """Update UI based on lockout state (Req 24)"""
@@ -409,11 +409,9 @@ class GUIController:
     #     # Log safe state confirmation
     #     self.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
 
-    def log_event(self, daq_window, event_type, event_details=""):
+    def log_event(self, event_type, event_details=""):
         """Log event to DAQ system (Req 15)"""
-        if not daq_window:
-            return
-        daq_window.log_event(event_type, event_details)
+        self.daq_window.log_event(event_type, event_details)
 
     def handle_received_data(self, data_str):
         self.comms_signals.data_received.emit(data_str)
@@ -445,7 +443,7 @@ class GUIController:
             return
             
         # First confirmation dialog
-        confirm_dialog = QDialog(self)
+        confirm_dialog = QDialog(self.valve_control)
         confirm_dialog.setWindowTitle("Confirm Ignition")
         layout = QVBoxLayout()
         label = QLabel("Start ignition sequence?")
@@ -461,7 +459,7 @@ class GUIController:
             return
 
         # Create countdown dialog
-        countdown_dialog = QDialog(self)
+        countdown_dialog = QDialog(self.valve_control)
         countdown_dialog.setWindowTitle("Ignition Sequence")
         countdown_dialog.setMinimumSize(300, 150)
         countdown_layout = QVBoxLayout(countdown_dialog)
