@@ -5,14 +5,14 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QDialog, QLabel, 
 from PyQt5.QtCore import QDateTime
 
 class GUI_DAQ_Window(QWidget):
-    def __init__(self, controller=None):
+    def __init__(self, controller):
         super().__init__()
 
         self.controller = controller
-        self.file = None
-        self.csv_writer = None
-        self.throttling_enabled = False
-        self.gimbaling_enabled = False
+        # self.file = None
+        # self.csv_writer = None
+        # self.throttling_enabled = False
+        # self.gimbaling_enabled = False
 
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -38,12 +38,12 @@ class GUI_DAQ_Window(QWidget):
         self.buttons_recording_layout.setContentsMargins(0, 0, 0, 0)
 
         self.start_button = QPushButton("Start Recording")
-        self.start_button.clicked.connect(self.start_recording)
+        self.start_button.clicked.connect(self.start_recording_daq)
         self.buttons_recording_layout.addWidget(self.start_button)
 
         self.stop_button = QPushButton("Stop Recording")
         self.stop_button.setEnabled(False)
-        self.stop_button.clicked.connect(self.stop_recording)
+        self.stop_button.clicked.connect(self.stop_recording_daq)
         self.buttons_recording_layout.addWidget(self.stop_button)
 
         # Valve controls
@@ -65,11 +65,11 @@ class GUI_DAQ_Window(QWidget):
         self.buttons_throttle_gimbal_layout.setSpacing(0)
 
         self.throttling_btn = QPushButton("Enable Throttling")
-        self.throttling_btn.clicked.connect(self.toggle_throttling)
+        self.throttling_btn.clicked.connect(self.toggle_throttling_daq)
         self.buttons_throttle_gimbal_layout.addWidget(self.throttling_btn)
 
         self.gimbaling_btn = QPushButton("Enable Gimbaling")
-        self.gimbaling_btn.clicked.connect(self.toggle_gimbaling)
+        self.gimbaling_btn.clicked.connect(self.toggle_gimbaling_daq)
         self.buttons_throttle_gimbal_layout.addWidget(self.gimbaling_btn)
 
         # Final Configuration
@@ -80,96 +80,24 @@ class GUI_DAQ_Window(QWidget):
 
         self.setLayout(self.layout)
 
-    def toggle_throttling(self, state):
-        self.throttling_enabled = not self.throttling_enabled
+    def toggle_throttling_daq(self, state):
+        self.controller.toggle_throttling()
 
-        self.throttling_btn.setText("Disable Throttling" if self.throttling_enabled else "Enable Throttling")
+        self.throttling_btn.setText("Disable Throttling" if self.controller.throttling_enabled else "Enable Throttling")
 
-        print("GUI_DAQ.py toggling throttling")
+    def toggle_gimbaling_daq(self, state):
+        self.controller.toggle_gimbaling()
 
-        status = "ENABLED" if self.throttling_enabled else "DISABLED"
-        self.controller.log_event(f"THROTTLING:{status}")
+        self.gimbaling_btn.setText("Disable Gimbaling" if self.controller.gimbaling_enabled else "Enable Gimbaling")
 
-    def toggle_gimbaling(self, state):
-        
-        self.gimbaling_enabled = not self.gimbaling_enabled
-
-        self.gimbaling_btn.setText("Disable Gimbaling" if self.gimbaling_enabled else "Enable Gimbaling")
-        
-        print("GUI_DAQ.py toggling gimbaling")
-
-        status = "ENABLED" if self.gimbaling_enabled else "DISABLED"
-        self.controller.log_event(f"GIMBALING:{status}")
-
-    def start_recording(self):
+    def start_recording_daq(self):
         filename = self.filename_input.text().strip()
-        if not filename:
-            QMessageBox.warning(self, "Invalid Filename", "Please enter a filename")
-            return
-            
-        if not filename.endswith(".csv"):
-            filename += ".csv"
-            
-        # Check if file exists (Req 12)
-        if os.path.exists(filename):
-            reply = QMessageBox.question(self, "File Exists", 
-                                        f"{filename} already exists. Overwrite?",
-                                        QMessageBox.Yes | QMessageBox.No)
-            if reply != QMessageBox.Yes:
-                return
-        
-        try:
-            self.file = open(filename, "w", newline="")
-            self.csv_writer = csv.writer(self.file)
-            # Add columns for throttling/gimbaling (Req 26) and event logging (Req 15)
-            self.csv_writer.writerow([
-                "Timestamp", "TeensyTimestamp", "Throttling", "Gimbaling", 
-                "SensorData", "EventType", "EventDetails"
-            ])
+        if self.controller.start_recording(filename):
             self.start_button.setEnabled(False)
             self.stop_button.setEnabled(True)
-            self.controller.log_event("RECORDING:START")
-        except Exception as e:
-            QMessageBox.critical(self, "Error", f"Failed to create file: {str(e)}")
 
-    def stop_recording(self):
-        if self.file:
-            self.controller.log_event("RECORDING:STOP")
+    def stop_recording_daq(self):
+        self.controller.stop_recording()
 
-            self.file.close()
-            self.file = None
-            self.csv_writer = None
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
-
-    def handle_new_data(self, data_str):
-        timestamp = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz")
-        
-        # Parse teensy timestamp (first token) - Req 4
-        parts = data_str.split(maxsplit=1)
-        teensy_ts = parts[0] if len(parts) > 1 else ""
-        sensor_data = parts[1] if len(parts) > 1 else data_str
-        
-        if self.csv_writer:
-            self.csv_writer.writerow([
-                timestamp, teensy_ts, 
-                "ON" if self.throttling_enabled else "OFF",
-                "ON" if self.gimbaling_enabled else "OFF",
-                sensor_data, "", ""
-            ])
-        
-        if self.controller.sensor_grid:
-            self.controller.sensor_grid.handle_data_line(sensor_data)
-
-    def log_event(self, event_type, event_details=""):
-        """Log an event to CSV (Req 15)"""
-        if not self.csv_writer:
-            return
-            
-        timestamp = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz")
-        self.csv_writer.writerow([
-            timestamp, "", 
-            "ON" if self.throttling_enabled else "OFF",
-            "ON" if self.gimbaling_enabled else "OFF",
-            "", event_type, event_details
-        ])

@@ -1,5 +1,7 @@
 # GUI_CONTROLLER.py
 # This file will manage all UI related states, and stores functions that will manipulate them
+import csv
+import os
 from ast import Dict
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QPushButton, QScrollArea, QDialog, QLabel,
@@ -30,6 +32,10 @@ class GUIController:
         self.ethernet_client.receive_callback = self.handle_received_data
         self.ethernet_client.log_event_callback = self.log_event
 
+        # For file recording
+        self.csv_file = None
+        self.csv_writer = None
+
         # These are constants and dictionaries that the UI needs to be tracked
         self.abort_active = False
         self.lockout_mode = False
@@ -42,6 +48,8 @@ class GUIController:
         self.p3_p5_violation_start = None
         self.p4_p6_violation_start = None
         self.abort_check_interval = 50
+        self.throttling_enabled = False
+        self.gimbaling_enabled = False
 
         # Here we declare most of the UI elements that will be used. They are owned by the Controller to make it easy to manage interconnections
         self.diagram = ValveDiagram()
@@ -312,9 +320,42 @@ class GUIController:
         self.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
 
     # DAQ RECORDING ------------------------------------------------------------------------------------------------
+    # def log_event(self, event_type, event_details=""):
+    #     """Log event to DAQ system (Req 15)"""
+    #     self.daq_window.log_event(event_type, event_details)
+
     def log_event(self, event_type, event_details=""):
-        """Log event to DAQ system (Req 15)"""
-        self.daq_window.log_event(event_type, event_details)
+        """Log an event to CSV (Req 15)"""
+        if not self.csv_writer:
+            return
+            
+        timestamp = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz")
+        self.csv_writer.writerow([
+            timestamp, "", 
+            "ON" if self.throttling_enabled else "OFF",
+            "ON" if self.gimbaling_enabled else "OFF",
+            "", event_type, event_details
+        ])
+
+    def handle_new_data(self, data_str):
+        """ Parse teensy timestamp (first token) (Req 4) """
+
+        timestamp = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz")
+        
+        parts = data_str.split(maxsplit=1)
+        teensy_ts = parts[0] if len(parts) > 1 else ""
+        sensor_data = parts[1] if len(parts) > 1 else data_str
+        
+        if self.csv_writer:
+            self.csv_writer.writerow([
+                timestamp, teensy_ts, 
+                "ON" if self.throttling_enabled else "OFF",
+                "ON" if self.gimbaling_enabled else "OFF",
+                sensor_data, "", ""
+            ])
+        
+        if self.sensor_grid:
+            self.sensor_grid.handle_data_line(sensor_data)
     
     def update_sensor_value(self, sensor, value):
         self.current_sensor_values[sensor] = value
@@ -323,12 +364,65 @@ class GUIController:
         self.comms_signals.data_received.emit(data_str)
 
     def process_data_main_thread(self, data_str):
-        self.daq_window.handle_new_data(data_str)
+        self.handle_new_data(data_str)
+
+    # Start recording, returns whether the conditions were fit for recording to start, otherwise returns false
+    def start_recording(self, filename: str) -> bool:
+        if not filename:
+            QMessageBox.warning(self.daq_window, "Invalid Filename", "Please enter a filename")
+            return False
+            
+        if not filename.endswith(".csv"):
+            filename += ".csv"
+            
+        # Check if file exists (Req 12)
+        if os.path.exists(filename):
+            reply = QMessageBox.question(self.daq_window, "File Exists", 
+                                        f"{filename} already exists. Overwrite?",
+                                        QMessageBox.Yes | QMessageBox.No)
+            if reply != QMessageBox.Yes:
+                return False
+        
+        try:
+            self.file = open(filename, "w", newline="")
+            self.csv_writer = csv.writer(self.file)
+            # Add columns for throttling/gimbaling (Req 26) and event logging (Req 15)
+            self.csv_writer.writerow([
+                "Timestamp", "TeensyTimestamp", "Throttling", "Gimbaling", 
+                "SensorData", "EventType", "EventDetails"
+            ])
+            self.log_event("RECORDING:START")
+
+            return True
+
+        except Exception as e:
+            QMessageBox.critical(self.daq_window, "Error", f"Failed to create file: {str(e)}")
+            return False
+
+    def stop_recording(self):
+        if self.file:
+            self.log_event("RECORDING:STOP")
+
+            self.file.close()
+            self.file = None
+            self.csv_writer = None
 
     # VALVE CONTROL ------------------------------------------------------------------------------------------------
+    def toggle_throttling(self):
+        self.throttling_enabled = not self.throttling_enabled
+
+        status = "ENABLED" if self.throttling_enabled else "DISABLED"
+        self.log_event(f"THROTTLING:{status}")
+
+    def toggle_gimbaling(self):
+        self.gimbaling_enabled = not self.gimbaling_enabled
+
+        status = "ENABLED" if self.gimbaling_enabled else "DISABLED"
+        self.log_event(f"GIMBALING:{status}")
+    
     def show_fire_sequence_dialog(self):
         if self.lockout_mode:
-            QMessageBox.warning(self, "Abort Active", "Auto fire sequence cannot be activated during an abort")
+            QMessageBox.warning(self.daq_window, "Abort Active", "Auto fire sequence cannot be activated during an abort")
             return
             
         # First confirmation dialog
@@ -423,7 +517,7 @@ class GUIController:
 
     def show_manual_valve_control(self):
         if self.lockout_mode:
-            QMessageBox.warning(self, "Lockout Active", "Manual control is disabled during abort")
+            QMessageBox.warning(self.daq_window, "Lockout Active", "Manual control is disabled during abort")
             return
             
         # Close existing dialog if open
