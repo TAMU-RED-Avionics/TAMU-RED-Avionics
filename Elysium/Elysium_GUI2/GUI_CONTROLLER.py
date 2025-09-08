@@ -9,14 +9,16 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer, QDateTime
 from PyQt5.QtGui import QFont
+from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer, QDateTime
+from PyQt5.QtGui import QFont
+from GUI_ABORT import AbortWindow
+from GUI_LOGO import LogoWindow
+from GUI_DAQ import DAQWindow
 from GUI_COMMS import EthernetClient, CommsSignals
-from GUI_VALVE_DIAGRAM import ValveDiagram
-from GUI_VALVE_CONTROL import ValveControlPanel
-from GUI_DAQ import GUI_DAQ_Window
-from GUI_GRAPHS import SensorLabelGrid
-from GUI_ABORT import AbortMenu
-from GUI_CONNECT import ConnectionWidget
-
+from GUI_CONNECT import ConnectionWindow
+from GUI_VALVE_DIAGRAM import ValveDiagramWindow
+from GUI_GRAPHS import SensorGridWindow
+from GUI_VALVE_CONTROL import ValveControlWindow
 
 class GUIController:
     def __init__(self):
@@ -52,13 +54,13 @@ class GUIController:
         self.gimbaling_enabled = False
 
         # Here we declare most of the UI elements that will be used. They are owned by the Controller to make it easy to manage interconnections
-        self.diagram = ValveDiagram()
-        self.conn_widget = ConnectionWidget(ethernet_client=self.ethernet_client)
-        self.valve_control = ValveControlPanel(apply_valve_state=self.apply_valve_state, show_fire_sequence_dialog=self.show_fire_sequence_dialog)
+        self.diagram = ValveDiagramWindow()
+        self.conn_widget = ConnectionWindow(ethernet_client=self.ethernet_client)
+        self.valve_control = ValveControlWindow(apply_valve_state=self.apply_valve_state, show_fire_sequence_dialog=self.show_fire_sequence_dialog)
         self.status_label = QLabel("Current State: None")
-        self.sensor_grid = SensorLabelGrid()
-        self.daq_window = GUI_DAQ_Window(self)
-        self.abort_menu = AbortMenu(trigger_manual_abort=self.trigger_manual_abort, confirm_safe_state=self.confirm_safe_state)
+        self.sensor_grid = SensorGridWindow()
+        self.daq_window = DAQWindow(self)
+        self.abort_menu = AbortWindow(trigger_manual_abort=self.trigger_manual_abort, confirm_safe_state=self.confirm_safe_state)
 
         # Some of the UI elements have callbacks that need to connect to functions in GUIController. This behavior may be revisited
         self.sensor_grid.signals.update_signal.connect(self.update_sensor_value)
@@ -165,7 +167,7 @@ class GUIController:
         
         # Disable/enable valve state buttons
         for btn in self.daq_window.findChildren(QPushButton):
-            if btn.text() in ValveControlPanel.valve_states:
+            if btn.text() in ValveControlWindow.valve_states:
                 btn.setEnabled(not self.lockout_mode)
 
     def confirm_safe_state(self):
@@ -271,7 +273,7 @@ class GUIController:
         self.abort_menu.safe_state_btn.setVisible(True)
         
         # Log abort event
-        self.daq_window.log_event("ABORT", f"{abort_type}:{reason}")
+        self.log_event("ABORT", f"{abort_type}:{reason}")
 
 
     def update_lockout_state(self):
@@ -302,9 +304,12 @@ class GUIController:
             """)
         
         # Disable/enable valve state buttons
-        for btn in self.daq_window.findChildren(QPushButton):
-            if btn.text() in ValveControlPanel.valve_states:
+        for btn in self.valve_control.findChildren(QPushButton):
+            if btn.text() in ValveControlWindow.valve_states:
                 btn.setEnabled(not self.lockout_mode)
+        self.valve_control.fire_sequence_btn.setEnabled(not self.lockout_mode)
+        self.daq_window.throttling_btn.setEnabled(not self.lockout_mode)
+        self.daq_window.gimbaling_btn.setEnabled(not self.lockout_mode)
 
     def confirm_safe_state(self):
         """Confirm system is safe after abort without any dialog"""
@@ -576,7 +581,7 @@ class GUIController:
         if self.lockout_mode:
             return
             
-        active_valves = ValveControlPanel.valve_states.get(operation, [])
+        active_valves = ValveControlWindow.valve_states.get(operation, [])
         for name in self.diagram.valve_states:
             state = name in active_valves
             self.diagram.set_valve_state(name, state)

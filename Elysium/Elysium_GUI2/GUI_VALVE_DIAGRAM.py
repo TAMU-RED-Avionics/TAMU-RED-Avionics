@@ -3,7 +3,7 @@ from stat import SF_APPEND
 from PyQt5.QtWidgets import QWidget, QLabel, QPushButton, QVBoxLayout
 from PyQt5.QtGui import QPixmap
 
-class ValveDiagram(QWidget):
+class ValveDiagramWindow(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)

@@ -5,7 +5,7 @@ from PyQt5.QtCore import Qt
 
 # Each named valve will open when the valve state is clicked in the GUI.
 
-class ValveControlPanel(QWidget):
+class ValveControlWindow(QWidget):
     def __init__(self, parent=None, show_fire_sequence_dialog=None, apply_valve_state=None):
         super().__init__(parent)
 
@@ -56,15 +56,6 @@ class ValveControlPanel(QWidget):
                     operations_layout.addLayout(current_column_layout)
                     current_column_layout = QVBoxLayout()
                     current_column_layout.setContentsMargins(0, 0, 0, 0)
-                    # current_column_layout.setSpacing(10)
-                    # current_column_layout.setSpacing(0)
-
-                # if op == "Vent Pressure":
-                #     self.fire_sequence_btn = QPushButton("Auto Fire Sequence")
-                #     self.fire_sequence_btn.setFont(QFont("Arial", 10, QFont.Bold))
-                #     self.fire_sequence_btn.setMinimumHeight(40)
-                #     self.fire_sequence_btn.clicked.connect(show_fire_sequence_dialog)
-                #     current_column_layout.addWidget(self.fire_sequence_btn)
 
         operations_layout.addLayout(current_column_layout)
         top_layout.addLayout(operations_layout)

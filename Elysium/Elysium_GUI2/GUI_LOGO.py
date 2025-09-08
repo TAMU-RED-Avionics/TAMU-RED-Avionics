@@ -2,7 +2,7 @@ from PyQt5.QtWidgets import QLabel, QWidget, QVBoxLayout
 from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt
 
-class LogoWidget(QWidget):
+class LogoWindow(QWidget):
     def __init__(self, image_path="RED_logo.png", scale_width=120):
         super().__init__()
         layout = QVBoxLayout()

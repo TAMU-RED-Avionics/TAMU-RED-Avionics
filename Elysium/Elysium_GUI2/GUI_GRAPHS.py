@@ -112,7 +112,7 @@ class SensorGraph(QWidget):
             self.line.set_color('green')
         self.canvas.draw()
 
-class SensorLabelGrid(QWidget):
+class SensorGridWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.signals = SensorSignals()

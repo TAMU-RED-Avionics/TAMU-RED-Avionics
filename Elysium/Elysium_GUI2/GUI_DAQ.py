@@ -4,7 +4,7 @@ import os
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QDialog, QLabel, QHBoxLayout, QLineEdit, QCheckBox, QMessageBox
 from PyQt5.QtCore import QDateTime
 
-class GUI_DAQ_Window(QWidget):
+class DAQWindow(QWidget):
     def __init__(self, controller):
         super().__init__()
 

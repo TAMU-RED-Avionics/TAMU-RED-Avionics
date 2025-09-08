@@ -3,7 +3,7 @@ from PyQt5.QtCore import Qt
 
 from GUI_COMMS import EthernetClient
 
-class ConnectionWidget(QWidget):
+class ConnectionWindow(QWidget):
     def __init__(self, ethernet_client: EthernetClient):
         super().__init__()
         self.ethernet_client = ethernet_client

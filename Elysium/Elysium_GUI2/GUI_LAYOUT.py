@@ -5,14 +5,14 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer, QDateTime
 from PyQt5.QtGui import QFont
-from GUI_ABORT import AbortMenu
-from GUI_LOGO import LogoWidget
-from GUI_DAQ import GUI_DAQ_Window
+from GUI_ABORT import AbortWindow
+from GUI_LOGO import LogoWindow
+from GUI_DAQ import DAQWindow
 from GUI_COMMS import EthernetClient
-from GUI_CONNECT import ConnectionWidget
-from GUI_VALVE_DIAGRAM import ValveDiagram
-from GUI_GRAPHS import SensorLabelGrid
-from GUI_VALVE_CONTROL import ValveControlPanel
+from GUI_CONNECT import ConnectionWindow
+from GUI_VALVE_DIAGRAM import ValveDiagramWindow
+from GUI_GRAPHS import SensorGridWindow
+from GUI_VALVE_CONTROL import ValveControlWindow
 from GUI_CONTROLLER import GUIController
 
 class MainWindow(QMainWindow):
@@ -39,7 +39,7 @@ class MainWindow(QMainWindow):
         logo_layout.setContentsMargins(0, 0, 0, 0)
         logo_layout.setSpacing(0)
 
-        logo_widget = LogoWidget("RED Logo White.png")
+        logo_widget = LogoWindow("RED Logo White.png")
         # logo_widget.setStyleSheet("border: 2px solid red;")
         self.dark_mode_btn = QPushButton("Dark Mode")
         self.dark_mode_btn.setFixedWidth(100)
