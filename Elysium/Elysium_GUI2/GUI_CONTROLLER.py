@@ -12,6 +12,8 @@ from GUI_VALVE_DIAGRAM import ValveDiagram
 from GUI_VALVE_CONTROL import ValveControlPanel
 from GUI_DAQ import GUI_DAQ_Window
 from GUI_GRAPHS import SensorLabelGrid
+from GUI_ABORT import AbortMenu
+from GUI_CONNECT import ConnectionWidget
 
 class CommsSignals(QObject):
     data_received = pyqtSignal(str)
@@ -44,17 +46,78 @@ class GUIController:
 
         self.diagram = ValveDiagram()
 
-        # self.sensor_grid = SensorLabelGrid()
-        # self.sensor_grid.signals.update_signal.connect(self.update_sensor_value)
+        self.conn_widget = ConnectionWidget(ethernet_client=self.ethernet_client)
 
-        # self.daq_window = GUI_DAQ_Window(self.sensor_grid)
-        # self.daq_window.log_event_callback = self.log_event
-        # self.daq_window.manual_btn.clicked.connect(self.show_manual_valve_control)
-        # self.daq_window.abort_config_btn.clicked.connect(self.show_abort_control)
+        self.valve_control = ValveControlPanel(apply_valve_state=self.apply_valve_state, 
+                                               show_fire_sequence_dialog=self.show_fire_sequence_dialog)
+
+        self.status_label = QLabel("Current State: None")
+        self.status_label.setAlignment(Qt.AlignCenter)
+
+        self.sensor_grid = SensorLabelGrid()
+        self.sensor_grid.signals.update_signal.connect(self.update_sensor_value)
+
+        self.daq_window = GUI_DAQ_Window(self.sensor_grid)
+        self.daq_window.log_event_callback = self.log_event
+        self.daq_window.manual_btn.clicked.connect(self.show_manual_valve_control)
+        self.daq_window.abort_config_btn.clicked.connect(self.show_abort_control)
+
+        self.abort_menu = AbortMenu(trigger_manual_abort=self.trigger_manual_abort, 
+                                    confirm_safe_state=self.confirm_safe_state)
 
         self.init_abort_modes()
         self.setup_abort_monitor()
 
+    def update_lockout_state(self):
+        """Update UI based on lockout state (Req 24)"""
+        # Enable/disable control buttons
+        self.daq_window.manual_btn.setEnabled(not self.lockout_mode)
+        
+        # Disable fire sequence button during abort
+        if self.fire_sequence_btn:
+            self.fire_sequence_btn.setEnabled(not self.lockout_mode)
+        
+        # Change manual abort button color during lockout
+        if self.lockout_mode:
+            self.abort_menu.manual_abort_btn.setStyleSheet("""
+                background-color: darkred; 
+                color: gray; 
+                font-weight: bold; 
+                font-size: 20pt;
+                min-height: 80px;
+            """)
+        else:
+            self.abort_menu.manual_abort_btn.setStyleSheet("""
+                background-color: red; 
+                color: white; 
+                font-weight: bold; 
+                font-size: 20pt;
+                min-height: 80px;
+            """)
+        
+        # Disable/enable valve state buttons
+        for btn in self.daq_window.findChildren(QPushButton):
+            if btn.text() in ValveControlPanel.valve_states:
+                btn.setEnabled(not self.lockout_mode)
+
+    def confirm_safe_state(self):
+        """Confirm system is safe after abort without any dialog"""
+        self.abort_active = False
+        self.lockout_mode = False
+        self.update_lockout_state()
+        self.abort_menu.safe_state_btn.setVisible(False)
+        
+        # Update status
+        self.status_label.setText("System in Safe State")
+        
+        # Log safe state confirmation
+        self.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
+
+    def log_event(self, event_type, event_details=""):
+        """Log event to DAQ system (Req 15)"""
+        if not self.daq_window:
+            return
+        self.daq_window.log_event(event_type, event_details)
     
     def update_sensor_value(self, sensor, value):
         self.current_sensor_values[sensor] = value
@@ -301,56 +364,56 @@ class GUIController:
         # Log abort event
         self.log_event("ABORT", f"{abort_type}:{reason}")
 
-    def update_lockout_state(self):
-        """Update UI based on lockout state (Req 24)"""
-        # Enable/disable control buttons
-        self.daq_window.manual_btn.setEnabled(not self.lockout_mode)
+    # def update_lockout_state(self):
+    #     """Update UI based on lockout state (Req 24)"""
+    #     # Enable/disable control buttons
+    #     self.daq_window.manual_btn.setEnabled(not self.lockout_mode)
         
-        # Disable fire sequence button during abort
-        if self.fire_sequence_btn:
-            self.fire_sequence_btn.setEnabled(not self.lockout_mode)
+    #     # Disable fire sequence button during abort
+    #     if self.fire_sequence_btn:
+    #         self.fire_sequence_btn.setEnabled(not self.lockout_mode)
         
-        # Change manual abort button color during lockout
-        if self.lockout_mode:
-            self.abort_menu.manual_abort_btn.setStyleSheet("""
-                background-color: darkred; 
-                color: gray; 
-                font-weight: bold; 
-                font-size: 20pt;
-                min-height: 80px;
-            """)
-        else:
-            self.abort_menu.manual_abort_btn.setStyleSheet("""
-                background-color: red; 
-                color: white; 
-                font-weight: bold; 
-                font-size: 20pt;
-                min-height: 80px;
-            """)
+    #     # Change manual abort button color during lockout
+    #     if self.lockout_mode:
+    #         self.abort_menu.manual_abort_btn.setStyleSheet("""
+    #             background-color: darkred; 
+    #             color: gray; 
+    #             font-weight: bold; 
+    #             font-size: 20pt;
+    #             min-height: 80px;
+    #         """)
+    #     else:
+    #         self.abort_menu.manual_abort_btn.setStyleSheet("""
+    #             background-color: red; 
+    #             color: white; 
+    #             font-weight: bold; 
+    #             font-size: 20pt;
+    #             min-height: 80px;
+    #         """)
         
-        # Disable/enable valve state buttons
-        for btn in self.findChildren(QPushButton):
-            if btn.text() in ValveControlPanel.valve_states:
-                btn.setEnabled(not self.lockout_mode)
+    #     # Disable/enable valve state buttons
+    #     for btn in self.findChildren(QPushButton):
+    #         if btn.text() in ValveControlPanel.valve_states:
+    #             btn.setEnabled(not self.lockout_mode)
 
-    def confirm_safe_state(self):
-        """Confirm system is safe after abort without any dialog"""
-        self.abort_active = False
-        self.lockout_mode = False
-        self.update_lockout_state()
-        self.abort_menu.safe_state_btn.setVisible(False)
+    # def confirm_safe_state(self):
+    #     """Confirm system is safe after abort without any dialog"""
+    #     self.abort_active = False
+    #     self.lockout_mode = False
+    #     self.update_lockout_state()
+    #     self.abort_menu.safe_state_btn.setVisible(False)
         
-        # Update status
-        self.status_label.setText("System in Safe State")
+    #     # Update status
+    #     self.status_label.setText("System in Safe State")
         
-        # Log safe state confirmation
-        self.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
+    #     # Log safe state confirmation
+    #     self.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
 
-    def log_event(self, event_type, event_details=""):
+    def log_event(self, daq_window, event_type, event_details=""):
         """Log event to DAQ system (Req 15)"""
-        if not self.daq_window:
+        if not daq_window:
             return
-        self.daq_window.log_event(event_type, event_details)
+        daq_window.log_event(event_type, event_details)
 
     def handle_received_data(self, data_str):
         self.comms_signals.data_received.emit(data_str)

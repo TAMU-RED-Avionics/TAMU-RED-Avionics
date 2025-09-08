@@ -60,6 +60,7 @@ class ValveDiagram(QWidget):
             btn.setStyleSheet("background-color: red; border-radius: 12px;")
             btn.setEnabled(False)  # Make non-clickable
             self.valve_buttons[name] = btn
+    
 
     def set_valve_state(self, name, state):
         self.valve_states[name] = state

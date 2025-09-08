@@ -156,50 +156,45 @@ class MainWindow(QMainWindow):
         body_rhs_layout.setAlignment(Qt.AlignTop)
 
         # Setup of connection widget
-        conn_widget = ConnectionWidget(ethernet_client=self.controller.ethernet_client)
+        # conn_widget = ConnectionWidget(ethernet_client=self.controller.ethernet_client)
         # conn_widget.setStyleSheet("border: 2px solid red;")
-        body_lhs_layout.addWidget(conn_widget)
+        body_lhs_layout.addWidget(self.controller.conn_widget)
 
-        # Declaration of sensor grid, will be added further down
-        self.sensor_grid = SensorLabelGrid()
-        self.sensor_grid.signals.update_signal.connect(self.controller.update_sensor_value)
+        # # Declaration of sensor grid, will be added further down
+        # self.sensor_grid = SensorLabelGrid()
+        # self.sensor_grid.signals.update_signal.connect(self.controller.update_sensor_value)
 
-        # Setup of the DAQ window
-        self.daq_window = GUI_DAQ_Window(self.sensor_grid)
-        self.daq_window.log_event_callback = self.controller.log_event
-        self.daq_window.manual_btn.clicked.connect(self.controller.show_manual_valve_control)
-        self.daq_window.abort_config_btn.clicked.connect(self.controller.show_abort_control)
+        # # Setup of the DAQ window
+        # self.daq_window = GUI_DAQ_Window(self.sensor_grid)
+        # self.daq_window.log_event_callback = self.log_event
+        # self.daq_window.manual_btn.clicked.connect(self.controller.show_manual_valve_control)
+        # self.daq_window.abort_config_btn.clicked.connect(self.controller.show_abort_control)
 
         # self.daq_window.setStyleSheet("border: 2px solid red;")
-        body_lhs_layout.addWidget(self.daq_window)
+        body_lhs_layout.addWidget(self.controller.daq_window)
 
         # Setup of abort menu
-        self.abort_menu = AbortMenu(trigger_manual_abort=self.controller.trigger_manual_abort, 
-                                    confirm_safe_state=self.controller.confirm_safe_state)
-        body_lhs_layout.addWidget(self.abort_menu)
+        # self.abort_menu = AbortMenu(trigger_manual_abort=self.controller.trigger_manual_abort, 
+        #                             confirm_safe_state=self.controller.confirm_safe_state)
+        body_lhs_layout.addWidget(self.controller.abort_menu)
 
         # Setup of the valve control panel
         valve_control_layout = QHBoxLayout()
-        self.valve_control = ValveControlPanel(parent=self, apply_valve_state=self.controller.apply_valve_state, 
-                                               show_fire_sequence_dialog=self.controller.show_fire_sequence_dialog)
+        # self.valve_control = ValveControlPanel(parent=self, apply_valve_state=self.controller.apply_valve_state, 
+        #                                        show_fire_sequence_dialog=self.controller.show_fire_sequence_dialog)
 
         # self.valve_control.setStyleSheet("border: 2px solid red;")
-        valve_control_layout.addWidget(self.valve_control)
-        self.diagram = ValveDiagram()
-        valve_control_layout.addWidget(self.diagram)
-        body_lhs_layout.addWidget(self.valve_control)
+        valve_control_layout.addWidget(self.controller.valve_control)
+        valve_control_layout.addWidget(self.controller.diagram)
+        body_lhs_layout.addWidget(self.controller.valve_control)
 
         # Current states and sensor grid
-        self.status_label = QLabel("Current State: None")
-        self.status_label.setAlignment(Qt.AlignCenter)
-        # self.status_label.setFont(QFont("Arial", 14, QFont.Bold))
-        body_lhs_layout.addWidget(self.status_label)
-        body_lhs_layout.addWidget(self.sensor_grid)
+        # self.status_label = QLabel("Current State: None")
+        # self.status_label.setAlignment(Qt.AlignCenter)
+        body_lhs_layout.addWidget(self.controller.status_label)
+        body_lhs_layout.addWidget(self.controller.sensor_grid)
 
-        self.diagram = ValveDiagram()
-        body_rhs_layout.addWidget(self.diagram)
-
-        
+        body_rhs_layout.addWidget(self.controller.diagram)        
 
         # Final configuration of main window
         body_horizontal_layout.addLayout(body_lhs_layout)
@@ -238,7 +233,7 @@ class MainWindow(QMainWindow):
         self.apply_stylesheet()
         self.dark_mode_btn.setText("Light Mode" if self.dark_mode else "Dark Mode")
         # Update sensor grid
-        self.sensor_grid.set_dark_mode(self.dark_mode)
+        self.controller.sensor_grid.set_dark_mode(self.dark_mode)
 
     def apply_stylesheet(self):
         """Apply appropriate stylesheet based on current mode"""
