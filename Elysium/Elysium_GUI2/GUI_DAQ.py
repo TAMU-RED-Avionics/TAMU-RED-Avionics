@@ -5,18 +5,17 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QDialog, QLabel, 
 from PyQt5.QtCore import QDateTime
 
 class GUI_DAQ_Window(QWidget):
-    def __init__(self, sensor_grid):
+    def __init__(self, controller=None):
         super().__init__()
-        self.sensor_grid = sensor_grid
+
+        self.controller = controller
         self.file = None
         self.csv_writer = None
         self.throttling_enabled = False
         self.gimbaling_enabled = False
-        self.log_event_callback = None
 
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(0, 0, 0, 0)
-        self.layout.setSpacing(0)
 
         # Filename input
         self.csv_input_layout = QHBoxLayout()
@@ -37,7 +36,6 @@ class GUI_DAQ_Window(QWidget):
         # Recording controls
         self.buttons_recording_layout = QVBoxLayout()
         self.buttons_recording_layout.setContentsMargins(0, 0, 0, 0)
-        # self.buttons_recording_layout.setSpacing(0)
 
         self.start_button = QPushButton("Start Recording")
         self.start_button.clicked.connect(self.start_recording)
@@ -51,21 +49,20 @@ class GUI_DAQ_Window(QWidget):
         # Valve controls
         self.buttons_valve_layout = QVBoxLayout()
         self.buttons_valve_layout.setContentsMargins(0, 0, 0, 0)
-        # self.buttons_valve_layout.setSpacing(0)
 
         self.manual_btn = QPushButton("Manual Valve Control")
-        # self.manual_btn.clicked.connect(self.show_manual_valve_control)   # can't internalize because lockout mode is in GUI_LAYOUT
+        self.manual_btn.clicked.connect(self.controller.show_manual_valve_control)
         self.buttons_valve_layout.addWidget(self.manual_btn)
 
         self.abort_config_btn = QPushButton("Abort Configuration")
-        # self.abort_config_btn.clicked.connect(self.show_abort_control)    # can't internalize because lockout mode is in GUI_LAYOUT
+        self.abort_config_btn.clicked.connect(self.controller.show_abort_control)
         self.buttons_valve_layout.addWidget(self.abort_config_btn)
 
 
         # Throttling and Gimbaling controls (Req 26)
         self.buttons_throttle_gimbal_layout = QVBoxLayout()
         self.buttons_throttle_gimbal_layout.setContentsMargins(0, 0, 0, 0)
-        # self.buttons_throttle_gimbal_layout.setSpacing(0)
+        self.buttons_throttle_gimbal_layout.setSpacing(0)
 
         self.throttling_btn = QPushButton("Enable Throttling")
         self.throttling_btn.clicked.connect(self.toggle_throttling)
@@ -90,9 +87,8 @@ class GUI_DAQ_Window(QWidget):
 
         print("GUI_DAQ.py toggling throttling")
 
-        if self.log_event_callback:
-            status = "ENABLED" if self.throttling_enabled else "DISABLED"
-            self.log_event_callback(f"THROTTLING:{status}")
+        status = "ENABLED" if self.throttling_enabled else "DISABLED"
+        self.controller.log_event(f"THROTTLING:{status}")
 
     def toggle_gimbaling(self, state):
         
@@ -102,9 +98,8 @@ class GUI_DAQ_Window(QWidget):
         
         print("GUI_DAQ.py toggling gimbaling")
 
-        if self.log_event_callback:
-            status = "ENABLED" if self.gimbaling_enabled else "DISABLED"
-            self.log_event_callback(f"GIMBALING:{status}")
+        status = "ENABLED" if self.gimbaling_enabled else "DISABLED"
+        self.controller.log_event(f"GIMBALING:{status}")
 
     def start_recording(self):
         filename = self.filename_input.text().strip()
@@ -133,15 +128,14 @@ class GUI_DAQ_Window(QWidget):
             ])
             self.start_button.setEnabled(False)
             self.stop_button.setEnabled(True)
-            if self.log_event_callback:
-                self.log_event_callback("RECORDING:START")
+            self.controller.log_event("RECORDING:START")
         except Exception as e:
             QMessageBox.critical(self, "Error", f"Failed to create file: {str(e)}")
 
     def stop_recording(self):
         if self.file:
-            if self.log_event_callback:
-                self.log_event_callback("RECORDING:STOP")
+            self.controller.log_event("RECORDING:STOP")
+
             self.file.close()
             self.file = None
             self.csv_writer = None
@@ -164,8 +158,8 @@ class GUI_DAQ_Window(QWidget):
                 sensor_data, "", ""
             ])
         
-        if self.sensor_grid:
-            self.sensor_grid.handle_data_line(sensor_data)
+        if self.controller.sensor_grid:
+            self.controller.sensor_grid.handle_data_line(sensor_data)
 
     def log_event(self, event_type, event_details=""):
         """Log an event to CSV (Req 15)"""
@@ -181,7 +175,7 @@ class GUI_DAQ_Window(QWidget):
         ])
 
     def show_manual_valve_control(self):
-        if self.lockout_mode:
+        if self.controller.lockout_mode:
             QMessageBox.warning(self, "Lockout Active", "Manual control is disabled during abort")
             return
             

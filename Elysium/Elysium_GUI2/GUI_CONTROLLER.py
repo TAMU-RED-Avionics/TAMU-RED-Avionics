@@ -49,15 +49,12 @@ class GUIController:
         self.valve_control = ValveControlPanel(apply_valve_state=self.apply_valve_state, show_fire_sequence_dialog=self.show_fire_sequence_dialog)
         self.status_label = QLabel("Current State: None")
         self.sensor_grid = SensorLabelGrid()
-        self.daq_window = GUI_DAQ_Window(self.sensor_grid)
+        self.daq_window = GUI_DAQ_Window(self)
         self.abort_menu = AbortMenu(trigger_manual_abort=self.trigger_manual_abort, confirm_safe_state=self.confirm_safe_state)
 
         # Some of the UI elements have callbacks that need to connect to functions in GUIController. This behavior may be revisited
         self.sensor_grid.signals.update_signal.connect(self.update_sensor_value)
-        self.daq_window.log_event_callback = self.log_event
-        self.daq_window.manual_btn.clicked.connect(self.show_manual_valve_control)
-        self.daq_window.abort_config_btn.clicked.connect(self.show_abort_control)
-
+        
         # Abort related configuration
         self.init_abort_modes()
         self.setup_abort_monitor()
