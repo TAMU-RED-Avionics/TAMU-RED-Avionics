@@ -2,6 +2,11 @@
 import socket
 import threading
 import time
+from PyQt5.QtCore import QObject, pyqtSignal
+
+class CommsSignals(QObject):
+    data_received = pyqtSignal(str)
+    abort_triggered = pyqtSignal(str, str)
 
 class EthernetClient:
     def __init__(self):

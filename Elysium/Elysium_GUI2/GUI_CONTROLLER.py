@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QObject, QTimer, QDateTime
 from PyQt5.QtGui import QFont
-from GUI_COMMS import EthernetClient
+from GUI_COMMS import EthernetClient, CommsSignals
 from GUI_VALVE_DIAGRAM import ValveDiagram
 from GUI_VALVE_CONTROL import ValveControlPanel
 from GUI_DAQ import GUI_DAQ_Window
@@ -15,23 +15,22 @@ from GUI_GRAPHS import SensorLabelGrid
 from GUI_ABORT import AbortMenu
 from GUI_CONNECT import ConnectionWidget
 
-class CommsSignals(QObject):
-    data_received = pyqtSignal(str)
-    abort_triggered = pyqtSignal(str, str)
 
 class GUIController:
     def __init__(self):
         self.current_sensor_values: Dict[str, float] = {}
 
+        # These signals are functions that will be run when the backend EthernetClient receives new packets
         self.comms_signals = CommsSignals()
         self.comms_signals.data_received.connect(self.process_data_main_thread)
         self.comms_signals.abort_triggered.connect(self.handle_abort)
 
+        # The EthernetClient will connect to the "flight" MCU and listen for packets in a backend thread
         self.ethernet_client = EthernetClient()
         self.ethernet_client.receive_callback = self.handle_received_data
         self.ethernet_client.log_event_callback = self.log_event
 
-        # self.dark_mode = False
+        # These are constants and dictionaries that the UI needs to be tracked
         self.abort_active = False
         self.lockout_mode = False
         self.ncs3_opened_due_to_p2 = False
@@ -44,27 +43,22 @@ class GUIController:
         self.p4_p6_violation_start = None
         self.abort_check_interval = 50
 
+        # Here we declare most of the UI elements that will be used. They are owned by the Controller to make it easy to manage interconnections
         self.diagram = ValveDiagram()
-
         self.conn_widget = ConnectionWidget(ethernet_client=self.ethernet_client)
-
-        self.valve_control = ValveControlPanel(apply_valve_state=self.apply_valve_state, 
-                                               show_fire_sequence_dialog=self.show_fire_sequence_dialog)
-
+        self.valve_control = ValveControlPanel(apply_valve_state=self.apply_valve_state, show_fire_sequence_dialog=self.show_fire_sequence_dialog)
         self.status_label = QLabel("Current State: None")
-        self.status_label.setAlignment(Qt.AlignCenter)
-
         self.sensor_grid = SensorLabelGrid()
-        self.sensor_grid.signals.update_signal.connect(self.update_sensor_value)
-
         self.daq_window = GUI_DAQ_Window(self.sensor_grid)
+        self.abort_menu = AbortMenu(trigger_manual_abort=self.trigger_manual_abort, confirm_safe_state=self.confirm_safe_state)
+
+        # Some of the UI elements have callbacks that need to connect to functions in GUIController. This behavior may be revisited
+        self.sensor_grid.signals.update_signal.connect(self.update_sensor_value)
         self.daq_window.log_event_callback = self.log_event
         self.daq_window.manual_btn.clicked.connect(self.show_manual_valve_control)
         self.daq_window.abort_config_btn.clicked.connect(self.show_abort_control)
 
-        self.abort_menu = AbortMenu(trigger_manual_abort=self.trigger_manual_abort, 
-                                    confirm_safe_state=self.confirm_safe_state)
-
+        # Abort related configuration
         self.init_abort_modes()
         self.setup_abort_monitor()
 
