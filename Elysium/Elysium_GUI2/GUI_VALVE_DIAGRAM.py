@@ -57,9 +57,8 @@ class ValveDiagramWindow(QWidget):
             sf = self.scalingFactor
 
             btn = QPushButton("", self.label)
-            # btn.setGeometry(x * sf, y * sf, 40 * sf, 40 * sf)
-            btn.setGeometry(x * sf, y * sf, 25, 25)
-            btn.setStyleSheet("background-color: red; border-radius: 12px;")
+            btn.setGeometry(x * sf, y * sf, 30, 30)
+            btn.setStyleSheet("background-color: red; border-radius: 15px;")
             btn.setEnabled(False)  # Make non-clickable
             self.valve_buttons[name] = btn
     
@@ -67,4 +66,4 @@ class ValveDiagramWindow(QWidget):
     def set_valve_state(self, name, state):
         self.valve_states[name] = state
         color = "green" if state else "red"
-        self.valve_buttons[name].setStyleSheet(f"background-color: {color}; border-radius: 12px;")
+        self.valve_buttons[name].setStyleSheet(f"background-color: {color}; border-radius: 15px;")
