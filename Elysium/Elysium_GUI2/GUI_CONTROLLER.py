@@ -58,61 +58,8 @@ class GUIController:
         # Abort related configuration
         self.init_abort_modes()
         self.setup_abort_monitor()
-
-    def update_lockout_state(self):
-        """Update UI based on lockout state (Req 24)"""
-        # Enable/disable control buttons
-        self.daq_window.manual_btn.setEnabled(not self.lockout_mode)
-        
-        # Disable fire sequence button during abort
-        if self.fire_sequence_btn:
-            self.fire_sequence_btn.setEnabled(not self.lockout_mode)
-        
-        # Change manual abort button color during lockout
-        if self.lockout_mode:
-            self.abort_menu.manual_abort_btn.setStyleSheet("""
-                background-color: darkred; 
-                color: gray; 
-                font-weight: bold; 
-                font-size: 20pt;
-                min-height: 80px;
-            """)
-        else:
-            self.abort_menu.manual_abort_btn.setStyleSheet("""
-                background-color: red; 
-                color: white; 
-                font-weight: bold; 
-                font-size: 20pt;
-                min-height: 80px;
-            """)
-        
-        # Disable/enable valve state buttons
-        for btn in self.daq_window.findChildren(QPushButton):
-            if btn.text() in ValveControlPanel.valve_states:
-                btn.setEnabled(not self.lockout_mode)
-
-    def confirm_safe_state(self):
-        """Confirm system is safe after abort without any dialog"""
-        self.abort_active = False
-        self.lockout_mode = False
-        self.update_lockout_state()
-        self.abort_menu.safe_state_btn.setVisible(False)
-        
-        # Update status
-        self.status_label.setText("System in Safe State")
-        
-        # Log safe state confirmation
-        self.daq_window.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
-
-    def log_event(self, event_type, event_details=""):
-        """Log event to DAQ system (Req 15)"""
-        if not self.daq_window:
-            return
-        self.daq_window.log_event(event_type, event_details)
     
-    def update_sensor_value(self, sensor, value):
-        self.current_sensor_values[sensor] = value
-
+    # ABORT CONTROL ------------------------------------------------------------------------------------------------
     def setup_abort_monitor(self):
         self.abort_timer = QTimer()
         self.abort_timer.timeout.connect(self.check_abort_conditions)
@@ -125,7 +72,7 @@ class GUIController:
             "high_chamber_pressure": True,
             "high_p2": True
         }
-
+    
     def check_abort_conditions(self):
         if not self.current_sensor_values or self.abort_active:
             return
@@ -181,6 +128,274 @@ class GUIController:
             else:
                 self.p4_p6_violation_start = None
 
+    def update_lockout_state(self):
+        """Update UI based on lockout state (Req 24)"""
+        # Enable/disable control buttons
+        self.daq_window.manual_btn.setEnabled(not self.lockout_mode)
+        
+        # Disable fire sequence button during abort
+        if self.fire_sequence_btn:
+            self.fire_sequence_btn.setEnabled(not self.lockout_mode)
+        
+        # Change manual abort button color during lockout
+        if self.lockout_mode:
+            self.abort_menu.manual_abort_btn.setStyleSheet("""
+                background-color: darkred; 
+                color: gray; 
+                font-weight: bold; 
+                font-size: 20pt;
+                min-height: 80px;
+            """)
+        else:
+            self.abort_menu.manual_abort_btn.setStyleSheet("""
+                background-color: red; 
+                color: white; 
+                font-weight: bold; 
+                font-size: 20pt;
+                min-height: 80px;
+            """)
+        
+        # Disable/enable valve state buttons
+        for btn in self.daq_window.findChildren(QPushButton):
+            if btn.text() in ValveControlPanel.valve_states:
+                btn.setEnabled(not self.lockout_mode)
+
+    def confirm_safe_state(self):
+        """Confirm system is safe after abort without any dialog"""
+        self.abort_active = False
+        self.lockout_mode = False
+        self.update_lockout_state()
+        self.abort_menu.safe_state_btn.setVisible(False)
+        
+        # Update status
+        self.status_label.setText("System in Safe State")
+        
+        # Log safe state confirmation
+        self.daq_window.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
+
+    def trigger_manual_abort(self):
+        """Manual abort button handler (Req 11)"""
+        self.comms_signals.abort_triggered.emit(
+            "manual_abort", 
+            "Operator triggered manual abort"
+        )
+
+    def show_abort_control(self):
+        """Abort configuration dialog (Req 9)"""
+        dialog = QDialog(self.daq_window)
+        dialog.setWindowTitle("Abort Configuration")
+        layout = QVBoxLayout(dialog)
+        
+        # Abort mode configuration (Req 9)
+        mode_group = QGroupBox("Abort Modes")
+        mode_layout = QVBoxLayout()
+        
+        # Create checkboxes for each abort mode
+        modes = [
+            ("high_upstream_pressure", "High Upstream Pressure"),
+            ("reverse_flow", "Reverse Flow Risk"),
+            ("high_chamber_pressure", "High Chamber Pressure"),
+            ("high_p2", "High P2 Pressure")
+        ]
+        
+        for mode_id, mode_name in modes:
+            check = QCheckBox(mode_name)
+            check.setChecked(self.abort_modes.get(mode_id, False))
+            check.stateChanged.connect(
+                lambda state, m=mode_id: self.toggle_abort_mode(m, state)
+            )
+            mode_layout.addWidget(check)
+        
+        mode_group.setLayout(mode_layout)
+        layout.addWidget(mode_group)
+        
+        dialog.exec_()
+
+
+    def toggle_abort_mode(self, mode, state):
+        """Enable/disable specific abort mode (Req 9)"""
+        self.abort_modes[mode] = state == 2
+        status = "ENABLED" if state == 2 else "DISABLED"
+        self.daq_window.log_event("ABORT_MODE", f"{mode}:{status}")
+
+
+    def handle_abort(self, abort_type, reason):
+        """Handle abort sequence (Req 11, 20-24)"""
+        if self.abort_active:
+            return
+            
+        self.abort_active = True
+        self.lockout_mode = True
+        
+        # Store current valve states before making changes
+        self.pre_abort_valve_states = self.diagram.valve_states.copy()
+        
+        # Apply abort valve sequence (Req 21-23) and update diagram
+        valves_to_set = [
+            ("NCS3", True),     # Open NCS3
+            ("NCS1", False),    # Close NCS1
+            ("NCS2", False),    # Close NCS2
+            # ("NCS4", False),    # Close NCS4
+            ("NCS5", False),    # Close NCS5
+            ("NCS6", False),    # Close NCS6
+            ("LA-BV1", False),  # Close LA-BV1
+            ("GV-1", False),    # Close GV-1
+            ("GV-2", False)     # Close GV-2
+        ]
+        for name, state in valves_to_set:
+            self.diagram.set_valve_state(name, state)
+            try:
+                self.ethernet_client.send_valve_command(name, state)
+            except Exception:
+                pass
+        
+        # Show abort popup (Req 20)
+        QMessageBox.critical(
+            self.valve_control, # has to bind to a real widget
+            "ABORT TRIGGERED", 
+            f"Abort Type: {abort_type}\nReason: {reason}"
+        )
+        
+        # Lock out manual control (Req 24)
+        self.update_lockout_state()
+        
+        # Show safe state button
+        self.abort_menu.safe_state_btn.setVisible(True)
+        
+        # Log abort event
+        self.daq_window.log_event("ABORT", f"{abort_type}:{reason}")
+
+
+    def update_lockout_state(self):
+        """Update UI based on lockout state (Req 24)"""
+        # Enable/disable control buttons
+        self.daq_window.manual_btn.setEnabled(not self.lockout_mode)
+        
+        # Disable fire sequence button during abort
+        if self.fire_sequence_btn:
+            self.fire_sequence_btn.setEnabled(not self.lockout_mode)
+        
+        # Change manual abort button color during lockout
+        if self.lockout_mode:
+            self.abort_menu.manual_abort_btn.setStyleSheet("""
+                background-color: darkred; 
+                color: gray; 
+                font-weight: bold; 
+                font-size: 20pt;
+                min-height: 80px;
+            """)
+        else:
+            self.abort_menu.manual_abort_btn.setStyleSheet("""
+                background-color: red; 
+                color: white; 
+                font-weight: bold; 
+                font-size: 20pt;
+                min-height: 80px;
+            """)
+        
+        # Disable/enable valve state buttons
+        for btn in self.daq_window.findChildren(QPushButton):
+            if btn.text() in ValveControlPanel.valve_states:
+                btn.setEnabled(not self.lockout_mode)
+
+    def confirm_safe_state(self):
+        """Confirm system is safe after abort without any dialog"""
+        self.abort_active = False
+        self.lockout_mode = False
+        self.update_lockout_state()
+        self.abort_menu.safe_state_btn.setVisible(False)
+        
+        # Update status
+        self.status_label.setText("System in Safe State")
+        
+        # Log safe state confirmation
+        self.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
+
+    # DAQ RECORDING ------------------------------------------------------------------------------------------------
+    def log_event(self, event_type, event_details=""):
+        """Log event to DAQ system (Req 15)"""
+        self.daq_window.log_event(event_type, event_details)
+    
+    def update_sensor_value(self, sensor, value):
+        self.current_sensor_values[sensor] = value
+
+    def handle_received_data(self, data_str):
+        self.comms_signals.data_received.emit(data_str)
+
+    def process_data_main_thread(self, data_str):
+        self.daq_window.handle_new_data(data_str)
+
+    # VALVE CONTROL ------------------------------------------------------------------------------------------------
+    def show_fire_sequence_dialog(self):
+        if self.lockout_mode:
+            QMessageBox.warning(self, "Abort Active", "Auto fire sequence cannot be activated during an abort")
+            return
+            
+        # First confirmation dialog
+        confirm_dialog = QDialog(self.valve_control)
+        confirm_dialog.setWindowTitle("Confirm Ignition")
+        layout = QVBoxLayout()
+        label = QLabel("Start ignition sequence?")
+        layout.addWidget(label)
+        buttons = QDialogButtonBox(QDialogButtonBox.Yes | QDialogButtonBox.Cancel)
+        buttons.accepted.connect(confirm_dialog.accept)
+        buttons.rejected.connect(confirm_dialog.reject)
+        layout.addWidget(buttons)
+        confirm_dialog.setLayout(layout)
+        
+        # Only proceed if user confirms
+        if confirm_dialog.exec_() != QDialog.Accepted:
+            return
+
+        # Create countdown dialog
+        countdown_dialog = QDialog(self.valve_control)
+        countdown_dialog.setWindowTitle("Ignition Sequence")
+        countdown_dialog.setMinimumSize(300, 150)
+        countdown_layout = QVBoxLayout(countdown_dialog)
+        
+        # Countdown label
+        self.countdown_label = QLabel("Ignition in 10 seconds...")
+        self.countdown_label.setAlignment(Qt.AlignCenter)
+        self.countdown_label.setFont(QFont("Arial", 14, QFont.Bold))
+        countdown_layout.addWidget(self.countdown_label)
+        
+        # Cancel button
+        cancel_btn = QPushButton("CANCEL")
+        cancel_btn.setFont(QFont("Arial", 12, QFont.Bold))
+        cancel_btn.setStyleSheet("background-color: red; color: white;")
+        countdown_layout.addWidget(cancel_btn)
+        
+        # Initialize countdown
+        self.countdown_value = 10
+        self.countdown_timer = QTimer()
+        self.countdown_timer.setInterval(1000)  # 1 second interval
+        
+        # Update countdown display
+        def update_countdown():
+            self.countdown_value -= 1
+            if self.countdown_value > 0:
+                self.countdown_label.setText(f"Ignition in {self.countdown_value} seconds...")
+            else:
+                self.countdown_timer.stop()
+                countdown_dialog.accept()  # Close dialog and proceed
+        
+        # Cancel sequence
+        def cancel_sequence():
+            self.countdown_timer.stop()
+            countdown_dialog.reject()
+        
+        # Connect signals
+        self.countdown_timer.timeout.connect(update_countdown)
+        cancel_btn.clicked.connect(cancel_sequence)
+        
+        # Start countdown
+        self.countdown_timer.start()
+        
+        # Show dialog and handle result
+        if countdown_dialog.exec_() == QDialog.Accepted:
+            self.apply_valve_state("Pressurization")
+
+    
     def toggle_valve(self, valve_name, state=None):
         if self.lockout_mode:
             return
@@ -263,153 +478,6 @@ class GUIController:
         except Exception:
             pass
 
-
-    def trigger_manual_abort(self):
-        """Manual abort button handler (Req 11)"""
-        self.comms_signals.abort_triggered.emit(
-            "manual_abort", 
-            "Operator triggered manual abort"
-        )
-
-    def show_abort_control(self):
-        """Abort configuration dialog (Req 9)"""
-        dialog = QDialog(self.daq_window)
-        dialog.setWindowTitle("Abort Configuration")
-        layout = QVBoxLayout(dialog)
-        
-        # Abort mode configuration (Req 9)
-        mode_group = QGroupBox("Abort Modes")
-        mode_layout = QVBoxLayout()
-        
-        # Create checkboxes for each abort mode
-        modes = [
-            ("high_upstream_pressure", "High Upstream Pressure"),
-            ("reverse_flow", "Reverse Flow Risk"),
-            ("high_chamber_pressure", "High Chamber Pressure"),
-            ("high_p2", "High P2 Pressure")
-        ]
-        
-        for mode_id, mode_name in modes:
-            check = QCheckBox(mode_name)
-            check.setChecked(self.abort_modes.get(mode_id, False))
-            check.stateChanged.connect(
-                lambda state, m=mode_id: self.toggle_abort_mode(m, state)
-            )
-            mode_layout.addWidget(check)
-        
-        mode_group.setLayout(mode_layout)
-        layout.addWidget(mode_group)
-        
-        dialog.exec_()
-
-    def toggle_abort_mode(self, mode, state):
-        """Enable/disable specific abort mode (Req 9)"""
-        self.abort_modes[mode] = state == 2
-        status = "ENABLED" if state == 2 else "DISABLED"
-        self.daq_window.log_event("ABORT_MODE", f"{mode}:{status}")
-
-
-    def handle_abort(self, abort_type, reason):
-        """Handle abort sequence (Req 11, 20-24)"""
-        if self.abort_active:
-            return
-            
-        self.abort_active = True
-        self.lockout_mode = True
-        
-        # Store current valve states before making changes
-        self.pre_abort_valve_states = self.diagram.valve_states.copy()
-        
-        # Apply abort valve sequence (Req 21-23) and update diagram
-        valves_to_set = [
-            ("NCS3", True),     # Open NCS3
-            ("NCS1", False),    # Close NCS1
-            ("NCS2", False),    # Close NCS2
-            # ("NCS4", False),    # Close NCS4
-            ("NCS5", False),    # Close NCS5
-            ("NCS6", False),    # Close NCS6
-            ("LA-BV1", False),  # Close LA-BV1
-            ("GV-1", False),    # Close GV-1
-            ("GV-2", False)     # Close GV-2
-        ]
-        for name, state in valves_to_set:
-            self.diagram.set_valve_state(name, state)
-            try:
-                self.ethernet_client.send_valve_command(name, state)
-            except Exception:
-                pass
-        
-        # Show abort popup (Req 20)
-        QMessageBox.critical(
-            self.valve_control, # has to bind to a real widget
-            "ABORT TRIGGERED", 
-            f"Abort Type: {abort_type}\nReason: {reason}"
-        )
-        
-        # Lock out manual control (Req 24)
-        self.update_lockout_state()
-        
-        # Show safe state button
-        self.abort_menu.safe_state_btn.setVisible(True)
-        
-        # Log abort event
-        self.daq_window.log_event("ABORT", f"{abort_type}:{reason}")
-
-    # def update_lockout_state(self):
-    #     """Update UI based on lockout state (Req 24)"""
-    #     # Enable/disable control buttons
-    #     self.daq_window.manual_btn.setEnabled(not self.lockout_mode)
-        
-    #     # Disable fire sequence button during abort
-    #     if self.fire_sequence_btn:
-    #         self.fire_sequence_btn.setEnabled(not self.lockout_mode)
-        
-    #     # Change manual abort button color during lockout
-    #     if self.lockout_mode:
-    #         self.abort_menu.manual_abort_btn.setStyleSheet("""
-    #             background-color: darkred; 
-    #             color: gray; 
-    #             font-weight: bold; 
-    #             font-size: 20pt;
-    #             min-height: 80px;
-    #         """)
-    #     else:
-    #         self.abort_menu.manual_abort_btn.setStyleSheet("""
-    #             background-color: red; 
-    #             color: white; 
-    #             font-weight: bold; 
-    #             font-size: 20pt;
-    #             min-height: 80px;
-    #         """)
-        
-    #     # Disable/enable valve state buttons
-    #     for btn in self.findChildren(QPushButton):
-    #         if btn.text() in ValveControlPanel.valve_states:
-    #             btn.setEnabled(not self.lockout_mode)
-
-    # def confirm_safe_state(self):
-    #     """Confirm system is safe after abort without any dialog"""
-    #     self.abort_active = False
-    #     self.lockout_mode = False
-    #     self.update_lockout_state()
-    #     self.abort_menu.safe_state_btn.setVisible(False)
-        
-    #     # Update status
-    #     self.status_label.setText("System in Safe State")
-        
-    #     # Log safe state confirmation
-    #     self.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
-
-    def log_event(self, event_type, event_details=""):
-        """Log event to DAQ system (Req 15)"""
-        self.daq_window.log_event(event_type, event_details)
-
-    def handle_received_data(self, data_str):
-        self.comms_signals.data_received.emit(data_str)
-
-    def process_data_main_thread(self, data_str):
-        self.daq_window.handle_new_data(data_str)
-
     def apply_valve_state(self, operation):
         if self.lockout_mode:
             return
@@ -427,72 +495,3 @@ class GUIController:
         if operation == "Pressurization":
             QTimer.singleShot(5000, lambda: self.apply_valve_state("Fire"))
             QTimer.singleShot(20000, lambda: self.apply_valve_state("Kill and Vent"))
-
-    def show_fire_sequence_dialog(self):
-        if self.lockout_mode:
-            QMessageBox.warning(self, "Abort Active", "Auto fire sequence cannot be activated during an abort")
-            return
-            
-        # First confirmation dialog
-        confirm_dialog = QDialog(self.valve_control)
-        confirm_dialog.setWindowTitle("Confirm Ignition")
-        layout = QVBoxLayout()
-        label = QLabel("Start ignition sequence?")
-        layout.addWidget(label)
-        buttons = QDialogButtonBox(QDialogButtonBox.Yes | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(confirm_dialog.accept)
-        buttons.rejected.connect(confirm_dialog.reject)
-        layout.addWidget(buttons)
-        confirm_dialog.setLayout(layout)
-        
-        # Only proceed if user confirms
-        if confirm_dialog.exec_() != QDialog.Accepted:
-            return
-
-        # Create countdown dialog
-        countdown_dialog = QDialog(self.valve_control)
-        countdown_dialog.setWindowTitle("Ignition Sequence")
-        countdown_dialog.setMinimumSize(300, 150)
-        countdown_layout = QVBoxLayout(countdown_dialog)
-        
-        # Countdown label
-        self.countdown_label = QLabel("Ignition in 10 seconds...")
-        self.countdown_label.setAlignment(Qt.AlignCenter)
-        self.countdown_label.setFont(QFont("Arial", 14, QFont.Bold))
-        countdown_layout.addWidget(self.countdown_label)
-        
-        # Cancel button
-        cancel_btn = QPushButton("CANCEL")
-        cancel_btn.setFont(QFont("Arial", 12, QFont.Bold))
-        cancel_btn.setStyleSheet("background-color: red; color: white;")
-        countdown_layout.addWidget(cancel_btn)
-        
-        # Initialize countdown
-        self.countdown_value = 10
-        self.countdown_timer = QTimer()
-        self.countdown_timer.setInterval(1000)  # 1 second interval
-        
-        # Update countdown display
-        def update_countdown():
-            self.countdown_value -= 1
-            if self.countdown_value > 0:
-                self.countdown_label.setText(f"Ignition in {self.countdown_value} seconds...")
-            else:
-                self.countdown_timer.stop()
-                countdown_dialog.accept()  # Close dialog and proceed
-        
-        # Cancel sequence
-        def cancel_sequence():
-            self.countdown_timer.stop()
-            countdown_dialog.reject()
-        
-        # Connect signals
-        self.countdown_timer.timeout.connect(update_countdown)
-        cancel_btn.clicked.connect(cancel_sequence)
-        
-        # Start countdown
-        self.countdown_timer.start()
-        
-        # Show dialog and handle result
-        if countdown_dialog.exec_() == QDialog.Accepted:
-            self.apply_valve_state("Pressurization")
