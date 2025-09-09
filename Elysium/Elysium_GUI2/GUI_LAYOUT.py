@@ -36,7 +36,7 @@ class MainWindow(QMainWindow):
         self.dark_mode_btn.setFixedWidth(300)
         self.dark_mode_btn.clicked.connect(self.toggle_dark_mode)
 
-        self.text_size = 12
+        self.text_size = 10
         self.text_size_btn = QPushButton("Large Text")
         self.text_size_btn.setFixedWidth(300)
         self.text_size_btn.clicked.connect(self.change_text_size)
@@ -83,8 +83,9 @@ class MainWindow(QMainWindow):
         body_rhs_layout.addWidget(self.controller.diagram)        
 
         # Final configuration of main window
-        body_horizontal_layout.addLayout(body_lhs_layout)
-        body_horizontal_layout.addLayout(body_rhs_layout)
+        body_horizontal_layout.addLayout(body_lhs_layout, stretch=3)
+        body_horizontal_layout.addLayout(body_rhs_layout, stretch=2)
+
         main_layout.addLayout(body_horizontal_layout)
 
         self.apply_stylesheet()
