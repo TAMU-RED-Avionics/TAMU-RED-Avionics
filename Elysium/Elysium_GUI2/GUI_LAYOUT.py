@@ -153,11 +153,11 @@ class MainWindow(QMainWindow):
             dark_stylesheet = """
                 QWidget {
                     background-color: #222222;
-                    color: white;
+                    color: #FFFFFF;
                 }
                 QPushButton {
                     background-color: #444444;
-                    color: white;
+                    color: #FFFFFF;
                     border-style: inset;
                     border-width: 2px;
                     border-radius: 10px;
@@ -171,6 +171,14 @@ class MainWindow(QMainWindow):
                 }
                 QPushButton:hover {
                     background-color: #666666;
+                }
+                QLineEdit {
+                    background-color: #444444;
+                    color: #FFFFFF;
+                    border-style: inset;
+                    border-width: 2px;
+                    border-radius: 10px;
+                    border-color: #666666;
                 }
                 QLabel {
                     font: bold 20px;
@@ -199,6 +207,14 @@ class MainWindow(QMainWindow):
                 QPushButton:pressed {
                     background-color: #666666;
                     border-style: inset;
+                }
+                QLineEdit {
+                    background-color: #FFFFFF;
+                    color: #000000;
+                    border-style: inset;
+                    border-width: 2px;
+                    border-radius: 10px;
+                    border-color: #666666;
                 }
                 QLabel {
                     font: bold 20px;
