@@ -16,13 +16,16 @@ class ValveDiagramWindow(QWidget):
         layout.setSpacing(0)
         layout.setAlignment(Qt.AlignRight | Qt.AlignTop)
 
-       
         # Load and display the P&ID image
         self.label = QLabel(self)
         self.set_light_image()
-
-         # Adjusts the size of this picture
-        self.scalingFactor = 0.5
+        self.label.setScaledContents(True)
+        self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        min_size = QSize(int(720 / self.pixmap.height() * self.pixmap.width()), int(720))
+        self.label.setPixmap(self.pixmap.scaled(min_size, aspectRatioMode=Qt.KeepAspectRatio, 
+                                                transformMode=Qt.SmoothTransformation))
+        
+        self.scalingFactor = 1
         
         layout.addWidget(self.label)
         self.setLayout(layout)
@@ -72,24 +75,24 @@ class ValveDiagramWindow(QWidget):
         sf = self.scalingFactor
         self.valve_states[name] = state
         color = "green" if state else "red"
-        self.valve_buttons[name].setStyleSheet(f"background-color: {color}; border-radius: {int(25 * sf)}px;")
+        self.valve_buttons[name].setStyleSheet(f"background-color: {color}; border-radius: {int(20 * sf)}px;")
 
     def set_dark_image(self):
         self.pixmap = QPixmap("P&ID Dark.png")
-        self.label.setScaledContents(True)
-        self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        min_size = QSize(500, int(500 / self.pixmap.width() * self.pixmap.height()))
-        self.label.setPixmap(self.pixmap.scaled(min_size, aspectRatioMode=Qt.KeepAspectRatio, 
-                                                transformMode=Qt.SmoothTransformation))
+        # self.label.setScaledContents(True)
+        # self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # min_size = QSize(500, int(500 / self.pixmap.width() * self.pixmap.height()))
+        # self.label.setPixmap(self.pixmap.scaled(self.img_size, aspectRatioMode=Qt.KeepAspectRatio, 
+        #                                         transformMode=Qt.SmoothTransformation))
         # self.label.setFixedSize(self.pixmap.size() * self.scalingFactor)
 
     def set_light_image(self):
         self.pixmap = QPixmap("P&ID Light.png")
-        self.label.setScaledContents(True)
-        self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        min_size = QSize(500, int(500 / self.pixmap.width() * self.pixmap.height()))
-        self.label.setPixmap(self.pixmap.scaled(min_size, aspectRatioMode=Qt.KeepAspectRatio, 
-                                                transformMode=Qt.SmoothTransformation))
+        # self.label.setScaledContents(True)
+        # self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # min_size = QSize(500, int(500 / self.pixmap.width() * self.pixmap.height()))
+        # self.label.setPixmap(self.pixmap.scaled(self.img_size, aspectRatioMode=Qt.KeepAspectRatio, 
+        #                                         transformMode=Qt.SmoothTransformation))
         # self.label.setFixedSize(self.pixmap.size() * self.scalingFactor)
 
     def resizeEvent(self, e):
@@ -99,9 +102,19 @@ class ValveDiagramWindow(QWidget):
             return
 
         ar = self.pixmap.width() / self.pixmap.height()
-        height = self.width() / ar
+        scaled_width = self.height() * ar   # The image width if it expanded to fill the height
+        scaled_height = self.width() / ar   # The image height if it expanded to fill the width
 
-        self.scalingFactor = height / self.pixmap.height()
+        if scaled_width <= self.width():    # If the height-limited image would fit into the width
+            self.img_size = QSize(int(scaled_width), self.height())
+        else:                               # If the width-limited image would fit into the height
+            self.img_size = QSize(self.width(), int(scaled_height))
+
+        self.label.setMaximumWidth(int(scaled_width))
+        self.label.setMaximumHeight(int(scaled_height))
+        
+        self.scalingFactor = self.img_size.height() / self.pixmap.height()
 
         self.update_button_positions()
-        self.label.setFixedHeight(int(min(height, self.height())))
+
+
