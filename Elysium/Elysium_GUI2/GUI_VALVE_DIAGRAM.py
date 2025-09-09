@@ -2,7 +2,7 @@
 # This file will display a diagram of the various valves in the Elysium 2 system.
 # They will update automatically according to various settings
 from stat import SF_APPEND
-from PyQt5.QtWidgets import QWidget, QLabel, QPushButton, QVBoxLayout
+from PyQt5.QtWidgets import QWidget, QLabel, QPushButton, QVBoxLayout, QSizePolicy
 from PyQt5.QtGui import QPixmap, QColor, QImage
 
 class ValveDiagramWindow(QWidget):
@@ -18,6 +18,8 @@ class ValveDiagramWindow(QWidget):
         # Load and display the P&ID image
         self.label = QLabel(self)
         self.set_light_image()
+        # self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # self.label.setStyleSheet("border 2px red")
         layout.addWidget(self.label)
         self.setLayout(layout)
 

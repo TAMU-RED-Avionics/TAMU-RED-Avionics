@@ -151,6 +151,9 @@ class MainWindow(QMainWindow):
             #     }
             # """
             dark_stylesheet = """
+                QMainWindow {
+                    background-color: #222222;
+                }
                 QWidget {
                     background-color: #222222;
                     color: #FFFFFF;
@@ -162,7 +165,9 @@ class MainWindow(QMainWindow):
                     border-width: 2px;
                     border-radius: 10px;
                     border-color: #999999;
-                    font: "Arail" bold 20px;
+                    font: "Arail";
+                    font-size: 16px;
+                    font-weight: bold;
                     padding: 6px;
                 }
                 QPushButton:pressed {
@@ -175,7 +180,9 @@ class MainWindow(QMainWindow):
                 QLineEdit {
                     background-color: #333333;
                     color: #FFFFFF;
-                    font: "Arail" 20px;
+                    font: "Arail";
+                    font-size: 16px;
+                    font-weight: bold;
                     border-style: inset;
                     border-width: 2px;
                     border-radius: 10px;
@@ -183,7 +190,10 @@ class MainWindow(QMainWindow):
                     padding: 2px;
                 }
                 QLabel {
-                    font: "Arail" bold 20px;
+                    font: "Arail";
+                    font-size: 16px;
+                    font-weight: bold;
+                    color: #FFFFFF;
                 }
                 ValveDiagram {
                     background-color: #222222;
@@ -193,6 +203,9 @@ class MainWindow(QMainWindow):
         else:
             # Light mode - reset to default
             light_stylesheet = """
+                QMainWindow {
+                    background-color: #FFFFFF;
+                }
                 QPushButton {
                     background-color: #FFFFFF;
                     color: #000000;
@@ -200,7 +213,9 @@ class MainWindow(QMainWindow):
                     border-width: 2px;
                     border-radius: 10px;
                     border-color: #666666;
-                    font: "Arail" bold 20px;
+                    font: "Arail";
+                    font-size: 16px;
+                    font-weight: bold;
                     padding: 6px;
                 }
                 QPushButton:hover {
@@ -214,7 +229,9 @@ class MainWindow(QMainWindow):
                 QLineEdit {
                     background-color: #FFFFFF;
                     color: #000000;
-                    font: "Arail" 20px;
+                    font: "Arail";
+                    font-size: 16px;
+                    font-weight: bold;
                     border-style: inset;
                     border-width: 2px;
                     border-radius: 10px;
@@ -222,7 +239,10 @@ class MainWindow(QMainWindow):
                     padding: 2px;
                 }
                 QLabel {
-                    font: "Arail" bold 20px;
+                    font: "Arail";
+                    font-size: 16px;
+                    font-weight: bold;
+                    color: #000000;
                 }
                 QHBoxLayout {
                     background-color: #FFFFFF;
