@@ -18,11 +18,11 @@ class ValveDiagramWindow(QWidget):
 
         # Load and display the P&ID image
         self.label = QLabel(self)
-        self.set_light_image()
+        self.pixmap = QPixmap("P&ID Light.png")
         self.label.setScaledContents(True)
         self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        min_size = QSize(int(720 / self.pixmap.height() * self.pixmap.width()), int(720))
-        self.label.setPixmap(self.pixmap.scaled(min_size, aspectRatioMode=Qt.KeepAspectRatio, 
+        self.min_size = QSize(int(600 / self.pixmap.height() * self.pixmap.width()), int(600))
+        self.label.setPixmap(self.pixmap.scaled(self.min_size, aspectRatioMode=Qt.KeepAspectRatio, 
                                                 transformMode=Qt.SmoothTransformation))
         
         self.scalingFactor = 1
@@ -79,20 +79,18 @@ class ValveDiagramWindow(QWidget):
 
     def set_dark_image(self):
         self.pixmap = QPixmap("P&ID Dark.png")
-        # self.label.setScaledContents(True)
-        # self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        # min_size = QSize(500, int(500 / self.pixmap.width() * self.pixmap.height()))
-        # self.label.setPixmap(self.pixmap.scaled(self.img_size, aspectRatioMode=Qt.KeepAspectRatio, 
-        #                                         transformMode=Qt.SmoothTransformation))
+        self.label.setScaledContents(True)
+        self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.label.setPixmap(self.pixmap.scaled(self.min_size, aspectRatioMode=Qt.KeepAspectRatio, 
+                                                transformMode=Qt.SmoothTransformation))
         # self.label.setFixedSize(self.pixmap.size() * self.scalingFactor)
 
     def set_light_image(self):
         self.pixmap = QPixmap("P&ID Light.png")
-        # self.label.setScaledContents(True)
-        # self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        # min_size = QSize(500, int(500 / self.pixmap.width() * self.pixmap.height()))
-        # self.label.setPixmap(self.pixmap.scaled(self.img_size, aspectRatioMode=Qt.KeepAspectRatio, 
-        #                                         transformMode=Qt.SmoothTransformation))
+        self.label.setScaledContents(True)
+        self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.label.setPixmap(self.pixmap.scaled(self.min_size, aspectRatioMode=Qt.KeepAspectRatio, 
+                                                transformMode=Qt.SmoothTransformation))
         # self.label.setFixedSize(self.pixmap.size() * self.scalingFactor)
 
     def resizeEvent(self, e):

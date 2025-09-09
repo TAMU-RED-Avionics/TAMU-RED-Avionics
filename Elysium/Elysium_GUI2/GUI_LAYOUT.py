@@ -1,8 +1,8 @@
 # GUI_LAYOUT.py
 # This is the master file that determines the overall layout of the various UI elements
 from re import S
-from PyQt5.QtWidgets import QMainWindow, QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QFrame
-from PyQt5.QtCore import Qt
+from PyQt5.QtWidgets import QMainWindow, QSizePolicy, QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QFrame
+from PyQt5.QtCore import QSize, Qt
 from GUI_LOGO import LogoWindow
 from GUI_CONTROLLER import GUIController
 
@@ -22,7 +22,7 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         central_widget = QWidget()
         main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(20, 20, 20, 20)
+        main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(0)
 
         # Logo layout
@@ -33,12 +33,12 @@ class MainWindow(QMainWindow):
         self.logo = LogoWindow()
 
         self.dark_mode_btn = QPushButton("Dark Mode")
-        self.dark_mode_btn.setFixedWidth(300)
+        self.dark_mode_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.dark_mode_btn.clicked.connect(self.toggle_dark_mode)
 
         self.text_size = 10
         self.text_size_btn = QPushButton("Large Text")
-        self.text_size_btn.setFixedWidth(300)
+        self.text_size_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.text_size_btn.clicked.connect(self.change_text_size)
 
         logo_layout.addWidget(self.logo)
@@ -132,6 +132,7 @@ class MainWindow(QMainWindow):
             self.controller.diagram.set_light_image()
         
         self.dark_mode_btn.setText("Light Mode" if self.dark_mode else "Dark Mode")
+        
         # Update sensor grid
         self.controller.sensor_grid.set_dark_mode(self.dark_mode)
 
