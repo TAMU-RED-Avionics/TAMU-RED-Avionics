@@ -7,3 +7,4 @@ __pycache__/
 *.o
 moc_*
 Data Analysis/Testing
+.DS_Store
