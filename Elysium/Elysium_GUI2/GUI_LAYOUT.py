@@ -33,16 +33,16 @@ class MainWindow(QMainWindow):
         self.logo = LogoWindow()
 
         self.dark_mode_btn = QPushButton("Dark Mode")
-        self.dark_mode_btn.setFixedWidth(200)
+        self.dark_mode_btn.setFixedWidth(300)
         self.dark_mode_btn.clicked.connect(self.toggle_dark_mode)
 
         self.text_size = 12
         self.text_size_btn = QPushButton("Large Text")
-        self.text_size_btn.setFixedWidth(200)
+        self.text_size_btn.setFixedWidth(300)
         self.text_size_btn.clicked.connect(self.change_text_size)
 
         logo_layout.addWidget(self.logo)
-        # logo_layout.addWidget(self.text_size_btn)
+        logo_layout.addWidget(self.text_size_btn)
         logo_layout.addWidget(self.dark_mode_btn)
         main_layout.addLayout(logo_layout)
 
@@ -99,26 +99,22 @@ class MainWindow(QMainWindow):
         return line
     
     def change_text_size(self):
-        if self.text_size == 16:
-            print("Setting to large size")
-            self.text_size = 24
+        if self.text_size == 10:
+            self.text_size = 14
             self.apply_stylesheet()
             self.text_size_btn.setText("Small Text")
 
-        elif self.text_size == 24:
-            print("Setting to small size")
-            self.text_size = 12
+        elif self.text_size == 14:
+            self.text_size = 6
             self.apply_stylesheet()
             self.text_size_btn.setText("Medium Text")
 
-        elif self.text_size == 12:
-            print("Setting to medium size")
-            self.text_size = 16
+        elif self.text_size == 6:
+            self.text_size = 10
             self.apply_stylesheet()
             self.text_size_btn.setText("Large Text")
         else:
-            print("No matching text size")
-            self.text_size = 16
+            self.text_size = 10
             self.apply_stylesheet()
             self.text_size_btn.setText("Large Text")
 
