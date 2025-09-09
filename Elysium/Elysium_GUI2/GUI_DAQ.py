@@ -17,7 +17,7 @@ class DAQWindow(QWidget):
 
         # Filename input
         self.csv_input_layout = QHBoxLayout()
-        self.csv_input_layout.setContentsMargins(10, 0, 10, 0)
+        self.csv_input_layout.setContentsMargins(0, 0, 0, 0)
         self.csv_input_layout.setSpacing(10)
 
         self.filename_label = QLabel("Enter CSV filename:")
@@ -34,6 +34,7 @@ class DAQWindow(QWidget):
         # Recording controls
         self.buttons_recording_layout = QVBoxLayout()
         self.buttons_recording_layout.setContentsMargins(0, 0, 0, 0)
+        self.buttons_recording_layout.setSpacing(10)
 
         self.start_button = QPushButton("Start Recording")
         self.start_button.clicked.connect(self.start_recording_daq)
@@ -47,6 +48,7 @@ class DAQWindow(QWidget):
         # Valve controls
         self.buttons_valve_layout = QVBoxLayout()
         self.buttons_valve_layout.setContentsMargins(0, 0, 0, 0)
+        self.buttons_valve_layout.setSpacing(10)
 
         self.manual_btn = QPushButton("Manual Valve Control")
         self.manual_btn.clicked.connect(self.controller.show_manual_valve_control)
@@ -60,7 +62,7 @@ class DAQWindow(QWidget):
         # Throttling and Gimbaling controls (Req 26)
         self.buttons_throttle_gimbal_layout = QVBoxLayout()
         self.buttons_throttle_gimbal_layout.setContentsMargins(0, 0, 0, 0)
-        self.buttons_throttle_gimbal_layout.setSpacing(0)
+        self.buttons_throttle_gimbal_layout.setSpacing(10)
 
         self.throttling_btn = QPushButton("Enable Throttling")
         self.throttling_btn.clicked.connect(self.toggle_throttling_daq)

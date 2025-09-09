@@ -22,7 +22,7 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         central_widget = QWidget()
         main_layout = QVBoxLayout()
-        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setContentsMargins(20, 20, 20, 20)
         main_layout.setSpacing(0)
 
         # Logo layout
@@ -47,7 +47,7 @@ class MainWindow(QMainWindow):
         body_lhs_layout.setContentsMargins(0, 0, 0, 0)
         body_rhs_layout.setContentsMargins(0, 0, 0, 0)
         body_horizontal_layout.setSpacing(20)
-        body_lhs_layout.setSpacing(0)
+        body_lhs_layout.setSpacing(10)
         body_rhs_layout.setSpacing(0)
         body_rhs_layout.setAlignment(Qt.AlignTop)
 
@@ -156,7 +156,7 @@ class MainWindow(QMainWindow):
                     color: #FFFFFF;
                 }
                 QPushButton {
-                    background-color: #444444;
+                    background-color: #333333;
                     color: #FFFFFF;
                     border-style: inset;
                     border-width: 2px;
@@ -173,12 +173,14 @@ class MainWindow(QMainWindow):
                     background-color: #666666;
                 }
                 QLineEdit {
-                    background-color: #444444;
+                    background-color: #333333;
                     color: #FFFFFF;
+                    font: 20px;
                     border-style: inset;
                     border-width: 2px;
                     border-radius: 10px;
                     border-color: #666666;
+                    padding: 2px;
                 }
                 QLabel {
                     font: bold 20px;
@@ -193,6 +195,7 @@ class MainWindow(QMainWindow):
             light_stylesheet = """
                 QPushButton {
                     background-color: #FFFFFF;
+                    color: #000000;
                     border-style: inset;
                     border-width: 2px;
                     border-radius: 10px;
@@ -211,10 +214,12 @@ class MainWindow(QMainWindow):
                 QLineEdit {
                     background-color: #FFFFFF;
                     color: #000000;
+                    font: 20px;
                     border-style: inset;
                     border-width: 2px;
                     border-radius: 10px;
                     border-color: #666666;
+                    padding: 2px;
                 }
                 QLabel {
                     font: bold 20px;

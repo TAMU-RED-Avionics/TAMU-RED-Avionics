@@ -12,7 +12,7 @@ class ConnectionWindow(QWidget):
         self.ethernet_client = ethernet_client
         
         eth_layout = QVBoxLayout()
-        eth_layout.setContentsMargins(10, 0, 10, 0)
+        eth_layout.setContentsMargins(0, 0, 0, 0)
         eth_layout.setSpacing(0)
 
         self.conn_status_label = QLabel("Not connected")
