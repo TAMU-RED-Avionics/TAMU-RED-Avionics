@@ -4,7 +4,7 @@
 from stat import SF_APPEND
 from PyQt5.QtWidgets import QWidget, QLabel, QPushButton, QVBoxLayout, QSizePolicy
 from PyQt5.QtGui import QPixmap, QColor, QImage
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QSize
 
 class ValveDiagramWindow(QWidget):
     def __init__(self, parent=None):
@@ -78,7 +78,8 @@ class ValveDiagramWindow(QWidget):
         self.pixmap = QPixmap("P&ID Dark.png")
         self.label.setScaledContents(True)
         self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.label.setPixmap(self.pixmap.scaled(self.size(), aspectRatioMode=Qt.KeepAspectRatio, 
+        min_size = QSize(200, 200 / self.pixmap.width() * self.pixmap.height())
+        self.label.setPixmap(self.pixmap.scaled(min_size, aspectRatioMode=Qt.KeepAspectRatio, 
                                                 transformMode=Qt.SmoothTransformation))
         # self.label.setFixedSize(self.pixmap.size() * self.scalingFactor)
 
@@ -86,14 +87,14 @@ class ValveDiagramWindow(QWidget):
         self.pixmap = QPixmap("P&ID Light.png")
         self.label.setScaledContents(True)
         self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.label.setPixmap(self.pixmap.scaled(self.size(), aspectRatioMode=Qt.KeepAspectRatio, 
+        min_size = QSize(500, 500 / self.pixmap.width() * self.pixmap.height())
+        self.label.setPixmap(self.pixmap.scaled(min_size, aspectRatioMode=Qt.KeepAspectRatio, 
                                                 transformMode=Qt.SmoothTransformation))
         # self.label.setFixedSize(self.pixmap.size() * self.scalingFactor)
 
     def resizeEvent(self, e):
         super().resizeEvent(e)
         
-
         if not self.pixmap or self.pixmap.width() == 0:
             return
 
@@ -104,10 +105,3 @@ class ValveDiagramWindow(QWidget):
 
         self.update_button_positions()
         self.label.setFixedHeight(min(height, self.height()))
-
-        # self.scaling_factor = self.label.width() / self.pixmap.width()
-        # self.set_light_image()
-
-        # self.label.setPixmap(self.pixmap.scaled(self.size(), aspectRatioMode=Qt.KeepAspectRatio, 
-        #                                         transformMode=Qt.SmoothTransformation))
-

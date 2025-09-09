@@ -11,7 +11,7 @@ class AbortWindow(QWidget):
 
         layout = QVBoxLayout()
         # layout.setContentsMargins(10, 10, 10, 10)
-        layout.setContentsMargins(0, 20, 0, 20)
+        layout.setContentsMargins(0, 10, 0, 10)
         layout.setSpacing(10)
         
         self.manual_abort_btn = QPushButton("MANUAL ABORT")
