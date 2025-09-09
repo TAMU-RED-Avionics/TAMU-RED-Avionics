@@ -28,14 +28,21 @@ class MainWindow(QMainWindow):
         # Logo layout
         logo_layout = QHBoxLayout()
         logo_layout.setContentsMargins(0, 0, 0, 0)
-        logo_layout.setSpacing(0)
+        logo_layout.setSpacing(20)
 
         self.logo = LogoWindow()
+
         self.dark_mode_btn = QPushButton("Dark Mode")
-        self.dark_mode_btn.setStyleSheet("min-width: 10em")
-        self.dark_mode_btn.setFixedWidth(100)
+        self.dark_mode_btn.setFixedWidth(200)
         self.dark_mode_btn.clicked.connect(self.toggle_dark_mode)
+
+        self.text_size = 12
+        self.text_size_btn = QPushButton("Large Text")
+        self.text_size_btn.setFixedWidth(200)
+        self.text_size_btn.clicked.connect(self.change_text_size)
+
         logo_layout.addWidget(self.logo)
+        # logo_layout.addWidget(self.text_size_btn)
         logo_layout.addWidget(self.dark_mode_btn)
         main_layout.addLayout(logo_layout)
 
@@ -90,6 +97,31 @@ class MainWindow(QMainWindow):
         line.setFrameShape(QFrame.HLine)
         line.setFrameShadow(QFrame.Sunken)
         return line
+    
+    def change_text_size(self):
+        if self.text_size == 16:
+            print("Setting to large size")
+            self.text_size = 24
+            self.apply_stylesheet()
+            self.text_size_btn.setText("Small Text")
+
+        elif self.text_size == 24:
+            print("Setting to small size")
+            self.text_size = 12
+            self.apply_stylesheet()
+            self.text_size_btn.setText("Medium Text")
+
+        elif self.text_size == 12:
+            print("Setting to medium size")
+            self.text_size = 16
+            self.apply_stylesheet()
+            self.text_size_btn.setText("Large Text")
+        else:
+            print("No matching text size")
+            self.text_size = 16
+            self.apply_stylesheet()
+            self.text_size_btn.setText("Large Text")
+
 
     def toggle_dark_mode(self):
         """Toggle between dark and light mode"""
@@ -150,108 +182,108 @@ class MainWindow(QMainWindow):
             #         background-color: #222222;
             #     }
             # """
-            dark_stylesheet = """
-                QMainWindow {
+            dark_stylesheet = f"""
+                QMainWindow {{
                     background-color: #222222;
-                }
-                QWidget {
+                }}
+                QWidget {{
                     background-color: #222222;
                     color: #FFFFFF;
-                }
-                QPushButton {
+                }}
+                QPushButton {{
                     background-color: #333333;
                     color: #FFFFFF;
                     border-style: inset;
                     border-width: 2px;
                     border-radius: 10px;
                     border-color: #999999;
-                    font: "Arail";
-                    font-size: 16px;
+                    font-family: "Arail";
+                    font-size: {self.text_size}pt;
                     font-weight: bold;
                     padding: 6px;
-                }
-                QPushButton:pressed {
+                }}
+                QPushButton:pressed {{
                     background-color: #222222;
                     border-style: inset;
-                }
-                QPushButton:hover {
+                }}
+                QPushButton:hover {{
                     background-color: #666666;
-                }
-                QLineEdit {
+                }}
+                QLineEdit {{
                     background-color: #333333;
                     color: #FFFFFF;
-                    font: "Arail";
-                    font-size: 16px;
+                    font-family: "Arail";
+                    font-size: {self.text_size}pt;
                     font-weight: bold;
                     border-style: inset;
                     border-width: 2px;
                     border-radius: 10px;
                     border-color: #666666;
                     padding: 2px;
-                }
-                QLabel {
-                    font: "Arail";
-                    font-size: 16px;
+                }}
+                QLabel {{
+                    font-family: "Arail";
+                    font-size: {self.text_size}pt;
                     font-weight: bold;
                     color: #FFFFFF;
-                }
-                ValveDiagram {
+                }}
+                ValveDiagram {{
                     background-color: #222222;
-                }
+                }}
             """
             self.setStyleSheet(dark_stylesheet)
         else:
             # Light mode - reset to default
-            light_stylesheet = """
-                QMainWindow {
+            light_stylesheet = f"""
+                QMainWindow {{
                     background-color: #FFFFFF;
-                }
-                QPushButton {
+                }}
+                QPushButton {{
                     background-color: #FFFFFF;
                     color: #000000;
                     border-style: inset;
                     border-width: 2px;
                     border-radius: 10px;
                     border-color: #666666;
-                    font: "Arail";
-                    font-size: 16px;
+                    font-family: "Arail";
+                    font-size: {self.text_size}pt;
                     font-weight: bold;
                     padding: 6px;
-                }
-                QPushButton:hover {
+                }}
+                QPushButton:hover {{
                     background-color: #CCCCCC;
                     border-style: inset;
-                }
-                QPushButton:pressed {
+                }}
+                QPushButton:pressed {{
                     background-color: #666666;
                     border-style: inset;
-                }
-                QLineEdit {
+                }}
+                QLineEdit {{
                     background-color: #FFFFFF;
                     color: #000000;
-                    font: "Arail";
-                    font-size: 16px;
+                    font-family: "Arail";
+                    font-size: {self.text_size}pt;
                     font-weight: bold;
                     border-style: inset;
                     border-width: 2px;
                     border-radius: 10px;
                     border-color: #666666;
                     padding: 2px;
-                }
-                QLabel {
-                    font: "Arail";
-                    font-size: 16px;
+                }}
+                QLabel {{
+                    font-family: "Arail";
+                    font-size: {self.text_size}pt;
                     font-weight: bold;
                     color: #000000;
-                }
-                QHBoxLayout {
+                }}
+                QHBoxLayout {{
                     background-color: #FFFFFF;
-                }
-                QVBoxLayout {
+                }}
+                QVBoxLayout {{
                     background-color: #FFFFFF;
-                }
-                ValveDiagram {
+                }}
+                ValveDiagram {{
                     background-color: #FFFFFF;
-                }
+                }}
             """
             self.setStyleSheet(light_stylesheet)

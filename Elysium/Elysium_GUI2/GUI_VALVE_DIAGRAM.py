@@ -78,7 +78,7 @@ class ValveDiagramWindow(QWidget):
         self.pixmap = QPixmap("P&ID Dark.png")
         self.label.setScaledContents(True)
         self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        min_size = QSize(200, 200 / self.pixmap.width() * self.pixmap.height())
+        min_size = QSize(500, int(500 / self.pixmap.width() * self.pixmap.height()))
         self.label.setPixmap(self.pixmap.scaled(min_size, aspectRatioMode=Qt.KeepAspectRatio, 
                                                 transformMode=Qt.SmoothTransformation))
         # self.label.setFixedSize(self.pixmap.size() * self.scalingFactor)
@@ -87,7 +87,7 @@ class ValveDiagramWindow(QWidget):
         self.pixmap = QPixmap("P&ID Light.png")
         self.label.setScaledContents(True)
         self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        min_size = QSize(500, 500 / self.pixmap.width() * self.pixmap.height())
+        min_size = QSize(500, int(500 / self.pixmap.width() * self.pixmap.height()))
         self.label.setPixmap(self.pixmap.scaled(min_size, aspectRatioMode=Qt.KeepAspectRatio, 
                                                 transformMode=Qt.SmoothTransformation))
         # self.label.setFixedSize(self.pixmap.size() * self.scalingFactor)
@@ -104,4 +104,4 @@ class ValveDiagramWindow(QWidget):
         self.scalingFactor = height / self.pixmap.height()
 
         self.update_button_positions()
-        self.label.setFixedHeight(min(height, self.height()))
+        self.label.setFixedHeight(int(min(height, self.height())))
