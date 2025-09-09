@@ -33,6 +33,7 @@ class MainWindow(QMainWindow):
         logo_widget = LogoWindow("RED Logo White.png")
         # logo_widget.setStyleSheet("border: 2px solid red;")
         self.dark_mode_btn = QPushButton("Dark Mode")
+        self.dark_mode_btn.setStyleSheet("min-width: 10em")
         self.dark_mode_btn.setFixedWidth(100)
         self.dark_mode_btn.clicked.connect(self.toggle_dark_mode)
         logo_layout.addWidget(logo_widget)
@@ -80,6 +81,8 @@ class MainWindow(QMainWindow):
         body_horizontal_layout.addLayout(body_rhs_layout)
         main_layout.addLayout(body_horizontal_layout)
 
+        self.apply_stylesheet()
+
         central_widget.setLayout(main_layout)
         self.setCentralWidget(central_widget)
 
@@ -100,48 +103,98 @@ class MainWindow(QMainWindow):
     def apply_stylesheet(self):
         """Apply appropriate stylesheet based on current mode"""
         if self.dark_mode:
+            # dark_stylesheet = """
+            #     QWidget {
+            #         background-color: #333333;
+            #         color: #EEEEEE;
+            #     }
+            #     QLabel {
+            #         color: #EEEEEE;
+            #     }
+            #     QPushButton {
+            #         background-color: #555555;
+            #         color: #EEEEEE;
+            #         border: 1px solid #888888;
+            #     }
+            #     QPushButton:hover {
+            #         background-color: #666666;
+            #     }
+            #     QPushButton:pressed {
+            #         background-color: #444444;
+            #     }
+            #     QLineEdit {
+            #         background-color: #444444;
+            #         color: #EEEEEE;
+            #         border: 1px solid #555555;
+            #     }
+            #     QCheckBox {
+            #         color: #EEEEEE;
+            #     }
+            #     QScrollArea {
+            #         background-color: #333333;
+            #     }
+            #     QFrame {
+            #         background-color: #555555;
+            #     }
+            #     QDialog {
+            #         background-color: #333333;
+            #     }
+            #     /* Valve diagram background */
+            #     ValveDiagram {
+            #         background-color: #222222;
+            #     }
+            # """
             dark_stylesheet = """
                 QWidget {
-                    background-color: #333333;
-                    color: #EEEEEE;
-                }
-                QLabel {
-                    color: #EEEEEE;
+                    background-color: #555555;
+                    color: white;
                 }
                 QPushButton {
                     background-color: #555555;
-                    color: #EEEEEE;
-                    border: 1px solid #888888;
+                    color: white;
+                    border-style: inset;
+                    border-width: 2px;
+                    border-radius: 10px;
+                    border-color: #999999;
+                    font: bold 20px;
+                    padding: 6px;
+                }
+                QPushButton:pressed {
+                    background-color: #555555;
+                    border-style: inset;
                 }
                 QPushButton:hover {
                     background-color: #666666;
                 }
-                QPushButton:pressed {
-                    background-color: #444444;
-                }
-                QLineEdit {
-                    background-color: #444444;
-                    color: #EEEEEE;
-                    border: 1px solid #555555;
-                }
-                QCheckBox {
-                    color: #EEEEEE;
-                }
-                QScrollArea {
-                    background-color: #333333;
-                }
-                QFrame {
-                    background-color: #555555;
-                }
-                QDialog {
-                    background-color: #333333;
-                }
-                /* Valve diagram background */
-                ValveDiagram {
-                    background-color: #222222;
+                QLabel {
+                    font: bold 20px;
                 }
             """
             self.setStyleSheet(dark_stylesheet)
         else:
             # Light mode - reset to default
-            self.setStyleSheet("")
+            light_stylesheet = """
+                QPushButton {
+                    background-color: white;
+                    border-style: inset;
+                    border-width: 2px;
+                    border-radius: 10px;
+                    border-color: gray;
+                    font: bold 20px;
+                    padding: 6px;
+                }
+                QPushButton:pressed {
+                    background-color: gray;
+                    border-style: inset;
+                }
+                QLabel {
+                    font: bold 20px;
+                }
+                QHBoxLayout {
+                    background-color: white;
+                }
+                QVBoxLayout {
+                    background-color: white;
+                }
+            """
+            self.setStyleSheet(light_stylesheet)
