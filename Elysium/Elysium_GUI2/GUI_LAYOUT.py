@@ -162,7 +162,7 @@ class MainWindow(QMainWindow):
                     border-width: 2px;
                     border-radius: 10px;
                     border-color: #999999;
-                    font: bold 20px;
+                    font: "Arail" bold 20px;
                     padding: 6px;
                 }
                 QPushButton:pressed {
@@ -175,7 +175,7 @@ class MainWindow(QMainWindow):
                 QLineEdit {
                     background-color: #333333;
                     color: #FFFFFF;
-                    font: 20px;
+                    font: "Arail" 20px;
                     border-style: inset;
                     border-width: 2px;
                     border-radius: 10px;
@@ -183,7 +183,7 @@ class MainWindow(QMainWindow):
                     padding: 2px;
                 }
                 QLabel {
-                    font: bold 20px;
+                    font: "Arail" bold 20px;
                 }
                 ValveDiagram {
                     background-color: #222222;
@@ -200,7 +200,7 @@ class MainWindow(QMainWindow):
                     border-width: 2px;
                     border-radius: 10px;
                     border-color: #666666;
-                    font: bold 20px;
+                    font: "Arail" bold 20px;
                     padding: 6px;
                 }
                 QPushButton:hover {
@@ -214,7 +214,7 @@ class MainWindow(QMainWindow):
                 QLineEdit {
                     background-color: #FFFFFF;
                     color: #000000;
-                    font: 20px;
+                    font: "Arail" 20px;
                     border-style: inset;
                     border-width: 2px;
                     border-radius: 10px;
@@ -222,7 +222,7 @@ class MainWindow(QMainWindow):
                     padding: 2px;
                 }
                 QLabel {
-                    font: bold 20px;
+                    font: "Arail" bold 20px;
                 }
                 QHBoxLayout {
                     background-color: #FFFFFF;
