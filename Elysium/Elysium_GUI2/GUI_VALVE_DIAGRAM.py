@@ -3,7 +3,7 @@
 # They will update automatically according to various settings
 from stat import SF_APPEND
 from PyQt5.QtWidgets import QWidget, QLabel, QPushButton, QVBoxLayout
-from PyQt5.QtGui import QPixmap
+from PyQt5.QtGui import QPixmap, QColor, QImage
 
 class ValveDiagramWindow(QWidget):
     def __init__(self, parent=None):
@@ -13,16 +13,11 @@ class ValveDiagramWindow(QWidget):
         layout.setSpacing(0)
 
         # Adjusts the size of this picture
-        self.scalingFactor = 0.65
+        self.scalingFactor = 1
 
         # Load and display the P&ID image
         self.label = QLabel(self)
-        pixmap = QPixmap("P&ID.png")
-        self.label.setPixmap(pixmap)
-        self.label.setScaledContents(True)
-        self.label.setFixedSize(pixmap.size() * self.scalingFactor)
-
-        
+        self.set_light_image()
         layout.addWidget(self.label)
         self.setLayout(layout)
 
@@ -57,8 +52,8 @@ class ValveDiagramWindow(QWidget):
             sf = self.scalingFactor
 
             btn = QPushButton("", self.label)
-            btn.setGeometry(int(x * sf), int(y * sf), 30, 30)
-            btn.setStyleSheet("background-color: red; border-radius: 15px;")
+            btn.setGeometry(int(x * sf), int(y * sf), 40, 40)
+            btn.setStyleSheet("background-color: red; border-radius: 20px;")
             btn.setEnabled(False)  # Make non-clickable
             self.valve_buttons[name] = btn
     
@@ -66,4 +61,16 @@ class ValveDiagramWindow(QWidget):
     def set_valve_state(self, name, state):
         self.valve_states[name] = state
         color = "green" if state else "red"
-        self.valve_buttons[name].setStyleSheet(f"background-color: {color}; border-radius: 15px;")
+        self.valve_buttons[name].setStyleSheet(f"background-color: {color}; border-radius: 20px;")
+
+    def set_dark_image(self):
+        pixmap = QPixmap("P&ID Dark.png")
+        self.label.setPixmap(pixmap)
+        self.label.setScaledContents(True)
+        self.label.setFixedSize(pixmap.size() * self.scalingFactor)
+
+    def set_light_image(self):
+        pixmap = QPixmap("P&ID Light.png")
+        self.label.setPixmap(pixmap)
+        self.label.setScaledContents(True)
+        self.label.setFixedSize(pixmap.size() * self.scalingFactor)

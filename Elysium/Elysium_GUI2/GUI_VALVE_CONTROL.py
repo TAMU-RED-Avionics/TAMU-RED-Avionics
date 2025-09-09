@@ -9,34 +9,20 @@ class ValveControlWindow(QWidget):
 
         top_layout = QVBoxLayout()
         top_layout.setContentsMargins(0, 0, 0, 0)
-        top_layout.setSpacing(0)
+        top_layout.setSpacing(10)
 
         operations_layout = QHBoxLayout()
-        # operations_layout.setAlignment(Qt.AlignTop)
         operations_layout.setContentsMargins(0, 0, 0, 0)
-        # operations_layout.setSpacing(20)
         operations_layout.setSpacing(10)
-
-        fire_sequence_layout = QHBoxLayout()    # we create a layout to add padding
-        fire_sequence_layout.setContentsMargins(0, 0, 0, 0)  # left, top, right, bottom padding
-        fire_sequence_layout.setSpacing(0)
-        # fire_sequence_layout.setSpacing(-10)
 
         self.fire_sequence_btn = QPushButton("Auto Fire Sequence")
         self.fire_sequence_btn.clicked.connect(show_fire_sequence_dialog)
-        # self.fire_sequence_btn.setFont(QFont("Arial", 10, QFont.Bold))
-        # self.fire_sequence_btn.setMinimumHeight(40)
-        # self.fire_sequence_btn.setStyleSheet("border: 2px solid red;")
-        fire_sequence_layout.addWidget(self.fire_sequence_btn)
 
-        # top_layout.addWidget(self.fire_sequence_btn)
-        top_layout.addLayout(fire_sequence_layout)
-        
+        top_layout.addWidget(self.fire_sequence_btn)
 
         current_column_layout = QVBoxLayout()
         current_column_layout.setContentsMargins(0, 0, 0, 0)
-        # current_column_layout.setSpacing(10)
-        # current_column_layout.setSpacing(0)
+        current_column_layout.setSpacing(10)
 
         if show_fire_sequence_dialog and apply_valve_state:
             for op in self.valve_states:
@@ -44,8 +30,6 @@ class ValveControlWindow(QWidget):
                     continue
                 
                 btn = QPushButton(op)
-                # btn.setFont(QFont("Arial", 10, QFont.Bold))
-                # btn.setMinimumHeight(40)
                 btn.clicked.connect(lambda checked, o=op: apply_valve_state(o))
                 current_column_layout.addWidget(btn)
 
@@ -54,6 +38,7 @@ class ValveControlWindow(QWidget):
                     operations_layout.addLayout(current_column_layout)
                     current_column_layout = QVBoxLayout()
                     current_column_layout.setContentsMargins(0, 0, 0, 0)
+                    current_column_layout.setSpacing(10)
 
         operations_layout.addLayout(current_column_layout)
         top_layout.addLayout(operations_layout)

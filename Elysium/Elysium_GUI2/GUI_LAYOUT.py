@@ -30,13 +30,12 @@ class MainWindow(QMainWindow):
         logo_layout.setContentsMargins(0, 0, 0, 0)
         logo_layout.setSpacing(0)
 
-        logo_widget = LogoWindow("RED Logo White.png")
-        # logo_widget.setStyleSheet("border: 2px solid red;")
+        self.logo = LogoWindow()
         self.dark_mode_btn = QPushButton("Dark Mode")
         self.dark_mode_btn.setStyleSheet("min-width: 10em")
         self.dark_mode_btn.setFixedWidth(100)
         self.dark_mode_btn.clicked.connect(self.toggle_dark_mode)
-        logo_layout.addWidget(logo_widget)
+        logo_layout.addWidget(self.logo)
         logo_layout.addWidget(self.dark_mode_btn)
         main_layout.addLayout(logo_layout)
 
@@ -96,6 +95,13 @@ class MainWindow(QMainWindow):
         """Toggle between dark and light mode"""
         self.dark_mode = not self.dark_mode
         self.apply_stylesheet()
+        if self.dark_mode:
+            self.logo.set_dark_image()
+            self.controller.diagram.set_dark_image()
+        else:
+            self.logo.set_light_image()
+            self.controller.diagram.set_light_image()
+        
         self.dark_mode_btn.setText("Light Mode" if self.dark_mode else "Dark Mode")
         # Update sensor grid
         self.controller.sensor_grid.set_dark_mode(self.dark_mode)
@@ -146,11 +152,11 @@ class MainWindow(QMainWindow):
             # """
             dark_stylesheet = """
                 QWidget {
-                    background-color: #555555;
+                    background-color: #222222;
                     color: white;
                 }
                 QPushButton {
-                    background-color: #555555;
+                    background-color: #444444;
                     color: white;
                     border-style: inset;
                     border-width: 2px;
@@ -160,7 +166,7 @@ class MainWindow(QMainWindow):
                     padding: 6px;
                 }
                 QPushButton:pressed {
-                    background-color: #555555;
+                    background-color: #222222;
                     border-style: inset;
                 }
                 QPushButton:hover {
@@ -169,32 +175,42 @@ class MainWindow(QMainWindow):
                 QLabel {
                     font: bold 20px;
                 }
+                ValveDiagram {
+                    background-color: #222222;
+                }
             """
             self.setStyleSheet(dark_stylesheet)
         else:
             # Light mode - reset to default
             light_stylesheet = """
                 QPushButton {
-                    background-color: white;
+                    background-color: #FFFFFF;
                     border-style: inset;
                     border-width: 2px;
                     border-radius: 10px;
-                    border-color: gray;
+                    border-color: #666666;
                     font: bold 20px;
                     padding: 6px;
                 }
+                QPushButton:hover {
+                    background-color: #CCCCCC;
+                    border-style: inset;
+                }
                 QPushButton:pressed {
-                    background-color: gray;
+                    background-color: #666666;
                     border-style: inset;
                 }
                 QLabel {
                     font: bold 20px;
                 }
                 QHBoxLayout {
-                    background-color: white;
+                    background-color: #FFFFFF;
                 }
                 QVBoxLayout {
-                    background-color: white;
+                    background-color: #FFFFFF;
+                }
+                ValveDiagram {
+                    background-color: #FFFFFF;
                 }
             """
             self.setStyleSheet(light_stylesheet)
