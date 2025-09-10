@@ -21,7 +21,7 @@ class ValveDiagramWindow(QWidget):
         self.pixmap = QPixmap("P&ID Light.png")
         self.label.setScaledContents(True)
         self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.min_size = QSize(int(600 / self.pixmap.height() * self.pixmap.width()), int(600))
+        self.min_size = QSize(int(720 / self.pixmap.height() * self.pixmap.width()), int(720))
         self.label.setPixmap(self.pixmap.scaled(self.min_size, aspectRatioMode=Qt.KeepAspectRatio, 
                                                 transformMode=Qt.SmoothTransformation))
         
