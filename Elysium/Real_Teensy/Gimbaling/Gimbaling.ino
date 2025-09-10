@@ -560,11 +560,35 @@ const float stepper_yaw_angles[2901] = [108.468000,108.450000,108.432000,108.414
 
 // TODO: Implement the Ethernet library
 
+unsigned int PORT = 8888; 
+EthernetUDP udp;
+byte MAC_ADDRESS[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED}; // USER INPUT -> ADD THE MAC ADDRESS
+IPAddress REMOTE(192, 168, 1, 175); 
+IPAddress LOCAL(192, 168, 1, 174);
+
+char packetBuffer[UDP_TX_PACKET_MAX_SIZE];
+
 
 
 
 void setup() {
   // set known values for setter motor
+
+  // Conection setup
+  Ethernet.begin(MAC_ADDRESS,REMOTE);
+
+
+  // Check for Ethernet hardware present
+  while(Ethernet.hardwareStatus() == EthernetNoHardware)
+  {
+    Serial.println("Ethernet Shield Not Connected!");
+  }
+  while (Ethernet.linkStatus() == LinkOFF) 
+  {
+    Serial.println("Ethernet cable is not connected.");
+  }
+
+  udp.begin(LOCAL);
 
   pStepper.setMaxSpeed(4000); // Set max speed of stepper motor -> CHANGE IF NESSECCARY
   pStepper.setAcceleration(2000); // Set acceleration of stepper motor -> CHANGE IF NESSECCARY  
@@ -616,15 +640,21 @@ void yStopAndReturnGimbaling(){
 
 void loop() {
 
-  if(EthernetBoolVal) // TODO: Implement Ethernet First
+  int packetSize = Udp.parsePacket();
+
+  if(packetSize && sizeof(packetSize) == 1)
   {
-    pRunGimbaling();
-    yRunGimbaling();
-  }
-  else
-  {
-    pStopAndReturnGimbaling();
-    yStopAndReturnGimbaling();
+    
+    if(bool(packetSize)) // TODO: Implement Ethernet First
+    {
+      pRunGimbaling();
+      yRunGimbaling();
+    }
+    else
+    {
+      pStopAndReturnGimbaling();
+      yStopAndReturnGimbaling();
+    }
   }
 
 }
