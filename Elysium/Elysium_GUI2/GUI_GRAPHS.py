@@ -234,7 +234,7 @@ class SensorGridWindow(QWidget):
         for sensor in self.sensors:
             self.update_sensor_style(sensor)
         for graph in self.graphs.values():
-            graph.set_dark_mode(dark)
+            graph.sensor_graph.set_dark_mode(dark)
 
     def _update_sensor_value(self, sensor, value):
         if sensor not in self.value_labels:
