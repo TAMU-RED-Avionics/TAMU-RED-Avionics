@@ -1,8 +1,5 @@
 #include <Arduino.h>
 #include <AccelStepper.h>
-#include <NativeEthernet.h>
-#include <NativeEthernetUdp.h>
-#include <IPAddress.h>
 #include "Gimbal_Angles.h"
 
 
@@ -22,42 +19,11 @@ const int motorInterfaceType  = 1; // Define the motor interface type (1 = Drive
 AccelStepper pStepper(motorInterfaceType, pDirPin, pStepPin); // Create an instance of the AccelStepper library
 AccelStepper yStepper(motorInterfaceType, yDirPin, yStepPin); // Create an instance of the AccelStepper libraryv
 
-// Define all the hard-coded angles for stepper motor -> Warning this is a BIG array
-
-
-
-
-// TODO: Implement the Ethernet library
-
-unsigned int PORT = 8888; 
-EthernetUDP udp;
-byte MAC_ADDRESS[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED}; // USER INPUT -> ADD THE MAC ADDRESS
-IPAddress REMOTE(192, 168, 1, 175); 
-IPAddress LOCAL(192, 168, 1, 174);
-
-char packetBuffer[UDP_TX_PACKET_MAX_SIZE];
-
 
 
 
 void setup() {
   // set known values for setter motor
-
-  // Conection setup
-  Ethernet.begin(MAC_ADDRESS,REMOTE);
-
-
-  // Check for Ethernet hardware present
-  while(Ethernet.hardwareStatus() == EthernetNoHardware)
-  {
-    Serial.println("Ethernet Shield Not Connected!");
-  }
-  while (Ethernet.linkStatus() == LinkOFF) 
-  {
-    Serial.println("Ethernet cable is not connected.");
-  }
-
-  udp.begin(LOCAL);
 
   pStepper.setMaxSpeed(4000); // Set max speed of stepper motor -> CHANGE IF NESSECCARY
   pStepper.setAcceleration(2000); // Set acceleration of stepper motor -> CHANGE IF NESSECCARY  
@@ -84,14 +50,14 @@ void ySetGimbalAngle(float& targetAngle) {
 // Define motion when received the TRUE Packet from GUI
 void pRunGimbaling(){
   for(float angle: stepper_pitch_angles){
-    setGimbalAngle(angle);
+    pSetGimbalAngle(angle);
     pStepper.runToPosition();
   }
 }
 
 void yRunGimbaling(){
   for(float angle: stepper_yaw_angles){
-    setGimbalAngle(angle);
+    ySetGimbalAngle(angle);
     yStepper.runToPosition();
   }
 }
@@ -109,21 +75,19 @@ void yStopAndReturnGimbaling(){
 
 void loop() {
 
-  int packetSize = Udp.parsePacket();
 
-  if(packetSize && sizeof(packetSize) == 1)
+  // Define the bool onGimbal so that it can start implementing 
+  if(true) // FIXME: ADD bool val here once All files are implemented into a main loop
   {
-    
-    if(bool(packetSize)) // TODO: Implement Ethernet First
-    {
+    do
+    { 
       pRunGimbaling();
       yRunGimbaling();
-    }
-    else
-    {
-      pStopAndReturnGimbaling();
-      yStopAndReturnGimbaling();
-    }
+    } while(false); // FIXME: ADD bool val here once All files are implemented into a main loop
   }
-
+  else
+  {
+    pStopAndReturnGimbaling();
+    yStopAndReturnGimbaling();
+  }
 }
