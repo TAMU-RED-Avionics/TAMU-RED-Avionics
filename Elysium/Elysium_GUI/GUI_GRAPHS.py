@@ -6,12 +6,13 @@ from PyQt5.QtCore import Qt, QDateTime, pyqtSignal, QObject
 from PyQt5.QtGui import QFont
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+from typing import Dict, Tuple
 
 class SensorSignals(QObject):
     update_signal = pyqtSignal(str, float)
 
 class SensorPopupGraph(QDialog):
-    def __init__(self, sensor_name, parent=None):
+    def __init__(self, sensor_name: str, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"{sensor_name} - Live Graph")
         self.resize(800, 500)
@@ -30,6 +31,7 @@ class SensorPopupGraph(QDialog):
 class SensorGraph(QWidget):
     def __init__(self, sensor_name, parent=None):
         super().__init__(parent)
+        self.sensor_name = sensor_name
         
         self.timestamps = deque(maxlen=100)
         self.values = deque(maxlen=100)
@@ -37,9 +39,11 @@ class SensorGraph(QWidget):
         self.figure = Figure()
         self.canvas = FigureCanvas(self.figure)
         self.ax = self.figure.add_subplot(111)
+
+        self.figure.set_constrained_layout(True)
         
-        unit = self.get_unit(sensor_name)
-        self.ax.set_title(f"{sensor_name} ({unit})")
+        unit = self.get_unit(self.sensor_name)
+        self.ax.set_title(f"{self.sensor_name} ({unit})")
         self.ax.set_xlabel("Time (seconds ago)")
         self.ax.set_ylabel(f"Value ({unit})")
         self.line, = self.ax.plot([], [], 'g-', linewidth=2)
@@ -115,37 +119,39 @@ class SensorGridWindow(QWidget):
     def __init__(self):
         super().__init__()
         self.signals = SensorSignals()
-        self.signals.update_signal.connect(self._update_sensor_value)
+        self.signals.update_signal.connect(self.update_sensor_value)
         
         self.grid = QGridLayout()
         self.grid.setContentsMargins(0, 0, 0, 0)
         self.grid.setSpacing(10)
         self.setLayout(self.grid)
-        
-        self.sensor_frames = {}  # Container frames for each sensor
-        self.sensor_labels = {}  # Sensor name labels
-        self.value_labels = {}   # Value display labels
-        self.unit_labels = {}   # Unit labels
-        self.graphs = {}
-        self.sensor_history = {}
-        self.dark_mode = False
-        
+
         self.sensors = [f"P{i}" for i in range(1, 9)] + \
                       [f"TC{i}" for i in range(1, 4)] + \
                       [f"LC{i}" for i in range(1, 4)] + \
                       [f"B{i}" for i in range(1, 3)]
         
+        self.sensor_frames: Dict[str, QFrame] = {}  # Container frames for each sensor
+        self.sensor_labels: Dict[str, str] = {}  # Sensor name labels
+        self.value_labels: Dict[str, str] = {}   # Value display labels
+        self.unit_labels: Dict[str, str] = {}   # Unit labels
+        self.graphs: Dict[str, SensorPopupGraph] = {}
+        self.main_graph: SensorGraph = None
+        self.sensor_history: Dict[str, deque[Tuple[float, float]]] = {}
+        self.dark_mode = False
+
+        self.update_main_graph(self.sensors[0])
+
         for idx, name in enumerate(self.sensors):
-            self._create_sensor_box(name, idx)
+            self.create_sensor_box(name, idx)
             self.sensor_history[name] = deque(maxlen=100)
 
-    def _create_sensor_box(self, name, idx):
+    def create_sensor_box(self, name, idx):
         """Create a bordered box for each sensor with labels inside"""
         # Create frame with border
         frame = QFrame()
         frame.setFrameShape(QFrame.Box)
         frame.setLineWidth(2)
-        frame.setStyleSheet("border-radius: 5px;")
         
         # Layout for the frame
         frame_layout = QHBoxLayout(frame)
@@ -185,8 +191,9 @@ class SensorGridWindow(QWidget):
         self.unit_labels[name] = unit_label
         
         # Make entire frame clickable to open graph
-        frame.mousePressEvent = lambda event, sn=name: self.open_graph(sn)
-        
+        frame.mousePressEvent = lambda event, sn=name: self.update_main_graph(sn)
+        frame.mouseDoubleClickEvent = lambda event, sn=name: self.open_graph(sn)
+
         # Apply initial styling
         self.update_sensor_style(name)
 
@@ -231,12 +238,14 @@ class SensorGridWindow(QWidget):
 
     def set_dark_mode(self, dark):
         self.dark_mode = dark
+        if self.main_graph:
+            self.main_graph.set_dark_mode(self.dark_mode)
         for sensor in self.sensors:
             self.update_sensor_style(sensor)
         for graph in self.graphs.values():
             graph.sensor_graph.set_dark_mode(dark)
 
-    def _update_sensor_value(self, sensor, value):
+    def update_sensor_value(self, sensor, value):
         if sensor not in self.value_labels:
             return
             
@@ -246,6 +255,40 @@ class SensorGridWindow(QWidget):
         
         if sensor in self.graphs:
             self.graphs[sensor].update_graph(value, current_time)
+        
+        if sensor == self.main_graph.sensor_name:
+            self.main_graph.update_graph(value, current_time)
+
+    def update_main_graph(self, sensor):
+        # If we already have a main_graph update its data to maintain the link to the UI
+        if self.main_graph:
+            # Update the sensor name and title
+            self.main_graph.sensor_name = sensor
+            unit = self.main_graph.get_unit(sensor)
+            self.main_graph.ax.set_title(f"{sensor} ({unit})")
+            self.main_graph.ax.set_ylabel(f"Value ({unit})")
+            
+            # Clear existing data
+            self.main_graph.timestamps.clear()
+            self.main_graph.values.clear()
+            self.main_graph.line.set_data([], [])
+            # self.main_graph.ax.set_xlim(-10, 0)   # Most likely not necessary
+            self.main_graph.canvas.draw()
+            
+            # Load historical data for this sensor
+            history = self.sensor_history.get(sensor, [])
+            for ts, val in history:
+                self.main_graph.update_graph(val, ts)
+        else:
+            # Create new graph only if we don't have one yet
+            self.main_graph = SensorGraph(sensor)
+            self.main_graph.set_dark_mode(self.dark_mode)
+            self.main_graph.canvas.draw()
+            
+            history = self.sensor_history.get(sensor, [])
+            for ts, val in history:
+                self.main_graph.update_graph(val, ts)
+        
 
     def open_graph(self, sensor):
         if sensor not in self.graphs:

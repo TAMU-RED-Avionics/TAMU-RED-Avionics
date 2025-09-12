@@ -11,7 +11,7 @@ from GUI_DAQ import DAQWindow
 from GUI_COMMS import EthernetClient, CommsSignals
 from GUI_CONNECT import ConnectionWindow
 from GUI_VALVE_DIAGRAM import ValveDiagramWindow
-from GUI_GRAPHS import SensorGridWindow
+from GUI_GRAPHS import SensorGridWindow, SensorGraph
 from GUI_VALVE_CONTROL import ValveControlWindow
 
 class GUIController:
@@ -53,6 +53,7 @@ class GUIController:
         self.valve_control = ValveControlWindow(apply_valve_state=self.apply_valve_state, show_fire_sequence_dialog=self.show_fire_sequence_dialog)
         self.status_label = QLabel("Current State: None")
         self.sensor_grid = SensorGridWindow()
+        self.sensor_graph = SensorGraph("P1")
         self.daq_window = DAQWindow(self)
         self.abort_menu = AbortWindow(trigger_manual_abort=self.trigger_manual_abort, confirm_safe_state=self.confirm_safe_state)
 

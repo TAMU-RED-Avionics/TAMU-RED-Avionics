@@ -10,7 +10,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Rocket Engine Control Panel")
-        self.setGeometry(100, 100, 1280, 720)
+        self.setGeometry(10, 10, 1280, 720)
 
         # Dark mode is the only setting where it makes sense to have contained to this window
         self.dark_mode = False
@@ -91,6 +91,9 @@ class MainWindow(QMainWindow):
         self.controller.status_label.setAlignment(Qt.AlignCenter)
         sensor_lhs_layout.addWidget(self.controller.status_label)
         sensor_lhs_layout.addWidget(self.controller.sensor_grid)
+
+        # The main graph which will always be there
+        sensor_rhs_layout.addWidget(self.controller.sensor_grid.main_graph)
 
         # Final configuration of main window
         sensor_layout.addLayout(sensor_lhs_layout, stretch=3)

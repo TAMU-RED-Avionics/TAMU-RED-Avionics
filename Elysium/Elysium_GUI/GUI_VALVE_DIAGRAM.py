@@ -26,8 +26,8 @@ class ValveDiagramWindow(QWidget):
         # self.min_size = QSize(int(720 / self.pixmap.height() * self.pixmap.width()), int(720))
         # self.label.setPixmap(self.pixmap.scaled(self.min_size, aspectRatioMode=Qt.KeepAspectRatio, 
                                                 # transformMode=Qt.SmoothTransformation))
-        self.label.setPixmap(self.pixmap.scaled(self.pixmap.size() * self.scalingFactor))
         # self.label.setFixedSize(self.pixmap.size() * self.scalingFactor)
+        self.label.setPixmap(self.pixmap.scaled(self.pixmap.size() * self.scalingFactor))
         
         
         layout.addWidget(self.label)
