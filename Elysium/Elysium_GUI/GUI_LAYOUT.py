@@ -23,7 +23,7 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(10, 10, 10, 10)
-        main_layout.setSpacing(0)
+        main_layout.setSpacing(10)
 
         # Logo layout
         logo_layout = QHBoxLayout()
@@ -46,47 +46,57 @@ class MainWindow(QMainWindow):
         logo_layout.addWidget(self.dark_mode_btn)
         main_layout.addLayout(logo_layout)
 
-        # Initialization of the main body
-        body_horizontal_layout = QHBoxLayout()
-        body_lhs_layout = QVBoxLayout()
-        body_rhs_layout = QVBoxLayout()
-        body_horizontal_layout.setContentsMargins(0, 0, 0, 0)
-        body_lhs_layout.setContentsMargins(0, 0, 0, 0)
-        body_rhs_layout.setContentsMargins(0, 0, 0, 0)
-        body_horizontal_layout.setSpacing(20)
-        body_lhs_layout.setSpacing(10)
-        body_rhs_layout.setSpacing(0)
-        body_rhs_layout.setAlignment(Qt.AlignTop)
+        # Initialization of all the controls and valve diagram
+        control_layout = QHBoxLayout()
+        control_lhs_layout = QVBoxLayout()
+        control_rhs_layout = QVBoxLayout()
+        control_layout.setContentsMargins(0, 0, 0, 0)
+        control_lhs_layout.setContentsMargins(0, 0, 0, 0)
+        control_rhs_layout.setContentsMargins(0, 0, 0, 0)
+        control_layout.setSpacing(20)
+        control_lhs_layout.setSpacing(10)
+        control_rhs_layout.setSpacing(0)
+        control_rhs_layout.setAlignment(Qt.AlignTop)
 
         # Setup of connection widget
-        body_lhs_layout.addWidget(self.controller.conn_widget)
+        control_lhs_layout.addWidget(self.controller.conn_widget)
 
         # Setup of the daq widget
-        body_lhs_layout.addWidget(self.controller.daq_window)
+        control_lhs_layout.addWidget(self.controller.daq_window)
 
         # Setup of abort menu
-        body_lhs_layout.addWidget(self.controller.abort_menu)
+        control_lhs_layout.addWidget(self.controller.abort_menu)
 
-        # Setup of the valve control panel
-        valve_control_layout = QHBoxLayout()
+        # Setup of the valve control grid
+        control_lhs_layout.addWidget(self.controller.valve_control)
+        control_rhs_layout.addWidget(self.controller.diagram)
 
-        # self.valve_control.setStyleSheet("border: 2px solid red;")
-        valve_control_layout.addWidget(self.controller.valve_control)
-        valve_control_layout.addWidget(self.controller.diagram)
-        body_lhs_layout.addWidget(self.controller.valve_control)
+        control_layout.addLayout(control_lhs_layout, stretch=3)
+        control_layout.addLayout(control_rhs_layout, stretch=2)
+
+        main_layout.addLayout(control_layout)
+
+        sensor_layout = QHBoxLayout()
+        sensor_lhs_layout = QVBoxLayout()
+        sensor_rhs_layout = QVBoxLayout()
+        sensor_layout.setContentsMargins(0, 0, 0, 0)
+        sensor_lhs_layout.setContentsMargins(0, 0, 0, 0)
+        sensor_rhs_layout.setContentsMargins(0, 0, 0, 0)
+        sensor_layout.setSpacing(20)
+        sensor_lhs_layout.setSpacing(10)
+        sensor_rhs_layout.setSpacing(0)
+        sensor_rhs_layout.setAlignment(Qt.AlignTop)
 
         # Current states and sensor grid
         self.controller.status_label.setAlignment(Qt.AlignCenter)
-        body_lhs_layout.addWidget(self.controller.status_label)
-        body_lhs_layout.addWidget(self.controller.sensor_grid)
-
-        body_rhs_layout.addWidget(self.controller.diagram)        
+        sensor_lhs_layout.addWidget(self.controller.status_label)
+        sensor_lhs_layout.addWidget(self.controller.sensor_grid)
 
         # Final configuration of main window
-        body_horizontal_layout.addLayout(body_lhs_layout, stretch=3)
-        body_horizontal_layout.addLayout(body_rhs_layout, stretch=2)
+        sensor_layout.addLayout(sensor_lhs_layout, stretch=3)
+        sensor_layout.addLayout(sensor_rhs_layout, stretch=2)
 
-        main_layout.addLayout(body_horizontal_layout)
+        main_layout.addLayout(sensor_layout)
 
         self.apply_stylesheet()
 
@@ -139,47 +149,6 @@ class MainWindow(QMainWindow):
     def apply_stylesheet(self):
         """Apply appropriate stylesheet based on current mode"""
         if self.dark_mode:
-            # dark_stylesheet = """
-            #     QWidget {
-            #         background-color: #333333;
-            #         color: #EEEEEE;
-            #     }
-            #     QLabel {
-            #         color: #EEEEEE;
-            #     }
-            #     QPushButton {
-            #         background-color: #555555;
-            #         color: #EEEEEE;
-            #         border: 1px solid #888888;
-            #     }
-            #     QPushButton:hover {
-            #         background-color: #666666;
-            #     }
-            #     QPushButton:pressed {
-            #         background-color: #444444;
-            #     }
-            #     QLineEdit {
-            #         background-color: #444444;
-            #         color: #EEEEEE;
-            #         border: 1px solid #555555;
-            #     }
-            #     QCheckBox {
-            #         color: #EEEEEE;
-            #     }
-            #     QScrollArea {
-            #         background-color: #333333;
-            #     }
-            #     QFrame {
-            #         background-color: #555555;
-            #     }
-            #     QDialog {
-            #         background-color: #333333;
-            #     }
-            #     /* Valve diagram background */
-            #     ValveDiagram {
-            #         background-color: #222222;
-            #     }
-            # """
             dark_stylesheet = f"""
                 QMainWindow {{
                     background-color: #222222;
@@ -198,7 +167,7 @@ class MainWindow(QMainWindow):
                     font-family: "Arail";
                     font-size: {self.text_size}pt;
                     font-weight: bold;
-                    padding: 6px;
+                    padding: 2px 6px 2px 6px;
                 }}
                 QPushButton:pressed {{
                     background-color: #222222;
@@ -217,7 +186,7 @@ class MainWindow(QMainWindow):
                     border-width: 2px;
                     border-radius: 10px;
                     border-color: #666666;
-                    padding: 2px;
+                    padding: 2px 6px 2px 6px;
                 }}
                 QLabel {{
                     font-family: "Arail";
@@ -246,7 +215,7 @@ class MainWindow(QMainWindow):
                     font-family: "Arail";
                     font-size: {self.text_size}pt;
                     font-weight: bold;
-                    padding: 6px;
+                    padding: 2px 6px 2px 6px;
                 }}
                 QPushButton:hover {{
                     background-color: #CCCCCC;
@@ -266,7 +235,7 @@ class MainWindow(QMainWindow):
                     border-width: 2px;
                     border-radius: 10px;
                     border-color: #666666;
-                    padding: 2px;
+                    padding: 2px 6px 2px 6px;
                 }}
                 QLabel {{
                     font-family: "Arail";
