@@ -118,6 +118,7 @@ class SensorGridWindow(QWidget):
         self.signals.update_signal.connect(self._update_sensor_value)
         
         self.grid = QGridLayout()
+        self.grid.setContentsMargins(0, 0, 0, 0)
         self.grid.setSpacing(10)
         self.setLayout(self.grid)
         
@@ -154,23 +155,23 @@ class SensorGridWindow(QWidget):
         # Sensor name label (left-aligned, borderless) - larger font (14pt)
         name_label = QLabel(f"{name}:")
         name_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        name_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        name_label.setFont(QFont("Arial", 14))  # Increased identifier font
+        # name_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        # name_label.setFont(QFont("Arial", 14))  # Increased identifier font
         frame_layout.addWidget(name_label)
         
         # Value display (centered) - slightly smaller font (18pt instead of 20pt)
         value_label = QLabel("---")
         value_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
-        value_label.setFont(QFont("Arial", 18))  # Slightly smaller value font
-        value_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        # value_label.setFont(QFont("Arial", 18))  # Slightly smaller value font
+        # value_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         frame_layout.addWidget(value_label)
         
         # Unit label (right-aligned, borderless) - larger font (14pt)
         unit = self.get_unit(name)
         unit_label = QLabel(unit)
         unit_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        unit_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        unit_label.setFont(QFont("Arial", 14))  # Increased unit font
+        # unit_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        # unit_label.setFont(QFont("Arial", 14))  # Increased unit font
         frame_layout.addWidget(unit_label)
         
         # Add to grid
@@ -233,7 +234,7 @@ class SensorGridWindow(QWidget):
         for sensor in self.sensors:
             self.update_sensor_style(sensor)
         for graph in self.graphs.values():
-            graph.set_dark_mode(dark)
+            graph.sensor_graph.set_dark_mode(dark)
 
     def _update_sensor_value(self, sensor, value):
         if sensor not in self.value_labels:
