@@ -52,9 +52,9 @@ class MainWindow(QMainWindow):
         control_rhs_layout = QVBoxLayout()
         control_layout.setContentsMargins(0, 0, 0, 0)
         control_lhs_layout.setContentsMargins(0, 0, 0, 0)
-        control_rhs_layout.setContentsMargins(0, 0, 0, 0)
-        # control_layout.setSpacing(20)
-        # control_lhs_layout.setSpacing(10)
+        # control_rhs_layout.setContentsMargins(0, 0, 0, 0)
+        control_layout.setSpacing(20)
+        control_lhs_layout.setSpacing(10)
         # control_rhs_layout.setSpacing(0)
         # control_rhs_layout.setAlignment(Qt.AlignTop)
 
@@ -69,39 +69,40 @@ class MainWindow(QMainWindow):
 
         # Setup of the valve control grid
         control_lhs_layout.addWidget(self.controller.valve_control)
-        control_rhs_layout.addWidget(self.controller.diagram)
+        # control_rhs_layout.addWidget(self.controller.diagram)
 
         # control_layout.addLayout(control_lhs_layout)
         # control_layout.addLayout(control_rhs_layout)
         control_layout.addLayout(control_lhs_layout, stretch=3)
-        control_layout.addLayout(control_rhs_layout, stretch=2)
+        # control_layout.addLayout(control_rhs_layout, stretch=2)
+        control_layout.addWidget(self.controller.diagram, stretch=2)
 
         main_layout.addLayout(control_layout)
 
         sensor_layout = QHBoxLayout()
         sensor_lhs_layout = QVBoxLayout()
-        sensor_rhs_layout = QVBoxLayout()
+        # sensor_rhs_layout = QVBoxLayout()
         sensor_layout.setContentsMargins(0, 0, 0, 0)
         sensor_lhs_layout.setContentsMargins(0, 0, 0, 0)
-        sensor_rhs_layout.setContentsMargins(0, 0, 0, 0)
+        # sensor_rhs_layout.setContentsMargins(0, 0, 0, 0)
         sensor_layout.setSpacing(20)
         sensor_lhs_layout.setSpacing(10)
-        sensor_rhs_layout.setSpacing(10)
-        sensor_rhs_layout.setAlignment(Qt.AlignTop)
+        # sensor_rhs_layout.setSpacing(10)
 
         # Current states and sensor grid
-        self.controller.status_label.setAlignment(Qt.AlignCenter)
+        # self.controller.status_label.setAlignment(Qt.AlignCenter)
         sensor_lhs_layout.addWidget(self.controller.status_label)
         sensor_lhs_layout.addWidget(self.controller.sensor_grid)
 
         # The main graph which will always be there
-        sensor_rhs_layout.addWidget(self.controller.sensor_grid.main_graph)
+        # sensor_rhs_layout.addWidget(self.controller.sensor_grid.main_graph)
 
         # Final configuration of main window
         # sensor_layout.addLayout(sensor_lhs_layout)
         # sensor_layout.addLayout(sensor_rhs_layout)
         sensor_layout.addLayout(sensor_lhs_layout, stretch=3)
-        sensor_layout.addLayout(sensor_rhs_layout, stretch=2)
+        # sensor_layout.addLayout(sensor_rhs_layout, stretch=2)
+        sensor_layout.addWidget(self.controller.sensor_grid.main_graph, stretch=2)
 
         main_layout.addLayout(sensor_layout)
 
@@ -172,7 +173,7 @@ class MainWindow(QMainWindow):
                     font-family: "Arail";
                     font-size: {self.text_size}pt;
                     font-weight: bold;
-                    padding: 2px 6px 2px 6px;
+                    padding: 2px 10px 2px 10px;
                 }}
                 QPushButton:pressed {{
                     background-color: #222222;
@@ -186,12 +187,12 @@ class MainWindow(QMainWindow):
                     color: #FFFFFF;
                     font-family: "Arail";
                     font-size: {self.text_size}pt;
-                    font-weight: bold;
+                    font-weight: normal;
                     border-style: inset;
                     border-width: 2px;
                     border-radius: 10px;
                     border-color: #666666;
-                    padding: 2px 6px 2px 6px;
+                    padding: 2px 10px 2px 10px;
                 }}
                 QLabel {{
                     font-family: "Arail";
@@ -228,7 +229,7 @@ class MainWindow(QMainWindow):
                     font-family: "Arail";
                     font-size: {self.text_size}pt;
                     font-weight: bold;
-                    padding: 2px 6px 2px 6px;
+                    padding: 2px 10px 2px 10px;
                 }}
                 QPushButton:hover {{
                     background-color: #CCCCCC;
@@ -243,12 +244,12 @@ class MainWindow(QMainWindow):
                     color: #000000;
                     font-family: "Arail";
                     font-size: {self.text_size}pt;
-                    font-weight: bold;
+                    font-weight: normal;
                     border-style: inset;
                     border-width: 2px;
                     border-radius: 10px;
                     border-color: #666666;
-                    padding: 2px 6px 2px 6px;
+                    padding: 2px 10px 2px 10px;
                 }}
                 QLabel {{
                     font-family: "Arail";

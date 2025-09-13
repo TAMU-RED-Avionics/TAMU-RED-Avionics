@@ -16,8 +16,6 @@ class ConnectionWindow(QWidget):
         eth_layout.setSpacing(0)
 
         self.conn_status_label = QLabel("Not connected")
-        self.conn_status_label.setAlignment(Qt.AlignCenter)
-        # self.conn_status_label.setFont(QFont("Arial", 10, QFont.Bold))
         eth_layout.addWidget(self.conn_status_label)
 
         eth_input_layout = QHBoxLayout()
