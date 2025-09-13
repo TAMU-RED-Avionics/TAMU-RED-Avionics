@@ -22,6 +22,7 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         central_widget = QWidget()
         
+        # Main layout def (top most layout)
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
@@ -30,9 +31,9 @@ class MainWindow(QMainWindow):
         logo_layout = QHBoxLayout()
         logo_layout.setContentsMargins(0, 0, 0, 0)
         logo_layout.setSpacing(20)
-
         self.logo = LogoWindow()
 
+        # Mode and text configuration
         self.dark_mode_btn = QPushButton("Dark Mode")
         self.dark_mode_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.dark_mode_btn.clicked.connect(self.toggle_dark_mode)
@@ -42,21 +43,13 @@ class MainWindow(QMainWindow):
         self.text_size_btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.text_size_btn.clicked.connect(self.change_text_size)
 
+        # Building out the logo widget
         logo_layout.addWidget(self.logo)
         logo_layout.addWidget(self.text_size_btn)
         logo_layout.addWidget(self.dark_mode_btn)
         main_layout.addLayout(logo_layout)
-
-        # Initialization of all the controls and valve diagram
-        # control_layout = QHBoxLayout()
-        # control_lhs_layout = QVBoxLayout()
-        # control_rhs_layout = QVBoxLayout()
-        # control_layout.setContentsMargins(0, 0, 0, 0)
-        # control_lhs_layout.setContentsMargins(0, 0, 0, 0)
-        # control_rhs_layout.setContentsMargins(0, 0, 0, 0)
-        # control_layout.setSpacing(20)
-        # control_lhs_layout.setSpacing(10)
-
+    
+        # Setting up the main 2 pane horizontal layout
         body_layout = QHBoxLayout()
         body_layout.setContentsMargins(0, 0, 0, 0)
         body_layout.setSpacing(10)
@@ -84,41 +77,20 @@ class MainWindow(QMainWindow):
         # Setup of the valve control grid
         lhs_layout.addWidget(self.controller.valve_control, stretch=7)
         rhs_layout.addWidget(self.controller.diagram)
-
-        # control_layout.addLayout(control_lhs_layout, stretch=3)
-        # control_layout.addLayout(control_rhs_layout, stretch=2)
-        # control_layout.addWidget(self.controller.diagram, stretch=2)
-
-
-        # main_layout.addLayout(control_layout)
-
-
-        # sensor_layout = QHBoxLayout()
-        # sensor_lhs_layout = QVBoxLayout()
-        # sensor_rhs_layout = QVBoxLayout()
-        # sensor_layout.setContentsMargins(0, 0, 0, 0)
-        # sensor_lhs_layout.setContentsMargins(0, 0, 0, 0)
-        # sensor_rhs_layout.setContentsMargins(0, 0, 0, 0)
-        # sensor_layout.setSpacing(20)
-        # sensor_lhs_layout.setSpacing(10)
-        # sensor_rhs_layout.setSpacing(10)
-
+        
         # Current states and sensor grid
         self.controller.status_label.setAlignment(Qt.AlignCenter)
         lhs_layout.addWidget(self.controller.status_label, stretch=1)
         lhs_layout.addWidget(self.controller.sensor_grid, stretch=5)
 
         # The main graph which will always be there
+        self.controller.sensor_grid.main_graph.setMinimumHeight(20)
         rhs_layout.addWidget(self.controller.sensor_grid.main_graph)
 
-        # Final configuration of main window
-        # sensor_layout.addLayout(sensor_lhs_layout, stretch=3)
-        # sensor_layout.addLayout(sensor_rhs_layout, stretch=2)
-        # sensor_layout.addWidget(self.controller.sensor_grid.main_graph, stretch=2)
-
-
+        # Add the 2 pane layout to the main vertical payout
         main_layout.addLayout(body_layout)
 
+        # Configure the look of all buttons, text, etc
         self.apply_stylesheet()
 
         central_widget.setLayout(main_layout)

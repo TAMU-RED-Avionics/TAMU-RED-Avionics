@@ -64,8 +64,6 @@ class SensorGraph(QWidget):
         self.ax.set_xlim(-10, 0)
         self.canvas.draw()
 
-        self.list_all_fonts()
-
     def get_unit(self, sensor_name):
         if sensor_name.startswith('P'):
             return 'psi'
@@ -105,22 +103,15 @@ class SensorGraph(QWidget):
         self.canvas.draw()
 
     def set_graph_styling(self):
-        
-        # self.ax.xaxis.label.set_fontfamily('Arail')
-        # self.ax.yaxis.label.set_fontfamily('Arail')
-        # self.ax.title.set_fontfamily('Arail')
 
         # Get the actual screen DPI
         screen = QApplication.primaryScreen()
-        physical_dpi = screen.physicalDotsPerInch()
-        logical_dpi = screen.logicalDotsPerInch()
-        print("Physical dpi: ", physical_dpi, "logical_dpi", logical_dpi)
-        dpi = logical_dpi
+        dpi = screen.logicalDotsPerInch()
 
         def points_to_pixels(points):
-            return 0.75 * points * dpi / 72   # tuned by literal iteration but allegedly it is supposed to be 72
+            return 0.75 * points * dpi / 72   # tuned by iteration but allegedly it is supposed to be dpi/72
 
-        font_pts = points_to_pixels(12)
+        font_pts = points_to_pixels(10)
 
         self.ax.xaxis.label.set_fontsize(font_pts)
         self.ax.yaxis.label.set_fontsize(font_pts)
@@ -230,16 +221,12 @@ class SensorGridWindow(QWidget):
         # Value display (centered) - slightly smaller font (18pt instead of 20pt)
         value_label = QLabel("---")
         value_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
-        # value_label.setFont(QFont("Arial", 18))  # Slightly smaller value font
-        # value_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         frame_layout.addWidget(value_label)
         
         # Unit label (right-aligned, borderless) - larger font (14pt)
         unit = self.get_unit(name)
         unit_label = QLabel(unit)
         unit_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
-        # unit_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        # unit_label.setFont(QFont("Arial", 14))  # Increased unit font
         frame_layout.addWidget(unit_label)
         
         # Add to grid
