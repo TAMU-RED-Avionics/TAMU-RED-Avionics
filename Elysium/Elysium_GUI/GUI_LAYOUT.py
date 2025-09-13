@@ -103,22 +103,22 @@ class MainWindow(QMainWindow):
         return line
     
     def change_text_size(self):
-        if self.text_size == 12:
-            self.text_size = 14
+        if self.text_size == 10:
+            self.text_size = 12
             self.apply_stylesheet()
             self.text_size_btn.setText("Small Text")
 
-        elif self.text_size == 14:
-            self.text_size = 6
+        elif self.text_size == 12:
+            self.text_size = 8
             self.apply_stylesheet()
             self.text_size_btn.setText("Medium Text")
 
-        elif self.text_size == 6:
-            self.text_size = 12
+        elif self.text_size == 8:
+            self.text_size = 10
             self.apply_stylesheet()
             self.text_size_btn.setText("Large Text")
         else:
-            self.text_size = 12
+            self.text_size = 10
             self.apply_stylesheet()
             self.text_size_btn.setText("Large Text")
 
@@ -153,7 +153,7 @@ class MainWindow(QMainWindow):
                     color: #FFFFFF;
                     border-style: inset;
                     border-width: 2px;
-                    border-radius: 10px;
+                    border-radius: 8px;
                     border-color: #999999;
                     font-size: {self.text_size}pt;
                     font-weight: bold;
@@ -173,7 +173,7 @@ class MainWindow(QMainWindow):
                     font-weight: normal;
                     border-style: inset;
                     border-width: 2px;
-                    border-radius: 10px;
+                    border-radius: 8px;
                     border-color: #666666;
                     padding: 2px 10px 2px 10px;
                 }}
@@ -206,7 +206,7 @@ class MainWindow(QMainWindow):
                     color: #000000;
                     border-style: inset;
                     border-width: 2px;
-                    border-radius: 10px;
+                    border-radius: 8px;
                     border-color: #666666;
                     font-size: {self.text_size}pt;
                     font-weight: bold;
@@ -227,7 +227,7 @@ class MainWindow(QMainWindow):
                     font-weight: normal;
                     border-style: inset;
                     border-width: 2px;
-                    border-radius: 10px;
+                    border-radius: 8px;
                     border-color: #666666;
                     padding: 2px 10px 2px 10px;
                 }}
