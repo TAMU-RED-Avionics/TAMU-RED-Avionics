@@ -79,7 +79,7 @@ class MainWindow(QMainWindow):
         lhs_layout.addWidget(self.controller.daq_window, stretch=3)
 
         # Setup of abort menu
-        lhs_layout.addWidget(self.controller.abort_menu, stretch=3)
+        lhs_layout.addWidget(self.controller.abort_menu, stretch=1)
 
         # Setup of the valve control grid
         lhs_layout.addWidget(self.controller.valve_control, stretch=7)
@@ -183,7 +183,6 @@ class MainWindow(QMainWindow):
                     border-width: 2px;
                     border-radius: 10px;
                     border-color: #999999;
-                    font-family: "Arail";
                     font-size: {self.text_size}pt;
                     font-weight: bold;
                     padding: 2px 10px 2px 10px;
@@ -198,7 +197,6 @@ class MainWindow(QMainWindow):
                 QLineEdit {{
                     background-color: #333333;
                     color: #FFFFFF;
-                    font-family: "Arail";
                     font-size: {self.text_size}pt;
                     font-weight: normal;
                     border-style: inset;
@@ -208,7 +206,6 @@ class MainWindow(QMainWindow):
                     padding: 2px 10px 2px 10px;
                 }}
                 QLabel {{
-                    font-family: "Arail";
                     font-size: {self.text_size}pt;
                     font-weight: bold;
                     color: #FFFFFF;
@@ -239,7 +236,6 @@ class MainWindow(QMainWindow):
                     border-width: 2px;
                     border-radius: 10px;
                     border-color: #666666;
-                    font-family: "Arail";
                     font-size: {self.text_size}pt;
                     font-weight: bold;
                     padding: 2px 10px 2px 10px;
@@ -255,7 +251,6 @@ class MainWindow(QMainWindow):
                 QLineEdit {{
                     background-color: #FFFFFF;
                     color: #000000;
-                    font-family: "Arail";
                     font-size: {self.text_size}pt;
                     font-weight: normal;
                     border-style: inset;
@@ -265,7 +260,6 @@ class MainWindow(QMainWindow):
                     padding: 2px 10px 2px 10px;
                 }}
                 QLabel {{
-                    font-family: "Arail";
                     font-size: {self.text_size}pt;
                     font-weight: bold;
                     color: #000000;

@@ -6,6 +6,8 @@ from PyQt5.QtCore import Qt, QDateTime, pyqtSignal, QObject
 from PyQt5.QtGui import QFont
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+import matplotlib.font_manager as fm
+
 from typing import Dict, Tuple
 
 class SensorSignals(QObject):
@@ -54,10 +56,14 @@ class SensorGraph(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         self.setLayout(layout)
+
+        self.set_graph_styling()
         
         self.line.set_data([], [])
         self.ax.set_xlim(-10, 0)
         self.canvas.draw()
+
+        self.list_all_fonts()
 
     def get_unit(self, sensor_name):
         if sensor_name.startswith('P'):
@@ -67,6 +73,13 @@ class SensorGraph(QWidget):
         elif sensor_name.startswith('LC') or sensor_name.startswith('B'):
             return 'lb'
         return ''
+
+    def list_all_fonts(self):
+        # List all available fonts with their properties
+        fonts = fm.fontManager.ttflist
+        print("All available fonts:")
+        for font in fonts:
+            print(f"Name: {font.name}, File: {font.fname}")
 
     def update_graph(self, value, current_time):
         self.timestamps.append(current_time)
@@ -90,29 +103,61 @@ class SensorGraph(QWidget):
         
         self.canvas.draw()
 
+    def set_graph_styling(self):
+        # self.ax.xaxis.label.set_fontfamily('Arail')
+        # self.ax.yaxis.label.set_fontfamily('Arail')
+        # self.ax.title.set_fontfamily('Arail')
+
+        self.ax.xaxis.label.set_fontsize(10)
+        self.ax.yaxis.label.set_fontsize(10)
+        self.ax.title.set_fontsize(10)
+
+        self.ax.xaxis.label.set_fontweight('bold')
+        self.ax.yaxis.label.set_fontweight('bold')
+        self.ax.title.set_fontweight('bold')
+
+        for label in self.ax.get_xticklabels():
+            label.set_fontfamily('Arial')
+            label.set_fontsize(10)
+            label.set_fontweight('normal')
+        
+        for label in self.ax.get_yticklabels():
+            label.set_fontfamily('Arial')
+            label.set_fontsize(10)
+            label.set_fontweight('normal')
+        
+
     def set_dark_mode(self, dark):
         if dark:
             self.figure.set_facecolor('#222222')
             self.ax.set_facecolor('#222222')
-            self.ax.tick_params(axis='x', colors='white')
-            self.ax.tick_params(axis='y', colors='white')
+
             self.ax.xaxis.label.set_color('white')
             self.ax.yaxis.label.set_color('white')
             self.ax.title.set_color('white')
+
+            self.ax.tick_params(axis='x', colors='white')
+            self.ax.tick_params(axis='y', colors='white')
+
             for spine in self.ax.spines.values():
                 spine.set_color('white')
+
             self.line.set_color('cyan')
         else:
             self.figure.set_facecolor('white')
             self.ax.set_facecolor('white')
-            self.ax.tick_params(axis='x', colors='black')
-            self.ax.tick_params(axis='y', colors='black')
+
             self.ax.xaxis.label.set_color('black')
             self.ax.yaxis.label.set_color('black')
             self.ax.title.set_color('black')
+
+            self.ax.tick_params(axis='x', colors='black')
+            self.ax.tick_params(axis='y', colors='black')
+
             for spine in self.ax.spines.values():
                 spine.set_color('black')
             self.line.set_color('green')
+
         self.canvas.draw()
 
 # Type downcast to make global configuration more manageable
