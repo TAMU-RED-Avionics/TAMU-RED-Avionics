@@ -1,16 +1,12 @@
 # GUI_DAQ.py
 # This window hosts controls over Data Acquisition (DAQ), along with buttons for throttling and gimbaling
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QLineEdit, QSizePolicy
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QLineEdit, QSizePolicy, QGridLayout
 
 class DAQWindow(QWidget):
     def __init__(self, controller):
         super().__init__()
 
         self.controller = controller
-        # self.file = None
-        # self.csv_writer = None
-        # self.throttling_enabled = False
-        # self.gimbaling_enabled = False
 
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -27,55 +23,45 @@ class DAQWindow(QWidget):
         self.csv_input_layout.addWidget(self.filename_input)
         self.layout.addLayout(self.csv_input_layout)
     
-        self.buttons_layout = QHBoxLayout()
+        self.buttons_layout = QGridLayout()
         self.buttons_layout.setContentsMargins(0, 0, 0, 0)
         self.buttons_layout.setSpacing(10)
 
         # Recording controls
-        self.buttons_recording_layout = QVBoxLayout()
-        self.buttons_recording_layout.setContentsMargins(0, 0, 0, 0)
-        self.buttons_recording_layout.setSpacing(10)
-
         self.start_button = QPushButton("Start Recording")
         self.start_button.clicked.connect(self.start_recording_daq)
-        self.buttons_recording_layout.addWidget(self.start_button)
+        self.start_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.buttons_layout.addWidget(self.start_button, 1, 1)
 
         self.stop_button = QPushButton("Stop Recording")
         self.stop_button.setEnabled(False)
         self.stop_button.clicked.connect(self.stop_recording_daq)
-        self.buttons_recording_layout.addWidget(self.stop_button)
+        self.stop_button.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.buttons_layout.addWidget(self.stop_button, 2, 1)
 
         # Valve controls
-        self.buttons_valve_layout = QVBoxLayout()
-        self.buttons_valve_layout.setContentsMargins(0, 0, 0, 0)
-        self.buttons_valve_layout.setSpacing(10)
-
         self.manual_btn = QPushButton("Manual Valve Control")
         self.manual_btn.clicked.connect(self.controller.show_manual_valve_control)
-        self.buttons_valve_layout.addWidget(self.manual_btn)
+        self.manual_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.buttons_layout.addWidget(self.manual_btn, 1, 2)
 
         self.abort_config_btn = QPushButton("Abort Configuration")
         self.abort_config_btn.clicked.connect(self.controller.show_abort_control)
-        self.buttons_valve_layout.addWidget(self.abort_config_btn)
-
+        self.abort_config_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.buttons_layout.addWidget(self.abort_config_btn, 2, 2)
 
         # Throttling and Gimbaling controls (Req 26)
-        self.buttons_throttle_gimbal_layout = QVBoxLayout()
-        self.buttons_throttle_gimbal_layout.setContentsMargins(0, 0, 0, 0)
-        self.buttons_throttle_gimbal_layout.setSpacing(10)
-
         self.throttling_btn = QPushButton("Enable Throttling")
         self.throttling_btn.clicked.connect(self.toggle_throttling_daq)
-        self.buttons_throttle_gimbal_layout.addWidget(self.throttling_btn)
+        self.throttling_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.buttons_layout.addWidget(self.throttling_btn, 1, 3)
 
         self.gimbaling_btn = QPushButton("Enable Gimbaling")
         self.gimbaling_btn.clicked.connect(self.toggle_gimbaling_daq)
-        self.buttons_throttle_gimbal_layout.addWidget(self.gimbaling_btn)
+        self.gimbaling_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.buttons_layout.addWidget(self.gimbaling_btn, 2, 3)
 
         # Final Configuration
-        self.buttons_layout.addLayout(self.buttons_recording_layout)
-        self.buttons_layout.addLayout(self.buttons_valve_layout)
-        self.buttons_layout.addLayout(self.buttons_throttle_gimbal_layout)
         self.layout.addLayout(self.buttons_layout)
 
         self.setLayout(self.layout)

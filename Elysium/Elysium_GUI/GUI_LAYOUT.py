@@ -21,6 +21,7 @@ class MainWindow(QMainWindow):
 
     def init_ui(self):
         central_widget = QWidget()
+        
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
@@ -47,64 +48,76 @@ class MainWindow(QMainWindow):
         main_layout.addLayout(logo_layout)
 
         # Initialization of all the controls and valve diagram
-        control_layout = QHBoxLayout()
-        control_lhs_layout = QVBoxLayout()
-        control_rhs_layout = QVBoxLayout()
-        control_layout.setContentsMargins(0, 0, 0, 0)
-        control_lhs_layout.setContentsMargins(0, 0, 0, 0)
+        # control_layout = QHBoxLayout()
+        # control_lhs_layout = QVBoxLayout()
+        # control_rhs_layout = QVBoxLayout()
+        # control_layout.setContentsMargins(0, 0, 0, 0)
+        # control_lhs_layout.setContentsMargins(0, 0, 0, 0)
         # control_rhs_layout.setContentsMargins(0, 0, 0, 0)
-        control_layout.setSpacing(20)
-        control_lhs_layout.setSpacing(10)
-        # control_rhs_layout.setSpacing(0)
-        # control_rhs_layout.setAlignment(Qt.AlignTop)
+        # control_layout.setSpacing(20)
+        # control_lhs_layout.setSpacing(10)
+
+        body_layout = QHBoxLayout()
+        body_layout.setContentsMargins(0, 0, 0, 0)
+        body_layout.setSpacing(10)
+
+        lhs_layout = QVBoxLayout()
+        lhs_layout.setContentsMargins(0, 0, 0, 0)
+        lhs_layout.setSpacing(10)
+
+        rhs_layout = QVBoxLayout()
+        rhs_layout.setContentsMargins(0, 0, 0, 0)
+        rhs_layout.setSpacing(10)
+
+        body_layout.addLayout(lhs_layout, stretch=3)
+        body_layout.addLayout(rhs_layout, stretch=2)
 
         # Setup of connection widget
-        control_lhs_layout.addWidget(self.controller.conn_widget)
+        lhs_layout.addWidget(self.controller.conn_widget, stretch=2)
 
         # Setup of the daq widget
-        control_lhs_layout.addWidget(self.controller.daq_window)
+        lhs_layout.addWidget(self.controller.daq_window, stretch=3)
 
         # Setup of abort menu
-        control_lhs_layout.addWidget(self.controller.abort_menu)
+        lhs_layout.addWidget(self.controller.abort_menu, stretch=3)
 
         # Setup of the valve control grid
-        control_lhs_layout.addWidget(self.controller.valve_control)
-        # control_rhs_layout.addWidget(self.controller.diagram)
+        lhs_layout.addWidget(self.controller.valve_control, stretch=7)
+        rhs_layout.addWidget(self.controller.diagram)
 
-        # control_layout.addLayout(control_lhs_layout)
-        # control_layout.addLayout(control_rhs_layout)
-        control_layout.addLayout(control_lhs_layout, stretch=3)
+        # control_layout.addLayout(control_lhs_layout, stretch=3)
         # control_layout.addLayout(control_rhs_layout, stretch=2)
-        control_layout.addWidget(self.controller.diagram, stretch=2)
+        # control_layout.addWidget(self.controller.diagram, stretch=2)
 
-        main_layout.addLayout(control_layout)
 
-        sensor_layout = QHBoxLayout()
-        sensor_lhs_layout = QVBoxLayout()
+        # main_layout.addLayout(control_layout)
+
+
+        # sensor_layout = QHBoxLayout()
+        # sensor_lhs_layout = QVBoxLayout()
         # sensor_rhs_layout = QVBoxLayout()
-        sensor_layout.setContentsMargins(0, 0, 0, 0)
-        sensor_lhs_layout.setContentsMargins(0, 0, 0, 0)
+        # sensor_layout.setContentsMargins(0, 0, 0, 0)
+        # sensor_lhs_layout.setContentsMargins(0, 0, 0, 0)
         # sensor_rhs_layout.setContentsMargins(0, 0, 0, 0)
-        sensor_layout.setSpacing(20)
-        sensor_lhs_layout.setSpacing(10)
+        # sensor_layout.setSpacing(20)
+        # sensor_lhs_layout.setSpacing(10)
         # sensor_rhs_layout.setSpacing(10)
 
         # Current states and sensor grid
-        # self.controller.status_label.setAlignment(Qt.AlignCenter)
-        sensor_lhs_layout.addWidget(self.controller.status_label)
-        sensor_lhs_layout.addWidget(self.controller.sensor_grid)
+        self.controller.status_label.setAlignment(Qt.AlignCenter)
+        lhs_layout.addWidget(self.controller.status_label, stretch=1)
+        lhs_layout.addWidget(self.controller.sensor_grid, stretch=5)
 
         # The main graph which will always be there
-        # sensor_rhs_layout.addWidget(self.controller.sensor_grid.main_graph)
+        rhs_layout.addWidget(self.controller.sensor_grid.main_graph)
 
         # Final configuration of main window
-        # sensor_layout.addLayout(sensor_lhs_layout)
-        # sensor_layout.addLayout(sensor_rhs_layout)
-        sensor_layout.addLayout(sensor_lhs_layout, stretch=3)
+        # sensor_layout.addLayout(sensor_lhs_layout, stretch=3)
         # sensor_layout.addLayout(sensor_rhs_layout, stretch=2)
-        sensor_layout.addWidget(self.controller.sensor_grid.main_graph, stretch=2)
+        # sensor_layout.addWidget(self.controller.sensor_grid.main_graph, stretch=2)
 
-        main_layout.addLayout(sensor_layout)
+
+        main_layout.addLayout(body_layout)
 
         self.apply_stylesheet()
 

@@ -1,7 +1,7 @@
 # GUI_VALVE_CONTROL.py
 # This window showcases an array of buttons for various valve control related functions
 # Each named valve will open when the valve state is clicked in the GUI.
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QSizePolicy
 
 class ValveControlWindow(QWidget):
     def __init__(self, parent=None, show_fire_sequence_dialog=None, apply_valve_state=None):
@@ -16,9 +16,10 @@ class ValveControlWindow(QWidget):
         operations_layout.setSpacing(10)
 
         self.fire_sequence_btn = QPushButton("Auto Fire Sequence")
+        self.fire_sequence_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.fire_sequence_btn.clicked.connect(show_fire_sequence_dialog)
 
-        top_layout.addWidget(self.fire_sequence_btn)
+        top_layout.addWidget(self.fire_sequence_btn, stretch=1)
 
         current_column_layout = QVBoxLayout()
         current_column_layout.setContentsMargins(0, 0, 0, 0)
@@ -30,6 +31,7 @@ class ValveControlWindow(QWidget):
                     continue
                 
                 btn = QPushButton(op)
+                btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
                 btn.clicked.connect(lambda checked, o=op: apply_valve_state(o))
                 current_column_layout.addWidget(btn)
 
@@ -41,7 +43,7 @@ class ValveControlWindow(QWidget):
                     current_column_layout.setSpacing(10)
 
         operations_layout.addLayout(current_column_layout)
-        top_layout.addLayout(operations_layout)
+        top_layout.addLayout(operations_layout, stretch=6)
 
         self.setLayout(top_layout)
 
