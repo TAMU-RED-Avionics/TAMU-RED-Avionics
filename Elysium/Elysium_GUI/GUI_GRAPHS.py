@@ -105,26 +105,32 @@ class SensorGraph(QWidget):
         self.canvas.draw()
 
     def set_graph_styling(self):
-        plt.rcParams['font.size'] = 10
         
         # self.ax.xaxis.label.set_fontfamily('Arail')
         # self.ax.yaxis.label.set_fontfamily('Arail')
         # self.ax.title.set_fontfamily('Arail')
 
-        self.ax.xaxis.label.set_fontsize(10)
-        self.ax.yaxis.label.set_fontsize(10)
-        self.ax.title.set_fontsize(10)
+        dpi = self.figure.get_dpi()
+
+        def points_to_pixels(points):
+            return points * dpi / 132   # tuned by literal iteration but allegedly it is supposed to be 72
+
+        font_pts = points_to_pixels(12)
+
+        self.ax.xaxis.label.set_fontsize(font_pts)
+        self.ax.yaxis.label.set_fontsize(font_pts)
+        self.ax.title.set_fontsize(font_pts)
 
         self.ax.xaxis.label.set_fontweight('bold')
         self.ax.yaxis.label.set_fontweight('bold')
         self.ax.title.set_fontweight('bold')
 
         for label in self.ax.get_xticklabels():
-            label.set_fontsize(10)
+            label.set_fontsize(font_pts)
             label.set_fontweight('normal')
         
         for label in self.ax.get_yticklabels():
-            label.set_fontsize(10)
+            label.set_fontsize(font_pts)
             label.set_fontweight('normal')
         
 
