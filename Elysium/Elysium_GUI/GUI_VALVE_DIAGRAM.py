@@ -2,27 +2,32 @@
 # This file will display a diagram of the various valves in the Elysium 2 system.
 # They will update automatically according to various settings
 from stat import SF_APPEND
-from PyQt5.QtWidgets import QWidget, QLabel, QPushButton, QVBoxLayout, QSizePolicy
+from PyQt5.QtWidgets import QWidget, QLabel, QPushButton, QVBoxLayout, QSizePolicy, QDesktopWidget
 from PyQt5.QtGui import QPixmap, QColor, QImage
 from PyQt5.QtCore import Qt, QSize
 
 class ValveDiagramWindow(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        # self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         layout.setAlignment(Qt.AlignRight | Qt.AlignTop)
 
-        self.scalingFactor = 0.5
-
         # Load and display the P&ID image
         self.label = QLabel(self)
         self.pixmap = QPixmap("P&ID Light.png")
+
+        # Get the desktop height
+        desktop = QDesktopWidget()
+        screen_height = desktop.screenGeometry().height()
+        self.scalingFactor = 0.6 * screen_height / self.pixmap.height()   # Scale the image to fit a fraction of the height
+
+
         self.label.setPixmap(self.pixmap)
         self.label.setScaledContents(True)
+        # self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.label.setFixedSize(self.pixmap.size() * self.scalingFactor)
         self.label.setStyleSheet("border-radius: 20px;")
         
@@ -85,26 +90,26 @@ class ValveDiagramWindow(QWidget):
         self.pixmap = QPixmap("P&ID Light.png")
         self.label.setPixmap(self.pixmap)
 
-    # def resizeEvent(self, e):
-    #     super().resizeEvent(e)
+    def resizeEvent(self, e):
+        super().resizeEvent(e)
         
-    #     if not self.pixmap or self.pixmap.width() == 0:
-    #         return
+        if not self.pixmap or self.pixmap.width() == 0:
+            return
 
-    #     ar = self.pixmap.width() / self.pixmap.height()
-    #     scaled_width = self.height() * ar   # The image width if it expanded to fill the height
-    #     scaled_height = self.width() / ar   # The image height if it expanded to fill the width
+        # ar = self.pixmap.width() / self.pixmap.height()
+        # scaled_width = self.height() * ar   # The image width if it expanded to fill the height
+        # scaled_height = self.width() / ar   # The image height if it expanded to fill the width
 
-    #     if scaled_width <= self.width():    # If the height-limited image would fit into the width
-    #         self.img_size = QSize(int(scaled_width), self.height())
-    #     else:                               # If the width-limited image would fit into the height
-    #         self.img_size = QSize(self.width(), int(scaled_height))
+        # if scaled_width <= self.width():    # If the height-limited image would fit into the width
+        #     self.img_size = QSize(int(scaled_width), self.height())
+        # else:                               # If the width-limited image would fit into the height
+        #     self.img_size = QSize(self.width(), int(scaled_height))
 
-    #     self.label.setMaximumWidth(int(scaled_width))
-    #     self.label.setMaximumHeight(int(scaled_height))
+        # self.label.setMaximumWidth(int(scaled_width))
+        # self.label.setMaximumHeight(int(scaled_height))
         
-    #     self.scalingFactor = self.img_size.height() / self.pixmap.height()
+        self.scalingFactor = self.height() / self.pixmap.height()
 
-    #     self.update_button_positions()
+        self.update_button_positions()
 
 
