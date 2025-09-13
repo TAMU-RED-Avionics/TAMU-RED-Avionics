@@ -7,6 +7,7 @@ from PyQt5.QtGui import QFont
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.font_manager as fm
+import matplotlib.pyplot as plt
 
 from typing import Dict, Tuple
 
@@ -104,6 +105,8 @@ class SensorGraph(QWidget):
         self.canvas.draw()
 
     def set_graph_styling(self):
+        plt.rcParams['font.size'] = 10
+        
         # self.ax.xaxis.label.set_fontfamily('Arail')
         # self.ax.yaxis.label.set_fontfamily('Arail')
         # self.ax.title.set_fontfamily('Arail')
@@ -117,12 +120,10 @@ class SensorGraph(QWidget):
         self.ax.title.set_fontweight('bold')
 
         for label in self.ax.get_xticklabels():
-            label.set_fontfamily('Arial')
             label.set_fontsize(10)
             label.set_fontweight('normal')
         
         for label in self.ax.get_yticklabels():
-            label.set_fontfamily('Arial')
             label.set_fontsize(10)
             label.set_fontweight('normal')
         
