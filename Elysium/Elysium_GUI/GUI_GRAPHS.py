@@ -322,6 +322,9 @@ class SensorGridWindow(QWidget):
             self.main_graph.values.clear()
             self.main_graph.line.set_data([], [])
             # self.main_graph.ax.set_xlim(-10, 0)   # Most likely not necessary
+
+            self.main_graph.set_graph_styling()
+
             self.main_graph.canvas.draw()
             
             # Load historical data for this sensor
