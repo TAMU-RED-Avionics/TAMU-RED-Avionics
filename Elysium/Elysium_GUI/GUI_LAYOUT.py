@@ -53,10 +53,10 @@ class MainWindow(QMainWindow):
         control_layout.setContentsMargins(0, 0, 0, 0)
         control_lhs_layout.setContentsMargins(0, 0, 0, 0)
         control_rhs_layout.setContentsMargins(0, 0, 0, 0)
-        control_layout.setSpacing(20)
-        control_lhs_layout.setSpacing(10)
-        control_rhs_layout.setSpacing(0)
-        control_rhs_layout.setAlignment(Qt.AlignTop)
+        # control_layout.setSpacing(20)
+        # control_lhs_layout.setSpacing(10)
+        # control_rhs_layout.setSpacing(0)
+        # control_rhs_layout.setAlignment(Qt.AlignTop)
 
         # Setup of connection widget
         control_lhs_layout.addWidget(self.controller.conn_widget)
@@ -71,6 +71,8 @@ class MainWindow(QMainWindow):
         control_lhs_layout.addWidget(self.controller.valve_control)
         control_rhs_layout.addWidget(self.controller.diagram)
 
+        # control_layout.addLayout(control_lhs_layout)
+        # control_layout.addLayout(control_rhs_layout)
         control_layout.addLayout(control_lhs_layout, stretch=3)
         control_layout.addLayout(control_rhs_layout, stretch=2)
 
@@ -84,7 +86,7 @@ class MainWindow(QMainWindow):
         sensor_rhs_layout.setContentsMargins(0, 0, 0, 0)
         sensor_layout.setSpacing(20)
         sensor_lhs_layout.setSpacing(10)
-        sensor_rhs_layout.setSpacing(0)
+        sensor_rhs_layout.setSpacing(10)
         sensor_rhs_layout.setAlignment(Qt.AlignTop)
 
         # Current states and sensor grid
@@ -96,6 +98,8 @@ class MainWindow(QMainWindow):
         sensor_rhs_layout.addWidget(self.controller.sensor_grid.main_graph)
 
         # Final configuration of main window
+        # sensor_layout.addLayout(sensor_lhs_layout)
+        # sensor_layout.addLayout(sensor_rhs_layout)
         sensor_layout.addLayout(sensor_lhs_layout, stretch=3)
         sensor_layout.addLayout(sensor_rhs_layout, stretch=2)
 
@@ -145,10 +149,8 @@ class MainWindow(QMainWindow):
             self.controller.diagram.set_light_image()
         
         self.dark_mode_btn.setText("Light Mode" if self.dark_mode else "Dark Mode")
-        
-        # Update sensor grid
-        self.controller.sensor_grid.set_dark_mode(self.dark_mode)
-
+    
+    
     def apply_stylesheet(self):
         """Apply appropriate stylesheet based on current mode"""
         if self.dark_mode:
@@ -199,6 +201,14 @@ class MainWindow(QMainWindow):
                 }}
                 ValveDiagram {{
                     background-color: #222222;
+                }}
+                SensorFrame {{
+                    border: 2px solid #CCCCCC;
+                    border-radius: 5px;
+                    background-color: #444444;
+                }}
+                QLabel {{
+                    background-color: transparent;
                 }}
             """
             self.setStyleSheet(dark_stylesheet)
@@ -255,5 +265,15 @@ class MainWindow(QMainWindow):
                 ValveDiagram {{
                     background-color: #FFFFFF;
                 }}
+                SensorFrame {{
+                    border: 2px solid #AAAAAA;
+                    border-radius: 5px;
+                    background-color: #F0F0F0;
+                }}
+                QLabel {{
+                    background-color: transparent;
+                }}
             """
             self.setStyleSheet(light_stylesheet)
+
+        self.controller.sensor_grid.set_dark_mode(self.dark_mode)

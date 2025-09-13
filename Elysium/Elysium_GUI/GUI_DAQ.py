@@ -1,6 +1,6 @@
 # GUI_DAQ.py
 # This window hosts controls over Data Acquisition (DAQ), along with buttons for throttling and gimbaling
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QLineEdit
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QLineEdit, QSizePolicy
 
 class DAQWindow(QWidget):
     def __init__(self, controller):

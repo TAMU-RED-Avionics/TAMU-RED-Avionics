@@ -92,8 +92,8 @@ class SensorGraph(QWidget):
 
     def set_dark_mode(self, dark):
         if dark:
-            self.figure.set_facecolor('#333333')
-            self.ax.set_facecolor('#333333')
+            self.figure.set_facecolor('#222222')
+            self.ax.set_facecolor('#222222')
             self.ax.tick_params(axis='x', colors='white')
             self.ax.tick_params(axis='y', colors='white')
             self.ax.xaxis.label.set_color('white')
@@ -115,6 +115,11 @@ class SensorGraph(QWidget):
             self.line.set_color('green')
         self.canvas.draw()
 
+# Type downcast to make global configuration more manageable
+class SensorFrame(QFrame):
+    def __init__(self):
+        super().__init__()
+
 class SensorGridWindow(QWidget):
     def __init__(self):
         super().__init__()
@@ -131,7 +136,7 @@ class SensorGridWindow(QWidget):
                       [f"LC{i}" for i in range(1, 4)] + \
                       [f"B{i}" for i in range(1, 3)]
         
-        self.sensor_frames: Dict[str, QFrame] = {}  # Container frames for each sensor
+        self.sensor_frames: Dict[str, SensorFrame] = {}  # Container frames for each sensor
         self.sensor_labels: Dict[str, str] = {}  # Sensor name labels
         self.value_labels: Dict[str, str] = {}   # Value display labels
         self.unit_labels: Dict[str, str] = {}   # Unit labels
@@ -149,7 +154,7 @@ class SensorGridWindow(QWidget):
     def create_sensor_box(self, name, idx):
         """Create a bordered box for each sensor with labels inside"""
         # Create frame with border
-        frame = QFrame()
+        frame = SensorFrame()
         frame.setFrameShape(QFrame.Box)
         frame.setLineWidth(2)
         
@@ -193,9 +198,9 @@ class SensorGridWindow(QWidget):
         # Make entire frame clickable to open graph
         frame.mousePressEvent = lambda event, sn=name: self.update_main_graph(sn)
         frame.mouseDoubleClickEvent = lambda event, sn=name: self.open_graph(sn)
-
+        
         # Apply initial styling
-        self.update_sensor_style(name)
+        # self.update_sensor_style(name)
 
     def get_unit(self, sensor_name):
         if sensor_name.startswith('P'):
@@ -206,42 +211,42 @@ class SensorGridWindow(QWidget):
             return 'lb'
         return ''
 
-    def update_sensor_style(self, sensor_name):
-        """Apply appropriate styling based on dark mode setting"""
-        frame = self.sensor_frames[sensor_name]
-        name_label = self.sensor_labels[sensor_name]
-        value_label = self.value_labels[sensor_name]
-        unit_label = self.unit_labels[sensor_name]
+    # def update_sensor_style(self, sensor_name):
+    #     """Apply appropriate styling based on dark mode setting"""
+    #     frame = self.sensor_frames[sensor_name]
+    #     name_label = self.sensor_labels[sensor_name]
+    #     value_label = self.value_labels[sensor_name]
+    #     unit_label = self.unit_labels[sensor_name]
         
-        if self.dark_mode:
-            frame.setStyleSheet("""
-                QFrame {
-                    border: 2px solid #CCCCCC;
-                    border-radius: 5px;
-                    background-color: #444444;
-                }
-            """)
-            name_label.setStyleSheet("color: #EEEEEE; font-weight: bold; border: none;")
-            value_label.setStyleSheet("color: #FFFFFF; font-weight: bold; border: none;")
-            unit_label.setStyleSheet("color: #EEEEEE; font-weight: bold; border: none;")
-        else:
-            frame.setStyleSheet("""
-                QFrame {
-                    border: 2px solid #AAAAAA;
-                    border-radius: 5px;
-                    background-color: #F0F0F0;
-                }
-            """)
-            name_label.setStyleSheet("color: #333333; font-weight: bold; border: none;")
-            value_label.setStyleSheet("color: #000000; font-weight: bold; border: none;")
-            unit_label.setStyleSheet("color: #333333; font-weight: bold; border: none;")
+    #     if self.dark_mode:
+    #         frame.setStyleSheet("""
+    #             QFrame {
+    #                 border: 2px solid #CCCCCC;
+    #                 border-radius: 5px;
+    #                 background-color: #444444;
+    #             }
+    #         """)
+    #         name_label.setStyleSheet("color: #EEEEEE; font-weight: bold; border: none;")
+    #         value_label.setStyleSheet("color: #FFFFFF; font-weight: bold; border: none;")
+    #         unit_label.setStyleSheet("color: #EEEEEE; font-weight: bold; border: none;")
+    #     else:
+    #         frame.setStyleSheet("""
+    #             QFrame {
+    #                 border: 2px solid #AAAAAA;
+    #                 border-radius: 5px;
+    #                 background-color: #F0F0F0;
+    #             }
+    #         """)
+    #         name_label.setStyleSheet("color: #333333; font-weight: bold; border: none;")
+    #         value_label.setStyleSheet("color: #000000; font-weight: bold; border: none;")
+    #         unit_label.setStyleSheet("color: #333333; font-weight: bold; border: none;")
 
     def set_dark_mode(self, dark):
         self.dark_mode = dark
         if self.main_graph:
             self.main_graph.set_dark_mode(self.dark_mode)
-        for sensor in self.sensors:
-            self.update_sensor_style(sensor)
+        # for sensor in self.sensors:
+        #     self.update_sensor_style(sensor)
         for graph in self.graphs.values():
             graph.sensor_graph.set_dark_mode(dark)
 
@@ -282,7 +287,7 @@ class SensorGridWindow(QWidget):
         else:
             # Create new graph only if we don't have one yet
             self.main_graph = SensorGraph(sensor)
-            self.main_graph.set_dark_mode(self.dark_mode)
+            # self.main_graph.set_dark_mode(self.dark_mode)
             self.main_graph.canvas.draw()
             
             history = self.sensor_history.get(sensor, [])
@@ -293,7 +298,7 @@ class SensorGridWindow(QWidget):
     def open_graph(self, sensor):
         if sensor not in self.graphs:
             self.graphs[sensor] = SensorPopupGraph(sensor)
-            self.graphs[sensor].sensor_graph.set_dark_mode(self.dark_mode)
+            # self.graphs[sensor].sensor_graph.set_dark_mode(self.dark_mode)
             
             history = self.sensor_history.get(sensor, [])
             for ts, val in history:
