@@ -21,14 +21,10 @@ class ValveDiagramWindow(QWidget):
         # Load and display the P&ID image
         self.label = QLabel(self)
         self.pixmap = QPixmap("P&ID Light.png")
+        self.label.setPixmap(self.pixmap)
         self.label.setScaledContents(True)
-        # self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        # self.min_size = QSize(int(720 / self.pixmap.height() * self.pixmap.width()), int(720))
-        # self.label.setPixmap(self.pixmap.scaled(self.min_size, aspectRatioMode=Qt.KeepAspectRatio, 
-                                                # transformMode=Qt.SmoothTransformation))
-        # self.label.setFixedSize(self.pixmap.size() * self.scalingFactor)
-        self.label.setPixmap(self.pixmap.scaled(self.pixmap.size() * self.scalingFactor))
-        
+        self.label.setFixedSize(self.pixmap.size() * self.scalingFactor)
+        self.label.setStyleSheet("border-radius: 20px;")
         
         layout.addWidget(self.label)
         self.setLayout(layout)
@@ -47,7 +43,7 @@ class ValveDiagramWindow(QWidget):
         }
 
         # Create and position valve indicators (not clickable)
-        self.valve_buttons = {}
+        self.valve_symbols: [QLabel] = {}
         self.positions = {
             "NCS1": (670, 671),
             "NCS2": (239, 541),
@@ -62,33 +58,32 @@ class ValveDiagramWindow(QWidget):
         sf = self.scalingFactor
 
         for name, (x, y) in self.positions.items():
-            btn = QPushButton("", self.label)
-            btn.setGeometry(int(x * sf), int(y * sf), int(40 * sf), int(40 * sf))
-            btn.setStyleSheet(f"background-color: red; border-radius: {int(20 * sf)}px;")
-            btn.setEnabled(False)  # Make non-clickable
-            self.valve_buttons[name] = btn
+            sym = QLabel(self.label)
+            # btn = QPushButton("", self.label)
+            sym.setGeometry(int(x * sf), int(y * sf), int(40 * sf), int(40 * sf))
+            sym.setStyleSheet(f"background-color: red; border-radius: {int(20 * sf)}px;")
+            self.valve_symbols[name] = sym
+            sym.show()
 
     def update_button_positions(self):
         sf = self.scalingFactor
         for name, (x, y) in self.positions.items():
-            self.valve_buttons[name].setGeometry(int(x * sf), int(y * sf), int(40 * sf), int(40 * sf))
-            self.valve_buttons[name].setStyleSheet(f"background-color: red; border-radius: {int(20 * sf)}px;")
+            self.valve_symbols[name].setGeometry(int(x * sf), int(y * sf), int(40 * sf), int(40 * sf))
+            self.valve_symbols[name].setStyleSheet(f"background-color: red; border-radius: {int(20 * sf)}px;")
 
     def set_valve_state(self, name, state):
         sf = self.scalingFactor
         self.valve_states[name] = state
         color = "green" if state else "red"
-        self.valve_buttons[name].setStyleSheet(f"background-color: {color}; border-radius: {int(20 * sf)}px;")
+        self.valve_symbols[name].setStyleSheet(f"background-color: {color}; border-radius: {int(20 * sf)}px;")
 
     def set_dark_image(self):
         self.pixmap = QPixmap("P&ID Dark.png")
-        self.label.setScaledContents(True)
-        self.label.setPixmap(self.pixmap.scaled(self.pixmap.size() * self.scalingFactor))
+        self.label.setPixmap(self.pixmap)
 
     def set_light_image(self):
         self.pixmap = QPixmap("P&ID Light.png")
-        self.label.setScaledContents(True)
-        self.label.setPixmap(self.pixmap.scaled(self.pixmap.size() * self.scalingFactor))
+        self.label.setPixmap(self.pixmap)
 
     # def resizeEvent(self, e):
     #     super().resizeEvent(e)
