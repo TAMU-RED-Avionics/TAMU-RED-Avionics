@@ -118,7 +118,7 @@ class SensorGraph(QWidget):
         dpi = logical_dpi
 
         def points_to_pixels(points):
-            return points * dpi / 72   # tuned by literal iteration but allegedly it is supposed to be 72
+            return 0.75 * points * dpi / 72   # tuned by literal iteration but allegedly it is supposed to be 72
 
         font_pts = points_to_pixels(12)
 
