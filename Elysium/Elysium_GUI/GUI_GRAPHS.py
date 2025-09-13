@@ -1,7 +1,7 @@
 # GUI_GRAPHS.py
 # This file hosts the UI elements for plotting data from various sensors aboard the flight hardware
 from collections import deque
-from PyQt5.QtWidgets import QWidget, QLabel, QGridLayout, QDialog, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy
+from PyQt5.QtWidgets import QApplication, QWidget, QLabel, QGridLayout, QDialog, QVBoxLayout, QHBoxLayout, QFrame, QSizePolicy
 from PyQt5.QtCore import Qt, QDateTime, pyqtSignal, QObject
 from PyQt5.QtGui import QFont
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
@@ -110,10 +110,15 @@ class SensorGraph(QWidget):
         # self.ax.yaxis.label.set_fontfamily('Arail')
         # self.ax.title.set_fontfamily('Arail')
 
-        dpi = self.figure.get_dpi()
+        # Get the actual screen DPI
+        screen = QApplication.primaryScreen()
+        physical_dpi = screen.physicalDotsPerInch()
+        logical_dpi = screen.logicalDotsPerInch()
+        print("Physical dpi: ", physical_dpi, "logical_dpi", logical_dpi)
+        dpi = logical_dpi
 
         def points_to_pixels(points):
-            return points * dpi / 132   # tuned by literal iteration but allegedly it is supposed to be 72
+            return points * dpi / 72   # tuned by literal iteration but allegedly it is supposed to be 72
 
         font_pts = points_to_pixels(12)
 
