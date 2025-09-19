@@ -333,14 +333,18 @@ class GUIController:
             "", event_type, event_details
         ])
 
-    def handle_new_data(self, data_str):
+    def handle_new_data(self, data_str: str):
         """ Parse teensy timestamp (first token) (Req 4) """
+        # print("GUIController handling new data: \n\t", data_str)
 
         timestamp = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz")
         
-        parts = data_str.split(maxsplit=1)
+        parts = data_str.split(sep=",",maxsplit=1)
         teensy_ts = parts[0] if len(parts) > 1 else ""
         sensor_data = parts[1] if len(parts) > 1 else data_str
+
+        print("teensy_ts: ", teensy_ts)
+        print("sensor_data: ", sensor_data)
         
         if self.csv_writer:
             self.csv_writer.writerow([

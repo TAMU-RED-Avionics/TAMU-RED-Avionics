@@ -355,11 +355,13 @@ class SensorGridWindow(QWidget):
         self.graphs[sensor].raise_()
         self.graphs[sensor].activateWindow()
 
-    def handle_data_line(self, line):
-        readings = line.strip().split()
+    def handle_data_line(self, line: str):
+        print("SensorGridWIndow handling new data: ", line)
+        readings = line.strip().split(sep=",")
         for reading in readings:
             if ':' in reading:
                 try:
+                    print("")
                     parts = reading.split(':', 1)
                     sensor_name = parts[0].strip().upper()
                     value = float(parts[1].strip())

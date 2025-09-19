@@ -109,16 +109,18 @@ class EthernetClient:
         def connection_worker():
             try:
                 # Create the socket
-                self.sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.sock.settimeout(1)   # 1 second
+                self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+                self.sock.settimeout(3)   # 1 second
 
                 # Tells the socket to connect to the MCU's IP and port
-                self.sock.connect((ip, port))
+                self.sock.bind(('', port))     # bind to the hardcoded port (should be configurable live in the future
+                # self.sock.connect((ip, port))
                 self.connected = True
                 self.connecting = False
 
                 # Start NOOP heartbeat (Req 25)
-                self.start_heartbeat()
+                # self.start_heartbeat()
+                
                 # Start the listening thread in order to receive telemetry
                 self.start_listening()
 
@@ -129,6 +131,7 @@ class EthernetClient:
                 if self.log_event_callback:
                     self.log_event_callback(f"CONNECTION_ERROR:{str(e)}")
                 
+                print("Connect ran into exception: ", e)
                 self.connecting = False
                 callback(False)  # Failure
 
