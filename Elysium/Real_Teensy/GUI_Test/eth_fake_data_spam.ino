@@ -116,7 +116,7 @@ LOOP
 -------------------------------------------------------------------
 */
 void loop() {
-  Serial.println("looping");
+  Serial.print("looping");
 
   // check for last reading update
   if ((micros() - LAST_SENSOR_UPDATE) > SENSOR_UPDATE_INTERVAL) {
@@ -157,6 +157,6 @@ void loop() {
     float t_loc = (HUMAN_CONNECTION_TIMEOUT - (LAST_SENSOR_UPDATE -LAST_HUMAN_UPDATE)) / 1000000.0;
     output_float(PORT, t_loc);
     output_string(PORT, "\n");
-    delay(10);
+    delay(100);
   }
 }
