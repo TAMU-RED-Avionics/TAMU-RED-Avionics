@@ -3,6 +3,25 @@
 #include <NativeEthernetUdp.h>
 #include <IPAddress.h>
 
+/*
+-------------------------------------------------------------------
+To test this with your laptop:
+
+1. Test with a simple terminal, on my mac this is how I did it
+
+  ifconfig         (check for an enX number to pop up that isn't there when the cable is unplugged)
+  sudo ifconfig enX inet 192.168.1.175 netmask 255.255.255.0 up
+  nc -u -l 192.168.1.175
+
+2. Test with the GUI
+  cd Elysium_GUI
+  python GUI_MAIN.py
+
+  Type "192.168.1.174" in the IP section and "8888" in the Port section
+  Connect and look at the graphs
+-------------------------------------------------------------------
+*/
+
 // Timing variables
 long unsigned LAST_SENSOR_UPDATE = 0;                     // Timestamp of last sensor reading (microsec)
 const long unsigned SENSOR_UPDATE_INTERVAL = 1000;        // sensor update interval (microsec)              <-- USER INPUT
