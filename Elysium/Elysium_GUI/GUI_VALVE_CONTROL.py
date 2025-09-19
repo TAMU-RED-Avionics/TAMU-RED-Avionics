@@ -4,7 +4,7 @@
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QSizePolicy
 
 class ValveControlWindow(QWidget):
-    def __init__(self, parent=None, show_fire_sequence_dialog=None, apply_valve_state=None):
+    def __init__(self, parent=None, show_fire_sequence_dialog: ()=None, apply_valve_state: (str)=None):
         super().__init__(parent)
 
         top_layout = QVBoxLayout()

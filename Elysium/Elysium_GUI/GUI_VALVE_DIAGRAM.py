@@ -2,6 +2,7 @@
 # This file will display a diagram of the various valves in the Elysium 2 system.
 # They will update automatically according to various settings
 from stat import SF_APPEND
+from ast import Dict
 from PyQt5.QtWidgets import QWidget, QLabel, QPushButton, QVBoxLayout, QSizePolicy, QDesktopWidget
 from PyQt5.QtGui import QPixmap, QColor, QImage
 from PyQt5.QtCore import Qt, QSize
@@ -35,7 +36,7 @@ class ValveDiagramWindow(QWidget):
         self.setLayout(layout)
 
         # Initial valve states: False = closed (red), True = open (green)
-        self.valve_states = {
+        self.valve_states: Dict[str, bool] = {
             "NCS1": False,
             "NCS2": False,
             "NCS3": False,
@@ -48,8 +49,8 @@ class ValveDiagramWindow(QWidget):
         }
 
         # Create and position valve indicators (not clickable)
-        self.valve_symbols: [QLabel] = {}
-        self.positions = {
+        self.valve_symbols: Dict[str, QLabel] = {}
+        self.positions: Dict[str, (int, int)] = {
             "NCS1": (670, 671),
             "NCS2": (239, 541),
             "NCS3": (582, 531),

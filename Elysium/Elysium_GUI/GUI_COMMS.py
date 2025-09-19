@@ -1,7 +1,7 @@
 # GUI_COMMS.py
 # This file hosts the EthernetClient, which manages the connection between this GUI and the flight MCU
-import socket
-import threading
+from socket import socket, SocketKind, AddressFamily
+from threading import Thread
 import time
 from PyQt5.QtCore import QObject, pyqtSignal
 
@@ -10,16 +10,62 @@ class CommsSignals(QObject):
     abort_triggered = pyqtSignal(str, str)
 
 class EthernetClient:
-    def __init__(self):
-        self.sock = None
+    def __init__(self, log_event_callback: ()=None, receive_callback: ()=None):
+        self.receive_callback = receive_callback
+        self.log_event_callback = log_event_callback
+
+        self.sock: socket = None
         self.connecting = False
         self.connected = False
-        self.receive_callback = None
-        self.log_event_callback = None
         self.heartbeat_active = False
-        self.heartbeat_thread = None
+        self.heartbeat_thread: Thread = None
         self.listening_active = False
-        self.listen_thread = None
+        self.listen_thread: Thread = None
+
+    # Connects to the MCU over Ethernet in an asynchronous manner to preserve the main thread
+    # The callback function is called with the result of the connection attempt
+    def connect(self, ip, port, callback):
+        if self.connecting:     # If it is already connecting, just bounce because the command is redundant
+            return
+        elif self.connected:    # If it is connected already, return true so that the UI adjusts its text back to "Connected"
+            callback(True)
+            return
+        
+        # The connection worker is a separate thread that handles the connection attempt
+        def connection_worker():
+            try:
+                # Create the socket
+                self.sock = socket(AddressFamily.AF_INET, SocketKind.SOCK_DGRAM)
+                self.sock.settimeout(3)   # 1 second
+
+                # Tells the socket to connect to the MCU's IP and port
+                self.sock.bind(('', port))     # bind to the hardcoded port (should be configurable live in the future
+                # self.sock.connect((ip, port))
+                self.connected = True
+                self.connecting = False
+
+                # Start NOOP heartbeat (Req 25)
+                # self.start_heartbeat()
+                
+                # Start the listening thread in order to receive telemetry
+                self.start_listening()
+
+                callback(True)  # Success
+            
+            # Handle errors, notably timeouts which will be common
+            except Exception as e:
+                if self.log_event_callback:
+                    self.log_event_callback(f"CONNECTION_ERROR:{str(e)}")
+                
+                print("Connect ran into exception: ", e)
+                self.connecting = False
+                callback(False)  # Failure
+
+        self.connecting = True
+        
+        # Start connection in the separate thread
+        connection_thread = Thread(target=connection_worker, daemon=True)
+        connection_thread.start()
 
     def start_heartbeat(self):
         """Start sending heartbeat NOOP signals (Req 25)"""
@@ -38,7 +84,7 @@ class EthernetClient:
                     break
                 time.sleep(1)  # Send every second
                 
-        self.heartbeat_thread = threading.Thread(target=heartbeat_loop, daemon=True)
+        self.heartbeat_thread = Thread(target=heartbeat_loop, daemon=True)
         self.heartbeat_thread.start()
 
     def stop_heartbeat(self):
@@ -71,7 +117,7 @@ class EthernetClient:
             return
 
         self.listening_active = True
-        self.listen_thread = threading.Thread(target=self.listen_loop, daemon=True)
+        self.listen_thread = Thread(target=self.listen_loop, daemon=True)
         self.listen_thread.start()
 
     def stop_listening(self):
@@ -95,48 +141,3 @@ class EthernetClient:
         if self.sock:
             self.sock.close()
             self.sock = None
-
-    # Connects to the MCU over Ethernet in an asynchronous manner to preserve the main thread
-    # The callback function is called with the result of the connection attempt
-    def connect(self, ip, port, callback):
-        if self.connecting:     # If it is already connecting, just bounce because the command is redundant
-            return
-        elif self.connected:    # If it is connected already, return true so that the UI adjusts its text back to "Connected"
-            callback(True)
-            return
-        
-        # The connection worker is a separate thread that handles the connection attempt
-        def connection_worker():
-            try:
-                # Create the socket
-                self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-                self.sock.settimeout(3)   # 1 second
-
-                # Tells the socket to connect to the MCU's IP and port
-                self.sock.bind(('', port))     # bind to the hardcoded port (should be configurable live in the future
-                # self.sock.connect((ip, port))
-                self.connected = True
-                self.connecting = False
-
-                # Start NOOP heartbeat (Req 25)
-                # self.start_heartbeat()
-                
-                # Start the listening thread in order to receive telemetry
-                self.start_listening()
-
-                callback(True)  # Success
-            
-            # Handle errors, notably timeouts which will be common
-            except Exception as e:
-                if self.log_event_callback:
-                    self.log_event_callback(f"CONNECTION_ERROR:{str(e)}")
-                
-                print("Connect ran into exception: ", e)
-                self.connecting = False
-                callback(False)  # Failure
-
-        self.connecting = True
-        
-        # Start connection in the separate thread
-        connection_thread = threading.Thread(target=connection_worker, daemon=True)
-        connection_thread.start()

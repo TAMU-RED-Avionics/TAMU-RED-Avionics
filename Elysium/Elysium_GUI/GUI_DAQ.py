@@ -66,12 +66,12 @@ class DAQWindow(QWidget):
 
         self.setLayout(self.layout)
 
-    def toggle_throttling_daq(self, state):
+    def toggle_throttling_daq(self):
         self.controller.toggle_throttling()
 
         self.throttling_btn.setText("Disable Throttling" if self.controller.throttling_enabled else "Enable Throttling")
 
-    def toggle_gimbaling_daq(self, state):
+    def toggle_gimbaling_daq(self):
         self.controller.toggle_gimbaling()
 
         self.gimbaling_btn.setText("Disable Gimbaling" if self.controller.gimbaling_enabled else "Enable Gimbaling")

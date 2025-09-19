@@ -16,8 +16,6 @@ from GUI_VALVE_CONTROL import ValveControlWindow
 
 class GUIController:
     def __init__(self):
-        self.current_sensor_values: Dict[str, float] = {}
-
         # These signals are functions that will be run when the backend EthernetClient receives new packets
         self.comms_signals = CommsSignals()
         self.comms_signals.data_received.connect(self.process_data_main_thread)
@@ -33,12 +31,13 @@ class GUIController:
         self.csv_writer = None
 
         # These are constants and dictionaries that the UI needs to be tracked
+        self.current_sensor_values: Dict[str, float] = {}
         self.abort_active = False
         self.lockout_mode = False
         self.ncs3_opened_due_to_p2 = False
-        self.current_sensor_values = {}
-        self.abort_modes = {}
-        self.pre_abort_valve_states = {}
+        self.abort_modes: Dict[str, bool] = {}
+        self.pre_abort_valve_states: Dict[str, bool]  = {}
+        self.manual_valve_buttons: [QPushButton] = {}
         self.fire_sequence_btn = None
         self.manual_valve_dialog = None
         self.p3_p5_violation_start = None
@@ -55,7 +54,7 @@ class GUIController:
         self.sensor_grid = SensorGridWindow()
         self.sensor_graph = SensorGraph("P1")
         self.daq_window = DAQWindow(self)
-        self.abort_menu = AbortWindow(trigger_manual_abort=self.trigger_manual_abort, confirm_safe_state=self.confirm_safe_state)
+        self.abort_menu = AbortWindow(manual_abort_callback=self.trigger_manual_abort, safe_state_callback=self.confirm_safe_state)
 
         # Some of the UI elements have callbacks that need to connect to functions in GUIController. This behavior may be revisited
         self.sensor_grid.signals.update_signal.connect(self.update_sensor_value)
@@ -176,7 +175,7 @@ class GUIController:
         self.status_label.setText("System in Safe State")
         
         # Log safe state confirmation
-        self.daq_window.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
+        self.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
 
     def trigger_manual_abort(self):
         """Manual abort button handler (Req 11)"""
@@ -221,7 +220,7 @@ class GUIController:
         """Enable/disable specific abort mode (Req 9)"""
         self.abort_modes[mode] = state == 2
         status = "ENABLED" if state == 2 else "DISABLED"
-        self.daq_window.log_event("ABORT_MODE", f"{mode}:{status}")
+        self.log_event("ABORT_MODE", f"{mode}:{status}")
 
 
     def handle_abort(self, abort_type, reason):
@@ -311,10 +310,6 @@ class GUIController:
         self.abort_active = False
         self.lockout_mode = False
         self.update_lockout_state()
-        self.abort_menu.safe_state_btn.setVisible(False)
-        
-        # Update status
-        self.status_label.setText("System in Safe State")
         
         # Log safe state confirmation
         self.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
