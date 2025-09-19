@@ -1,48 +1,13 @@
-/*
--------------------------------------------------------------------
-VARIABLES & USER INPUT
--------------------------------------------------------------------
-*/
-
 #include <Arduino.h>
-
-// time variables
-// long unsigned LAST_SENSOR_UPDATE = 0;                     // Timestamp of last sensor reading (microsec)
-// const long unsigned SENSOR_UPDATE_INTERVAL = 1000;        // sensor update interval (microsec)              <-- USER INPUT
-
-// long unsigned LAST_LC_UPDATE = 0;                         // Timestamp of last Load Cell reading (microsec)
-// const long unsigned LC_UPDATE_INTERVAL = 100000;          // Load Cell update interval (microsec)           <-- USER INPUT
-
-// long unsigned LAST_COMMUNICATION_TIME = 0;                // Timestamp of last communication of any type (microsec)
-// const long unsigned CONNECTION_TIMEOUT = 200000;          // automated shutdown timeout for complete comms failure (microsec)           <-- USER INPUT
-
-// long unsigned LAST_HUMAN_UPDATE = 0;                      // Timestamp of last human communication(microsec)
-// const long unsigned HUMAN_CONNECTION_TIMEOUT = 300000000; // automated shutdown timeout for human comms failure (microsec)              <-- USER INPUT
-
-// long unsigned ABORT_TIME_TRACKING = 0;
-// const long unsigned ABORTED_TIME_INTERVAL = 500000;       // microsec between printing "aborted" (when aborted)
-// const long unsigned SHUTDOWN_PURGE_TIME = 2000;           // duration of purge for shutdown, in milliseconds
-
-// BAUD rate 
-const int BAUD = 115200;                   // serial com in bits per second     <-- USER INPUT
-
-// LABV 1 state variable
-// bool is_LABV1_open = false;
-
-// serial input variables
-// String IDENTIFIER = "";
-// int CONTROL_STATE = 0;
-
-/*
-COMMS SETUP
-*/
-
 #include <NativeEthernet.h>
 #include <NativeEthernetUdp.h>
 #include <IPAddress.h>
 
+// BAUD rate 
+const int BAUD = 115200;                   // serial com in bits per second     <-- USER INPUT
 unsigned int PORT = 8888;
 char packetBuffer[UDP_TX_PACKET_MAX_SIZE];  // buffer to hold incoming packet,
+
 // An EthernetUDP instance to let us send and receive packets over UDP
 EthernetUDP udp;
 byte MAC_ADDRESS[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
@@ -91,7 +56,6 @@ bool init_comms(byte* mac, unsigned int port) {
   udp.begin(port);
   return true;
 }
-
 
 
 /*
