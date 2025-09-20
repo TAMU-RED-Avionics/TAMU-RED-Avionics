@@ -7,6 +7,21 @@ from PyQt5.QtWidgets import QWidget, QLabel, QPushButton, QVBoxLayout, QSizePoli
 from PyQt5.QtGui import QPixmap, QColor, QImage
 from PyQt5.QtCore import Qt, QSize
 
+
+"""
+ValveDiagramWindow
+
+This window displays a large diagram of the P&ID engine system at full resolution, with live indicators
+showing which valves are currently open or closed. It was particularly challenging making sure this diagram
+would not be too large or too small on different computers, so its size is set to a fixed amount based on
+the overall screen size.
+
+INPUT DEPENDENCIES:
+
+OUTPUT DEPENDENCIES:
+    None - This window is passive only
+
+"""
 class ValveDiagramWindow(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)

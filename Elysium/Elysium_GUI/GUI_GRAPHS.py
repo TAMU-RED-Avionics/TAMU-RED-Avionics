@@ -8,8 +8,9 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
-
 from typing import Dict, Tuple
+
+from GUI_CONTROLLER import GUIController
 
 class SensorSignals(QObject):
     update_signal = pyqtSignal(str, float)
@@ -167,11 +168,26 @@ class SensorFrame(QFrame):
     def __init__(self):
         super().__init__()
 
+"""
+SensorGridWindow
+
+This window displayes a big grid of the current sensor readings.
+A single click to each sensor reading will update the main graph in the layout to that sensor
+A double click to each sensor reading opens up a separate window containing its data
+
+INPUT DEPENDENCIES:
+
+OUTPUT DEPENDENCIES:
+
+"""
 class SensorGridWindow(QWidget):
-    def __init__(self):
+    def __init__(self, controller: GUIController):
         super().__init__()
         self.signals = SensorSignals()
-        self.signals.update_signal.connect(self.update_sensor_value)
+
+        # TBD which one of these is the right way to do it
+        # self.signals.update_signal.connect(self.update_sensor_value)
+        # self.signals.update_signal.connect(controller.update_sensor_value)
         
         self.grid = QGridLayout()
         self.grid.setContentsMargins(0, 0, 0, 0)
@@ -179,9 +195,9 @@ class SensorGridWindow(QWidget):
         self.setLayout(self.grid)
 
         self.sensors = [f"P{i}" for i in range(1, 9)] + \
-                      [f"TC{i}" for i in range(1, 4)] + \
-                      [f"LC{i}" for i in range(1, 4)] + \
-                      [f"B{i}" for i in range(1, 3)]
+                       [f"TC{i}" for i in range(1, 4)] + \
+                       [f"LC{i}" for i in range(1, 4)] + \
+                       [f"B{i}" for i in range(1, 3)]
         
         self.sensor_frames: Dict[str, SensorFrame] = {}  # Container frames for each sensor
         self.sensor_labels: Dict[str, str] = {}  # Sensor name labels
@@ -253,36 +269,6 @@ class SensorGridWindow(QWidget):
         elif sensor_name.startswith('LC') or sensor_name.startswith('B'):
             return 'lb'
         return ''
-
-    # def update_sensor_style(self, sensor_name):
-    #     """Apply appropriate styling based on dark mode setting"""
-    #     frame = self.sensor_frames[sensor_name]
-    #     name_label = self.sensor_labels[sensor_name]
-    #     value_label = self.value_labels[sensor_name]
-    #     unit_label = self.unit_labels[sensor_name]
-        
-    #     if self.dark_mode:
-    #         frame.setStyleSheet("""
-    #             QFrame {
-    #                 border: 2px solid #CCCCCC;
-    #                 border-radius: 5px;
-    #                 background-color: #444444;
-    #             }
-    #         """)
-    #         name_label.setStyleSheet("color: #EEEEEE; font-weight: bold; border: none;")
-    #         value_label.setStyleSheet("color: #FFFFFF; font-weight: bold; border: none;")
-    #         unit_label.setStyleSheet("color: #EEEEEE; font-weight: bold; border: none;")
-    #     else:
-    #         frame.setStyleSheet("""
-    #             QFrame {
-    #                 border: 2px solid #AAAAAA;
-    #                 border-radius: 5px;
-    #                 background-color: #F0F0F0;
-    #             }
-    #         """)
-    #         name_label.setStyleSheet("color: #333333; font-weight: bold; border: none;")
-    #         value_label.setStyleSheet("color: #000000; font-weight: bold; border: none;")
-    #         unit_label.setStyleSheet("color: #333333; font-weight: bold; border: none;")
 
     def set_dark_mode(self, dark: bool):
         self.dark_mode = dark

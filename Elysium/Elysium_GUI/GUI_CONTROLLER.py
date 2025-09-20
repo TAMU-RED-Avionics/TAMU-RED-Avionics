@@ -5,14 +5,12 @@ from ast import Dict
 from PyQt5.QtWidgets import QVBoxLayout, QPushButton, QDialog, QLabel, QDialogButtonBox, QCheckBox, QMessageBox, QGroupBox
 from PyQt5.QtCore import Qt, QTimer, QDateTime
 from PyQt5.QtGui import QFont
-from GUI_ABORT import AbortWindow
-from GUI_LOGO import LogoWindow
-from GUI_DAQ import DAQWindow
+from PyQt5.QtCore import QObject, pyqtSignal
 from GUI_COMMS import EthernetClient, CommsSignals
-from GUI_CONNECT import ConnectionWindow
-from GUI_VALVE_DIAGRAM import ValveDiagramWindow
-from GUI_GRAPHS import SensorGridWindow, SensorGraph
-from GUI_VALVE_CONTROL import ValveControlWindow
+
+# This may be necessary for ongoing refactors but currently has no use
+class GuiSignals(QObject):
+    test_signal = pyqtSignal()
 
 class GUIController:
     def __init__(self):
@@ -38,26 +36,13 @@ class GUIController:
         self.abort_modes: Dict[str, bool] = {}
         self.pre_abort_valve_states: Dict[str, bool]  = {}
         self.manual_valve_buttons: [QPushButton] = {}
-        self.fire_sequence_btn = None
-        self.manual_valve_dialog = None
-        self.p3_p5_violation_start = None
-        self.p4_p6_violation_start = None
+        # self.fire_sequence_btn = None
+        # self.manual_valve_dialog = None
+        # self.p3_p5_violation_start = None
+        # self.p4_p6_violation_start = None
         self.abort_check_interval = 50
         self.throttling_enabled = False
         self.gimbaling_enabled = False
-
-        # Here we declare most of the UI elements that will be used. They are owned by the Controller to make it easy to manage interconnections
-        self.diagram = ValveDiagramWindow()
-        self.conn_widget = ConnectionWindow(ethernet_client=self.ethernet_client)
-        self.valve_control = ValveControlWindow(apply_valve_state=self.apply_valve_state, show_fire_sequence_dialog=self.show_fire_sequence_dialog)
-        self.status_label = QLabel("Current State: None")
-        self.sensor_grid = SensorGridWindow()
-        self.sensor_graph = SensorGraph("P1")
-        self.daq_window = DAQWindow(self)
-        self.abort_menu = AbortWindow(manual_abort_callback=self.trigger_manual_abort, safe_state_callback=self.confirm_safe_state)
-
-        # Some of the UI elements have callbacks that need to connect to functions in GUIController. This behavior may be revisited
-        self.sensor_grid.signals.update_signal.connect(self.update_sensor_value)
         
         # Abort related configuration
         self.init_abort_modes()
@@ -264,7 +249,7 @@ class GUIController:
         self.update_lockout_state()
         
         # Show safe state button
-        self.abort_menu.safe_state_btn.setVisible(True)
+        # self.abort_menu.safe_state_btn.setVisible(True)
         
         # Log abort event
         self.log_event("ABORT", f"{abort_type}:{reason}")

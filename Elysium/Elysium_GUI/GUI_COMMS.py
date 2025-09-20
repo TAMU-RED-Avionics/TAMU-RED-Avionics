@@ -1,5 +1,3 @@
-# GUI_COMMS.py
-# This file hosts the EthernetClient, which manages the connection between this GUI and the flight MCU
 from socket import socket, SocketKind, AddressFamily
 from threading import Thread
 import time
@@ -36,9 +34,10 @@ class EthernetClient:
             try:
                 # Create the socket
                 self.sock = socket(AddressFamily.AF_INET, SocketKind.SOCK_DGRAM)
-                self.sock.settimeout(3)   # 1 second
+                self.sock.settimeout(3)   # seconds
 
                 # Tells the socket to connect to the MCU's IP and port
+                host = socket.get
                 self.sock.bind(('', port))     # bind to the hardcoded port (should be configurable live in the future
                 # self.sock.connect((ip, port))
                 self.connected = True

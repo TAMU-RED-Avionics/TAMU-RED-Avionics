@@ -1,9 +1,18 @@
 # GUI_LAYOUT.py
 # This is the master file that determines the overall layout of the various UI elements
 from re import S
-from PyQt5.QtWidgets import QMainWindow, QSizePolicy, QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QFrame
+from PyQt5.QtWidgets import QMainWindow, QSizePolicy, QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QFrame, QLabel
 from PyQt5.QtCore import QSize, Qt
+
 from GUI_LOGO import LogoWindow
+from GUI_ABORT import AbortWindow
+from GUI_LOGO import LogoWindow
+from GUI_DAQ import DAQWindow
+from GUI_CONNECT import ConnectionWindow
+from GUI_VALVE_DIAGRAM import ValveDiagramWindow
+from GUI_GRAPHS import SensorGridWindow, SensorGraph
+from GUI_VALVE_CONTROL import ValveControlWindow
+
 from GUI_CONTROLLER import GUIController
 
 class MainWindow(QMainWindow):
@@ -16,6 +25,16 @@ class MainWindow(QMainWindow):
         self.dark_mode = False
 
         self.controller = GUIController()
+
+        # Here we declare most of the UI elements that will be used. They are owned by the Controller to make it easy to manage interconnections
+        self.diagram = ValveDiagramWindow()
+        self.conn_widget = ConnectionWindow(self.controller.ethernet_client)
+        self.valve_control = ValveControlWindow(self.controller)
+        self.status_label = QLabel("Current State: None")
+        self.sensor_grid = SensorGridWindow(self.controller)
+        self.sensor_graph = SensorGraph("P1")
+        self.daq_window = DAQWindow(self.controller)
+        self.abort_menu = AbortWindow(self.controller)
 
         self.init_ui()
 
@@ -48,7 +67,7 @@ class MainWindow(QMainWindow):
         logo_layout.addWidget(self.text_size_btn)
         logo_layout.addWidget(self.dark_mode_btn)
         main_layout.addLayout(logo_layout)
-    
+
         # Setting up the main 2 pane horizontal layout
         body_layout = QHBoxLayout()
         body_layout.setContentsMargins(0, 0, 0, 0)
@@ -66,26 +85,26 @@ class MainWindow(QMainWindow):
         body_layout.addLayout(rhs_layout, stretch=2)
 
         # Setup of connection widget
-        lhs_layout.addWidget(self.controller.conn_widget, stretch=2)
+        lhs_layout.addWidget(self.conn_widget, stretch=2)
 
         # Setup of the daq widget
-        lhs_layout.addWidget(self.controller.daq_window, stretch=3)
+        lhs_layout.addWidget(self.daq_window, stretch=3)
 
         # Setup of abort menu
-        lhs_layout.addWidget(self.controller.abort_menu, stretch=1)
+        lhs_layout.addWidget(self.abort_menu, stretch=1)
 
         # Setup of the valve control grid
-        lhs_layout.addWidget(self.controller.valve_control, stretch=7)
-        rhs_layout.addWidget(self.controller.diagram)
+        lhs_layout.addWidget(self.valve_control, stretch=7)
+        rhs_layout.addWidget(self.diagram)
         
         # Current states and sensor grid
-        self.controller.status_label.setAlignment(Qt.AlignCenter)
-        lhs_layout.addWidget(self.controller.status_label, stretch=1)
-        lhs_layout.addWidget(self.controller.sensor_grid, stretch=5)
+        self.status_label.setAlignment(Qt.AlignCenter)
+        lhs_layout.addWidget(self.status_label, stretch=1)
+        lhs_layout.addWidget(self.sensor_grid, stretch=5)
 
         # The main graph which will always be there
-        self.controller.sensor_grid.main_graph.setMinimumHeight(20)
-        rhs_layout.addWidget(self.controller.sensor_grid.main_graph)
+        self.sensor_grid.main_graph.setMinimumHeight(20)
+        rhs_layout.addWidget(self.sensor_grid.main_graph)
 
         # Add the 2 pane layout to the main vertical payout
         main_layout.addLayout(body_layout)
@@ -129,10 +148,10 @@ class MainWindow(QMainWindow):
         self.apply_stylesheet()
         if self.dark_mode:
             self.logo.set_dark_image()
-            self.controller.diagram.set_dark_image()
+            self.diagram.set_dark_image()
         else:
             self.logo.set_light_image()
-            self.controller.diagram.set_light_image()
+            self.diagram.set_light_image()
         
         self.dark_mode_btn.setText("Light Mode" if self.dark_mode else "Dark Mode")
     
@@ -256,4 +275,4 @@ class MainWindow(QMainWindow):
             """
             self.setStyleSheet(light_stylesheet)
 
-        self.controller.sensor_grid.set_dark_mode(self.dark_mode)
+        self.sensor_grid.set_dark_mode(self.dark_mode)

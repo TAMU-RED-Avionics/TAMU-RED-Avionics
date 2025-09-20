@@ -1,11 +1,22 @@
-# GUI_CONNECT.py
-# This window displays a form to enter in information about how to connect to the MCU, 
-# with associated information on the state of the connection
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QLineEdit
 from PyQt5.QtCore import Qt
 
 from GUI_COMMS import EthernetClient
 
+"""
+ConnectionWindow
+
+This window will display a set of options which will allow the user to establish a connection to the engine MCU
+
+INPUT DEPENDENCIES:
+    EthernetClient.connect(ip, port, callback)
+        This window will update its connection label based on the results of the ethernet client's connection attempt
+
+OUTPUT DEPENDENCIES:
+    EthernetClient.connect(ip, port, callback)
+        The connect button will call the ethernet client's connection function, updating the ethernet client's state accordingly
+
+"""
 class ConnectionWindow(QWidget):
     def __init__(self, ethernet_client: EthernetClient):
         super().__init__()

@@ -1,9 +1,40 @@
-# GUI_DAQ.py
-# This window hosts controls over Data Acquisition (DAQ), along with buttons for throttling and gimbaling
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QLineEdit, QSizePolicy, QGridLayout
 
+from GUI_CONTROLLER import GUIController
+
+"""
+DAQWindow
+
+This window displays some options for configuring and turning on the data acquisition logging.
+It also contains some buttons for gimbaling and throttling control.
+
+INPUT DEPENDENCIES:
+    None - all changes to display in this window are caused by its own buttons
+
+OUTPUT DEPENDENCIES:
+    GUIController.start_recording(filename)
+        When the start recording button is pressed, it must cause the controller to begin logging events that occur
+
+    GUIController.stop_recording()
+        When the stop recording button is pressed, the controller must stop its event logging
+
+    GUIController.show_manual_valve_control()
+        A button in this window will cause the controller to bring up an overlay window that allows the user to select
+        and control each valve independently and manually
+
+    GUIController.show_abort_control()
+        A button in this window will cause the controller to bring up an overlay window that lets the user
+        control which abort conditions are live in the system
+
+    GUIController.toggle_throttling()
+        The toggle throttling button must update the state in the controller accordingly
+    
+    GUIController.toggle_gimbaling()
+        The toggle gimbaling butotn must update the state in the controller accordingly
+
+"""
 class DAQWindow(QWidget):
-    def __init__(self, controller):
+    def __init__(self, controller: GUIController):
         super().__init__()
 
         self.controller = controller
