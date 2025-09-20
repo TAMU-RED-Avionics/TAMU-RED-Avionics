@@ -129,7 +129,6 @@ class DAQWindow(QWidget):
                 btn.setEnabled(False)
 
     def safe_state_action(self):
-        print("DAQWindow confirming safe state")
         # Enable valve state buttons
         for btn in self.findChildren(QPushButton):
             btn.setEnabled(True)

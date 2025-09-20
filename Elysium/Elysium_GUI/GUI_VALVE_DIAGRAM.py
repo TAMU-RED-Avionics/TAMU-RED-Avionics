@@ -20,6 +20,7 @@ the overall screen size.
 
 INPUT DEPENDENCIES:
     TODO - abort signal 
+    TODO - valve update
 
 OUTPUT DEPENDENCIES:
     None - This window is passive only
@@ -30,6 +31,7 @@ class ValveDiagramWindow(QWidget):
         super().__init__()
 
         self.controller = controller
+        self.controller.gui_signals.valve_updated.connect(self.set_valve_state)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -94,6 +96,11 @@ class ValveDiagramWindow(QWidget):
         for name, (x, y) in self.positions.items():
             self.valve_symbols[name].setGeometry(int(x * sf), int(y * sf), int(40 * sf), int(40 * sf))
             self.valve_symbols[name].setStyleSheet(f"background-color: red; border-radius: {int(20 * sf)}px;")
+
+    def set_valve_state(self, name, state):
+        sf = self.scalingFactor
+        color = "green" if state else "red"
+        self.valve_symbols[name].setStyleSheet(f"background-color: {color}; border-radius: {int(20 * sf)}px;")
 
     def abort_action(self):
         # Store current valve states before making changes

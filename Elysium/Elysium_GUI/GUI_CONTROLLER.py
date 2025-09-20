@@ -11,6 +11,7 @@ from GUI_COMMS import EthernetClient, CommsSignals
 # This may be necessary for ongoing refactors but currently has no use
 class GuiSignals(QObject):
     safe_state = pyqtSignal()   # Used to update the lockout state in a few different UI windows
+    valve_updated = pyqtSignal(str, bool)
 
 class GUIController:
     def __init__(self, parent: QWidget):
@@ -422,12 +423,12 @@ class GUIController:
         # Countdown label
         self.countdown_label = QLabel("Ignition in 10 seconds...")
         self.countdown_label.setAlignment(Qt.AlignCenter)
-        self.countdown_label.setFont(QFont("Arial", 14, QFont.Bold))
+        # self.countdown_label.setFont(QFont("Arial", 14, QFont.Bold))
         countdown_layout.addWidget(self.countdown_label)
         
         # Cancel button
         cancel_btn = QPushButton("CANCEL")
-        cancel_btn.setFont(QFont("Arial", 12, QFont.Bold))
+        # cancel_btn.setFont(QFont("Arial", 12, QFont.Bold))
         cancel_btn.setStyleSheet("background-color: red; color: white;")
         countdown_layout.addWidget(cancel_btn)
         
@@ -459,43 +460,17 @@ class GUIController:
         
         # Show dialog and handle result
         if countdown_dialog.exec_() == QDialog.Accepted:
-            self.apply_valve_state("Pressurization")
-
-    
-    def toggle_valve(self, valve_name, state=None):
-        if self.abort_active:
-            return
-            
-        if state is None:
-            # Toggle current state
-            new_state = not self.valve_states[valve_name]
-        else:
-            new_state = state
-            
-        # self.diagram.set_valve_state(valve_name, new_state)
-        
-        # Update manual valve button if dialog is open
-        if hasattr(self, 'manual_valve_buttons') and valve_name in self.manual_valve_buttons:
-            color = "green" if new_state else "red"
-            self.manual_valve_buttons[valve_name].setStyleSheet(
-                f"background-color: {color}; color: white;"
-            )
-        
-        # Send command
-        try:
-            self.ethernet_client.send_valve_command(valve_name, new_state)
-        except Exception:
-            pass
+            self.apply_operation("Pressurization")
 
     def show_manual_valve_control(self):
         if self.abort_active:
             QMessageBox.warning(self.parent, "Lockout Active", "Manual control is disabled during abort")
             return
-            
+        
         # Close existing dialog if open
         if self.manual_valve_dialog:
             self.manual_valve_dialog.close()
-            
+        
         dialog = QDialog(self.parent)
         dialog.setWindowTitle("Manual Valve Control")
         dialog.setModal(False)  # Allow interaction with main window
@@ -517,47 +492,48 @@ class GUIController:
             # Store button reference
             self.manual_valve_buttons[valve] = btn
             # Connect click handler with valve name
-            btn.clicked.connect(lambda checked, v=valve: self.toggle_valve_and_update_button(v))
+            btn.clicked.connect(lambda checked, v=valve: self.toggle_valve(v))
             layout.addWidget(btn)
             
         dialog.show()
 
-    def toggle_valve_and_update_button(self, valve_name):
-        """Toggle valve state and update button color"""
+    def toggle_valve(self, valve_name: str, state=None):
         if self.abort_active:
             return
+
+        if state is None:
+            new_state = not self.valve_states[valve_name]
+        else:
+            new_state = state
+
+        self.valve_states[valve_name] = new_state
+        self.gui_signals.valve_updated.emit(valve_name, new_state)
         
-        # Toggle current state
-        new_state = not self.valve_states[valve_name]
-        # self.diagram.set_valve_state(valve_name, new_state)
-        
-        # Update button color
-        if valve_name in self.manual_valve_buttons:
+        # Update manual valve button if dialog is open
+        # if valve_name in self.manual_valve_buttons:
+        if hasattr(self, 'manual_valve_buttons') and valve_name in self.manual_valve_buttons:
             color = "green" if new_state else "red"
             self.manual_valve_buttons[valve_name].setStyleSheet(
                 f"background-color: {color}; color: white;"
             )
         
-        # Send command
         try:
+            # Send command
             self.ethernet_client.send_valve_command(valve_name, new_state)
         except Exception:
             pass
 
-    def apply_valve_state(self, operation: str):
+    def apply_operation(self, operation: str):
         if self.abort_active:
             return
         
-        active_valves = self.valve_states.get(operation, [])
+        active_valves = self.valve_operation_states.get(operation, [])
         for name in self.valve_states:
             state = name in active_valves
-            # self.diagram.set_valve_state(name, state)
-            try:
-                self.ethernet_client.send_valve_command(name, state)
-            except Exception:
-                pass
+            self.toggle_valve(name, state)
+
         # self.status_label.setText(f"Current State: {operation}")
 
         if operation == "Pressurization":
-            QTimer.singleShot(5000, lambda: self.apply_valve_state("Fire"))
-            QTimer.singleShot(20000, lambda: self.apply_valve_state("Kill and Vent"))
+            QTimer.singleShot(5000, lambda: self.apply_operation("Fire"))
+            QTimer.singleShot(20000, lambda: self.apply_operation("Kill and Vent"))

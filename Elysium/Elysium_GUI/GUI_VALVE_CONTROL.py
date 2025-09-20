@@ -60,7 +60,7 @@ class ValveControlWindow(QWidget):
             # This is defined as a lambda function because it requires an argument, and simply writing
             # controller.apply_valve_state(op) would call that function upon creation, not upon press
             # The lambda closure is defining a new function where op can be passed into the controller's function
-            btn.clicked.connect(lambda checked, o=op: controller.apply_valve_state(o))
+            btn.clicked.connect(lambda checked, o=op: controller.apply_operation(o))
 
             current_column_layout.addWidget(btn)
 

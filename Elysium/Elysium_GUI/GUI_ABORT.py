@@ -67,7 +67,6 @@ class AbortWindow(QWidget):
     
     # Updates the controller and the local window when a safe state is commanded
     def safe_state_action(self):
-        print("AbortWindow confirming safe state")
         self.controller.confirm_safe_state()
         self.safe_state_btn.setVisible(False)
 
