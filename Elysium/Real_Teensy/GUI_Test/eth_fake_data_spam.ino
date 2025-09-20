@@ -11,7 +11,7 @@ To test this with your laptop:
 
   ifconfig         (check for an enX number to pop up that isn't there when the cable is unplugged)
   sudo ifconfig enX inet 192.168.1.175 netmask 255.255.255.0 up
-  nc -u -l 192.168.1.175
+  nc -u -l 8888
 
 2. Test with the GUI
   cd Elysium_GUI
@@ -79,13 +79,13 @@ String input_until(char stop_character) {
   return ret;
 }
 
-bool init_comms(byte* mac, unsigned int port) {
+bool init_comms() {
   EthernetUDP ret;
   IPAddress GATEWAY(192, 168, 1, 1);   // there is no router, so this is meaningless 
   IPAddress SUBNET(255, 255, 255, 0);  // could be almost anything else tbh
 
   // Apparently the intended behavior of this function is to BLOCK execution until it establishes a connection
-  Ethernet.begin(mac, LOCAL, GATEWAY, SUBNET);
+  Ethernet.begin(MAC_ADDRESS, LOCAL);
   if (Ethernet.hardwareStatus() == EthernetNoHardware) {
     Serial.println("ERR: No Ethernet board detected");
     return false;
@@ -93,7 +93,7 @@ bool init_comms(byte* mac, unsigned int port) {
     Serial.println("ERR: Ethernet cable disconnected");
     return false;
   }
-  udp.begin(port);
+  udp.begin(PORT);
   return true;
 }
 
@@ -107,7 +107,7 @@ void setup() {
   Serial.begin(BAUD);           // initializes serial communication at set baud rate
   Serial.println("Initialized Serial");
   
-  init_comms(MAC_ADDRESS, PORT);  // does what it says on the tin
+  init_comms();  // does what it says on the tin
 }
 
 /*

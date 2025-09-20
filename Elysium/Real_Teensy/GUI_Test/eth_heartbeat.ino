@@ -5,14 +5,31 @@
 
 /*
 -------------------------------------------------------------------
-To test this with your laptop: (mac example)
+To test this with your laptop:
+  cd Elysium_GUI
+  python GUI_MAIN.py
 
-  ifconfig         (check for an enX number to pop up that isn't there when the cable is unplugged)
-  sudo ifconfig enX inet 192.168.1.175 netmask 255.255.255.0 up (replace enX with your etherent interface)
-  nc -u -l 8888
-
+  Type "192.168.1.174" in the IP section and "8888" in the Port section
+  Connect and look at the graphs
 -------------------------------------------------------------------
 */
+
+// Timing variables
+long unsigned LAST_SENSOR_UPDATE = 0;                     // Timestamp of last sensor reading (microsec)
+const long unsigned SENSOR_UPDATE_INTERVAL = 1000;        // sensor update interval (microsec)              <-- USER INPUT
+
+long unsigned LAST_LC_UPDATE = 0;                         // Timestamp of last Load Cell reading (microsec)
+const long unsigned LC_UPDATE_INTERVAL = 100000;          // Load Cell update interval (microsec)           <-- USER INPUT
+
+long unsigned LAST_COMMUNICATION_TIME = 0;                // Timestamp of last communication of any type (microsec)
+const long unsigned CONNECTION_TIMEOUT = 200000;          // automated shutdown timeout for complete comms failure (microsec)           <-- USER INPUT
+
+long unsigned LAST_HUMAN_UPDATE = 0;                      // Timestamp of last human communication(microsec)
+const long unsigned HUMAN_CONNECTION_TIMEOUT = 300000000; // automated shutdown timeout for human comms failure (microsec)              <-- USER INPUT
+
+long unsigned ABORT_TIME_TRACKING = 0;
+const long unsigned ABORTED_TIME_INTERVAL = 500000;       // microsec between printing "aborted" (when aborted)
+const long unsigned SHUTDOWN_PURGE_TIME = 2000;           // duration of purge for shutdown, in milliseconds
 
 // BAUD rate 
 const int BAUD = 115200;                   // serial com in bits per second     <-- USER INPUT
@@ -87,12 +104,29 @@ LOOP
 -------------------------------------------------------------------
 */
 void loop() {
-  Serial.println("looping");
+  // Send the teensy side's heartbeat signal
+  output_string(PORT, "NOOP\n");
 
-  //Intended to just be printed to a terminal using something like netcat
-  //Make sure you have set up the ethernet connection to be 192.168.1.175 on your laptop
-  // ifconfig         (check for an enX number to pop up that isn't there when the cable is unplugged)
-  // sudo ifconfig enX inet 192.168.1.175 netmask 255.255.255.0 up
-  // nc -u -l 192.168.1.175
-  output_string(PORT, "skill issue\n");
+  // Checks for the heartbeat from the GUI
+  udp.parsePacket();
+  if (udp.available() > 0) {
+    // read communication
+    String input = input_until('\n');
+
+    if (input == "NOOP") {
+      LAST_COMMUNICATION_TIME = micros();
+    }
+  }
+
+  // Lost communication shutdown
+  if ((micros() - LAST_COMMUNICATION_TIME) > CONNECTION_TIMEOUT) {
+    
+    // While system is aborted, print "aborted" until a start command is received
+    bool aborted = true;
+    while(aborted) {
+      Serial.writeln("ABORT STATE");
+    }
+  }
+
+  delay(100);
 }
