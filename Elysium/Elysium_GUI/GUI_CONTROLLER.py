@@ -3,7 +3,7 @@
 import csv, os
 from ast import Dict
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QDialog, QLabel, QDialogButtonBox, QCheckBox, QMessageBox, QGroupBox
-from PyQt5.QtCore import Qt, QTimer, QDateTime
+from PyQt5.QtCore import QDate, Qt, QTimer, QDateTime
 from PyQt5.QtGui import QFont
 from PyQt5.QtCore import QObject, pyqtSignal
 from GUI_COMMS import EthernetClient
@@ -15,6 +15,7 @@ class Signals(QObject):
     valve_updated = pyqtSignal(str, bool)
     sensor_updated = pyqtSignal(str, float)
     system_status = pyqtSignal(str)
+    disconnected = pyqtSignal()
 
 """
 GUI CONTROLLER
@@ -28,7 +29,7 @@ Think of it as the entire backend managed in one spot.
 
 The rest of the windows are configured to take in this controller as an initializer object. Each
 one of them will connect different signals inside here to their internal update actions, and will
-connect functions here to thier buttons in order to configure connections.
+connect functions here to their buttons in order to configure connections.
 
 """
 class GUIController:
@@ -42,6 +43,7 @@ class GUIController:
         self.ethernet_client = EthernetClient()
         self.ethernet_client.receive_callback = self.handle_new_data
         self.ethernet_client.log_event_callback = self.log_event
+        self.ethernet_client.disconnect_callback = lambda: self.signals.disconnected.emit()
 
         # For file recording
         self.csv_file = None
@@ -52,16 +54,18 @@ class GUIController:
         self.ncs3_opened_due_to_p2 = False
         self.abort_modes: Dict[str, bool] = {}
         self.pre_abort_valve_states: Dict[str, bool]  = {}
+        self.current_sensor_values: Dict[str, float] = {}
         self.manual_valve_buttons: [QPushButton] = {}
-        self.abort_check_interval = 50
+        self.abort_check_interval = 10  # ms
         self.throttling_enabled = False
         self.gimbaling_enabled = False
         self.manual_valve_dialog: QDialog = None
 
-        self.current_sensor_values: Dict[str, float] = {}
-
         self.p3_p5_violation_start = None
         self.p4_p6_violation_start = None
+
+        self.heartbeat_abort_interval: int = 20     # ms (roughly 3 sender units of time but consider the abort_check_interval)
+        self.last_heartbeat_time: int = None    # ms since epoch
 
         # Initial valve states: False = closed (red), True = open (green)
         self.valve_states: Dict[str, bool] = {
@@ -123,7 +127,18 @@ class GUIController:
         }
     
     def check_abort_conditions(self):
-        if not self.current_sensor_values or self.abort_active:
+        if self.abort_active:
+            return
+
+        cur_ms = QDateTime.currentMSecsSinceEpoch()
+        if self.last_heartbeat_time and self.ethernet_client.connected and (cur_ms - self.last_heartbeat_time) > self.heartbeat_abort_interval:
+            self.signals.abort_triggered.emit(
+                "no_heartbeat_received",
+                f"last heartbeat time: {self.last_heartbeat_time}, current time: {cur_ms}, abort interval: {self.heartbeat_abort_interval}"
+            )
+
+        # Beyond this point we shouldn't check for abort conditions if there is no data
+        if not self.current_sensor_values:
             return
         current_time = QDateTime.currentDateTime().toMSecsSinceEpoch()
         p3 = self.current_sensor_values.get("P3", 0)
@@ -253,6 +268,9 @@ class GUIController:
         self.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
 
     # DAQ RECORDING ------------------------------------------------------------------------------------------------
+    # def handle_disconnect(self):
+    #     self.disconnect
+
     def log_event(self, event_type, event_details=""):
         """Log an event to CSV (Req 15)"""
         if not self.csv_writer:
@@ -268,15 +286,11 @@ class GUIController:
 
     def handle_new_data(self, data_str: str):
         """ Parse teensy timestamp (first token) (Req 4) """
-
         timestamp = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz")
         
         parts = data_str.split(sep=",",maxsplit=1)
         teensy_ts = parts[0] if len(parts) > 1 else ""
         sensor_data = parts[1] if len(parts) > 1 else data_str
-
-        print("teensy_ts: ", teensy_ts)
-        print("sensor_data: ", sensor_data)
 
         readings = sensor_data.strip().split(sep=",")
         for reading in readings:
@@ -289,6 +303,9 @@ class GUIController:
                     self.signals.sensor_updated.emit(sensor_name, value)
                 except ValueError:
                     pass
+            elif reading == "NOOP":
+                print("Received Teensy NOOP")
+                self.last_heartbeat_time = QDateTime.currentMSecsSinceEpoch()
         
         if self.csv_writer:
             self.csv_writer.writerow([

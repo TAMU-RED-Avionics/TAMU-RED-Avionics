@@ -1,7 +1,7 @@
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QLineEdit
 from PyQt5.QtCore import Qt
 
-from GUI_COMMS import EthernetClient
+from GUI_CONTROLLER import GUIController
 
 """
 ConnectionWindow
@@ -18,9 +18,11 @@ OUTPUT DEPENDENCIES:
 
 """
 class ConnectionWindow(QWidget):
-    def __init__(self, ethernet_client: EthernetClient):
+    def __init__(self, controller: GUIController):
         super().__init__()
-        self.ethernet_client = ethernet_client
+
+        self.controller = controller
+        self.controller.signals.disconnected.connect(lambda: self.conn_status_label.setText("Disconnected"))
         
         eth_layout = QVBoxLayout()
         eth_layout.setContentsMargins(0, 0, 0, 0)
@@ -70,5 +72,5 @@ class ConnectionWindow(QWidget):
                 self.conn_status_label.setText("Connection failed")
         
         # Use asynchronous connection to avoid blocking the UI
-        self.ethernet_client.connect(ip, port, connection_callback)
+        self.controller.ethernet_client.connect(ip, port, connection_callback)
 

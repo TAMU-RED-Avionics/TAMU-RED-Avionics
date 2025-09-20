@@ -1,13 +1,17 @@
+from re import I
 from socket import socket, SocketKind, AddressFamily
 from threading import Thread
 import time
 from PyQt5.QtCore import QObject, pyqtSignal
 
 class EthernetClient:
-    def __init__(self, log_event_callback: (str)=None, receive_callback: (str)=None):
+    def __init__(self, log_event_callback: (str)=None, receive_callback: (str)=None, disconnect_callback: ()=None):
         self.receive_callback = receive_callback
         self.log_event_callback = log_event_callback
+        self.disconnect_callback=None
         
+        self.remote_ip: str = None
+        self.remote_port: int = None
         self.sock: socket = None
         self.connecting = False
         self.connected = False
@@ -18,29 +22,34 @@ class EthernetClient:
 
     # Connects to the MCU over Ethernet in an asynchronous manner to preserve the main thread
     # The callback function is called with the result of the connection attempt
-    def connect(self, ip, port, callback):
+    def connect(self, ip: str, port: int, callback: ()):
+        self.remote_ip = ip     # In the future we can probably automatically determine remote_ip when we sniff the first heartbeat packets
+        self.remote_port = port
+
         if self.connecting:     # If it is already connecting, just bounce because the command is redundant
             return
         elif self.connected:    # If it is connected already, return true so that the UI adjusts its text back to "Connected"
-            callback(True)
-            return
+            # callback(True)
+            # return
+            self.disconnect("Manual reconnect")
+
         
         # The connection worker is a separate thread that handles the connection attempt
         def connection_worker():
             try:
                 # Create the socket
                 self.sock = socket(AddressFamily.AF_INET, SocketKind.SOCK_DGRAM)
-                self.sock.settimeout(3)   # seconds
+                self.sock.settimeout(1)   # seconds
 
                 # Tells the socket to connect to the MCU's IP and port
                 # host = socket.get
-                self.sock.bind(('', port))     # bind to the hardcoded port (should be configurable live in the future
+                self.sock.bind(("", port))     # bind to the hardcoded port (should be configurable live in the future
                 # self.sock.connect((ip, port))
                 self.connected = True
                 self.connecting = False
 
                 # Start NOOP heartbeat (Req 25)
-                # self.start_heartbeat()
+                self.start_heartbeat()
                 
                 # Start the listening thread in order to receive telemetry
                 self.start_listening()
@@ -71,13 +80,20 @@ class EthernetClient:
         def heartbeat_loop():
             while self.connected and self.heartbeat_active:
                 try:
-                    self.sock.sendall("NOOP\n".encode())
+                    print("Sending GUI NOOP")
+                    # self.sock.sendall("NOOP\n".encode())
+                    if self.remote_ip and self.remote_port:
+                        self.sock.sendto("NOOP\n".encode(), (self.remote_ip, self.remote_port))
+
                     if self.log_event_callback:
                         self.log_event_callback("HEARTBEAT:NOOP")
-                except Exception:
-                    self.connected = False
+                except Exception as e:
+                    self.disconnect(e)
+                    # self.connected = False
+                    # if self.disconnect_callback:
+                    #     self.disconnect_callback()
                     break
-                time.sleep(1)  # Send every second
+                time.sleep(0.1)  # Send every second
                 
         self.heartbeat_thread = Thread(target=heartbeat_loop, daemon=True)
         self.heartbeat_thread.start()
@@ -91,9 +107,12 @@ class EthernetClient:
             try:
                 data = self.sock.recv(1024)
                 if not data:
-                    self.connected = False
-                    break
+                    self.disconnect("data is empty")
+                    # self.connected = False
+                    # if self.disconnect_callback:
+                    #     self.disconnect_callback()
                     
+                    break
                 decoded = buffer + data.decode(errors='ignore')
                 
                 # Split into lines while preserving partial messages
@@ -103,8 +122,8 @@ class EthernetClient:
                         self.receive_callback(line.strip())
                 buffer = lines[-1]
                 
-            except Exception:
-                self.connected = False
+            except Exception as e:
+                self.disconnect(e)
                 break
 
     def start_listening(self):
@@ -129,10 +148,18 @@ class EthernetClient:
             except Exception:
                 pass
 
-    def disconnect(self):
+    def disconnect(self, reason: str=None):
+        if reason:
+            print("EthernetClient disconnected: ", reason)
+            if self.log_event_callback:
+                self.log_event_callback(f"DISCONNECT:{reason}")
+                
+
         self.connected = False
         self.stop_heartbeat()
         self.stop_listening()
         if self.sock:
             self.sock.close()
             self.sock = None
+        if self.disconnect_callback:
+            self.disconnect_callback()

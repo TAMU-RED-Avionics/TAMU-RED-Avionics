@@ -19,6 +19,7 @@ Sensor Graph
 This widget uses matplotlib in order to plot data. It is inteded to be heavily manually
 controlled by its parent, as such it is a very passive widget, only containing functions
 that change its state which are meant to be called by the parent
+
 """
 class SensorGraph(QWidget):
     def __init__(self, sensor_name: str, parent=None):

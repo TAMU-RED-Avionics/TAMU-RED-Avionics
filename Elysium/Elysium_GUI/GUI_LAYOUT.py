@@ -25,6 +25,7 @@ It owns both the controller and the different sub windows, feeding the controlle
 Note that each window will deal with all their connections internally. If they require an update from external changes,
 they can bind themselves to the controller's signals. If they have buttons which need to do things, they bind those
 buttons to functions in the controller.
+
 """
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -39,7 +40,7 @@ class MainWindow(QMainWindow):
 
         # Here we declare most of the UI elements that will be used. They are owned by the Controller to make it easy to manage interconnections
         self.diagram = ValveDiagramWindow(self.controller)
-        self.conn_widget = ConnectionWindow(self.controller.ethernet_client)
+        self.conn_widget = ConnectionWindow(self.controller)
         self.valve_control = ValveControlWindow(self.controller)
         self.status_label = QLabel("Current State: None")
         self.sensor_grid = SensorGridWindow(self.controller)

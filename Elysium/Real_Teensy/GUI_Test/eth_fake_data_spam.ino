@@ -11,7 +11,7 @@ To test this with your laptop:
 
   ifconfig         (check for an enX number to pop up that isn't there when the cable is unplugged)
   sudo ifconfig enX inet 192.168.1.175 netmask 255.255.255.0 up
-  nc -u -l 192.168.1.175
+  nc -u -l 8888
 
 2. Test with the GUI
   cd Elysium_GUI
