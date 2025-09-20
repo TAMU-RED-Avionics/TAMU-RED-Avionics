@@ -8,31 +8,20 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 import matplotlib.font_manager as fm
 import matplotlib.pyplot as plt
-
 from typing import Dict, Tuple
 
-class SensorSignals(QObject):
-    update_signal = pyqtSignal(str, float)
-
-class SensorPopupGraph(QDialog):
-    def __init__(self, sensor_name: str, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(f"{sensor_name} - Live Graph")
-        self.resize(800, 500)
-        self.sensor_name = sensor_name
-        self.setModal(False)
-
-        self.sensor_graph = SensorGraph(sensor_name=self.sensor_name, parent=parent)
-
-        layout = QVBoxLayout()
-        layout.addWidget(self.sensor_graph)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        self.setLayout(layout)
+from GUI_CONTROLLER import GUIController
 
 
+"""
+Sensor Graph
+
+This widget uses matplotlib in order to plot data. It is inteded to be heavily manually
+controlled by its parent, as such it is a very passive widget, only containing functions
+that change its state which are meant to be called by the parent
+"""
 class SensorGraph(QWidget):
-    def __init__(self, sensor_name, parent=None):
+    def __init__(self, sensor_name: str, parent=None):
         super().__init__(parent)
         self.sensor_name = sensor_name
         
@@ -64,7 +53,7 @@ class SensorGraph(QWidget):
         self.ax.set_xlim(-10, 0)
         self.canvas.draw()
 
-    def get_unit(self, sensor_name):
+    def get_unit(self, sensor_name: str):
         if sensor_name.startswith('P'):
             return 'psi'
         elif sensor_name.startswith('TC'):
@@ -80,7 +69,7 @@ class SensorGraph(QWidget):
         for font in fonts:
             print(f"Name: {font.name}, File: {font.fname}")
 
-    def update_graph(self, value, current_time):
+    def update_graph(self, value: float, current_time: float):
         self.timestamps.append(current_time)
         self.values.append(value)
         
@@ -103,12 +92,11 @@ class SensorGraph(QWidget):
         self.canvas.draw()
 
     def set_graph_styling(self):
-
         # Get the actual screen DPI
         screen = QApplication.primaryScreen()
         dpi = screen.logicalDotsPerInch()
 
-        def points_to_pixels(points):
+        def points_to_pixels(points: int):
             return 0.75 * points * dpi / 72   # tuned by iteration but allegedly it is supposed to be dpi/72
 
         font_pts = points_to_pixels(10)
@@ -130,7 +118,7 @@ class SensorGraph(QWidget):
             label.set_fontweight('normal')
         
 
-    def set_dark_mode(self, dark):
+    def set_dark_mode(self, dark: bool):
         if dark:
             self.figure.set_facecolor('#222222')
             self.ax.set_facecolor('#222222')
@@ -163,16 +151,66 @@ class SensorGraph(QWidget):
 
         self.canvas.draw()
 
-# Type downcast to make global configuration more manageable
+"""
+Sensor Popup Graph
+
+This is a container for a graph that has it inside a dedicated window, it is extremely
+passive and is manually controlled in its entirety by SensorGridWindow
+
+"""
+class SensorPopupGraph(QDialog):
+    def __init__(self, sensor_name: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"{sensor_name} - Live Graph")
+        self.resize(800, 500)
+        self.sensor_name = sensor_name
+        self.setModal(False)
+
+        self.sensor_graph = SensorGraph(sensor_name=self.sensor_name, parent=parent)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.sensor_graph)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.setLayout(layout)
+
+
+"""
+Sensor Frame
+
+This is simply a wrapper for the QFrame type, which is helpful for making global style
+configuration easier. Frames used in SensorGridWindow need to have different style settings
+from the rest of the QFrames in the GUI, so it just calls this wrapper type instead. 
+
+Globally they are treated as different types
+"""
 class SensorFrame(QFrame):
     def __init__(self):
         super().__init__()
 
+"""
+SensorGridWindow
+
+This window displayes a big grid of the current sensor readings.
+A single click to each sensor reading will update the main graph in the layout to that sensor
+A double click to each sensor reading opens up a separate window containing its data
+
+INPUT DEPENDENCIES:
+    GUIController.signals.sensor_updated(str, float)
+        When data comes in directly from the comms system and is post processed by the GUIController, it updates
+        this view in order to see new sensor readings and updated graphs
+
+OUTPUT DEPENDENCIES:
+    self.open_graph(str)
+        Opens a new window with a corresponding graph (albeit that window is still owned and managed by this window)
+
+"""
 class SensorGridWindow(QWidget):
-    def __init__(self):
+    def __init__(self, controller: GUIController):
         super().__init__()
-        self.signals = SensorSignals()
-        self.signals.update_signal.connect(self.update_sensor_value)
+
+        self.controller = controller
+        self.controller.signals.sensor_updated.connect(self.update_sensor_value)
         
         self.grid = QGridLayout()
         self.grid.setContentsMargins(0, 0, 0, 0)
@@ -180,13 +218,13 @@ class SensorGridWindow(QWidget):
         self.setLayout(self.grid)
 
         self.sensors = [f"P{i}" for i in range(1, 9)] + \
-                      [f"TC{i}" for i in range(1, 4)] + \
-                      [f"LC{i}" for i in range(1, 4)] + \
-                      [f"B{i}" for i in range(1, 3)]
+                       [f"TC{i}" for i in range(1, 4)] + \
+                       [f"LC{i}" for i in range(1, 4)] + \
+                       [f"B{i}" for i in range(1, 3)]
         
         self.sensor_frames: Dict[str, SensorFrame] = {}  # Container frames for each sensor
         self.sensor_labels: Dict[str, str] = {}  # Sensor name labels
-        self.value_labels: Dict[str, str] = {}   # Value display labels
+        self.value_labels: Dict[str, QLabel] = {}   # Value display labels
         self.unit_labels: Dict[str, str] = {}   # Unit labels
         self.graphs: Dict[str, SensorPopupGraph] = {}
         self.main_graph: SensorGraph = None
@@ -199,7 +237,7 @@ class SensorGridWindow(QWidget):
             self.create_sensor_box(name, idx)
             self.sensor_history[name] = deque(maxlen=100)
 
-    def create_sensor_box(self, name, idx):
+    def create_sensor_box(self, name: str, idx: int):
         """Create a bordered box for each sensor with labels inside"""
         # Create frame with border
         frame = SensorFrame()
@@ -246,7 +284,7 @@ class SensorGridWindow(QWidget):
         # Apply initial styling
         # self.update_sensor_style(name)
 
-    def get_unit(self, sensor_name):
+    def get_unit(self, sensor_name: str):
         if sensor_name.startswith('P'):
             return 'psi'
         elif sensor_name.startswith('TC'):
@@ -255,37 +293,7 @@ class SensorGridWindow(QWidget):
             return 'lb'
         return ''
 
-    # def update_sensor_style(self, sensor_name):
-    #     """Apply appropriate styling based on dark mode setting"""
-    #     frame = self.sensor_frames[sensor_name]
-    #     name_label = self.sensor_labels[sensor_name]
-    #     value_label = self.value_labels[sensor_name]
-    #     unit_label = self.unit_labels[sensor_name]
-        
-    #     if self.dark_mode:
-    #         frame.setStyleSheet("""
-    #             QFrame {
-    #                 border: 2px solid #CCCCCC;
-    #                 border-radius: 5px;
-    #                 background-color: #444444;
-    #             }
-    #         """)
-    #         name_label.setStyleSheet("color: #EEEEEE; font-weight: bold; border: none;")
-    #         value_label.setStyleSheet("color: #FFFFFF; font-weight: bold; border: none;")
-    #         unit_label.setStyleSheet("color: #EEEEEE; font-weight: bold; border: none;")
-    #     else:
-    #         frame.setStyleSheet("""
-    #             QFrame {
-    #                 border: 2px solid #AAAAAA;
-    #                 border-radius: 5px;
-    #                 background-color: #F0F0F0;
-    #             }
-    #         """)
-    #         name_label.setStyleSheet("color: #333333; font-weight: bold; border: none;")
-    #         value_label.setStyleSheet("color: #000000; font-weight: bold; border: none;")
-    #         unit_label.setStyleSheet("color: #333333; font-weight: bold; border: none;")
-
-    def set_dark_mode(self, dark):
+    def set_dark_mode(self, dark: bool):
         self.dark_mode = dark
         if self.main_graph:
             self.main_graph.set_dark_mode(self.dark_mode)
@@ -294,7 +302,7 @@ class SensorGridWindow(QWidget):
         for graph in self.graphs.values():
             graph.sensor_graph.set_dark_mode(dark)
 
-    def update_sensor_value(self, sensor, value):
+    def update_sensor_value(self, sensor: str, value: float):
         if sensor not in self.value_labels:
             return
             
@@ -303,12 +311,12 @@ class SensorGridWindow(QWidget):
         self.sensor_history[sensor].append((current_time, value))
         
         if sensor in self.graphs:
-            self.graphs[sensor].update_graph(value, current_time)
+            self.graphs[sensor].sensor_graph.update_graph(value, current_time)
         
         if sensor == self.main_graph.sensor_name:
             self.main_graph.update_graph(value, current_time)
 
-    def update_main_graph(self, sensor):
+    def update_main_graph(self, sensor: str):
         # If we already have a main_graph update its data to maintain the link to the UI
         if self.main_graph:
             # Update the sensor name and title
@@ -341,30 +349,15 @@ class SensorGridWindow(QWidget):
             for ts, val in history:
                 self.main_graph.update_graph(val, ts)
         
-
-    def open_graph(self, sensor):
+    def open_graph(self, sensor: str):
         if sensor not in self.graphs:
             self.graphs[sensor] = SensorPopupGraph(sensor)
             # self.graphs[sensor].sensor_graph.set_dark_mode(self.dark_mode)
             
             history = self.sensor_history.get(sensor, [])
             for ts, val in history:
-                self.graphs[sensor].update_graph(val, ts)
+                self.graphs[sensor].sensor_graph.update_graph(val, ts)
         
         self.graphs[sensor].show()
         self.graphs[sensor].raise_()
         self.graphs[sensor].activateWindow()
-
-    def handle_data_line(self, line: str):
-        print("SensorGridWIndow handling new data: ", line)
-        readings = line.strip().split(sep=",")
-        for reading in readings:
-            if ':' in reading:
-                try:
-                    print("")
-                    parts = reading.split(':', 1)
-                    sensor_name = parts[0].strip().upper()
-                    value = float(parts[1].strip())
-                    self.signals.update_signal.emit(sensor_name, value)
-                except ValueError:
-                    pass

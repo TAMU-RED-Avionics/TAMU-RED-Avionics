@@ -2,30 +2,45 @@
 # This file will manage all UI related states, and stores functions that will manipulate them
 import csv, os
 from ast import Dict
-from PyQt5.QtWidgets import QVBoxLayout, QPushButton, QDialog, QLabel, QDialogButtonBox, QCheckBox, QMessageBox, QGroupBox
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QDialog, QLabel, QDialogButtonBox, QCheckBox, QMessageBox, QGroupBox
 from PyQt5.QtCore import Qt, QTimer, QDateTime
 from PyQt5.QtGui import QFont
-from GUI_ABORT import AbortWindow
-from GUI_LOGO import LogoWindow
-from GUI_DAQ import DAQWindow
-from GUI_COMMS import EthernetClient, CommsSignals
-from GUI_CONNECT import ConnectionWindow
-from GUI_VALVE_DIAGRAM import ValveDiagramWindow
-from GUI_GRAPHS import SensorGridWindow, SensorGraph
-from GUI_VALVE_CONTROL import ValveControlWindow
+from PyQt5.QtCore import QObject, pyqtSignal
+from GUI_COMMS import EthernetClient
 
+# This may be necessary for ongoing refactors but currently has no use
+class Signals(QObject):
+    abort_triggered = pyqtSignal(str, str)
+    safe_state = pyqtSignal()   # Used to update the lockout state in a few different UI windows
+    valve_updated = pyqtSignal(str, bool)
+    sensor_updated = pyqtSignal(str, float)
+    system_status = pyqtSignal(str)
+
+"""
+GUI CONTROLLER
+
+This class object is the daddy of the entire GUI. It is intended to manage state. All actions that 
+are called by the windows which cant be contained locally are functions within this object. This 
+controller will shit out signals depending on both information it retrieves from the EthernetClient
+as well as the action functions connected to different buttons.
+
+Think of it as the entire backend managed in one spot.
+
+The rest of the windows are configured to take in this controller as an initializer object. Each
+one of them will connect different signals inside here to their internal update actions, and will
+connect functions here to thier buttons in order to configure connections.
+
+"""
 class GUIController:
-    def __init__(self):
-        self.current_sensor_values: Dict[str, float] = {}
-
-        # These signals are functions that will be run when the backend EthernetClient receives new packets
-        self.comms_signals = CommsSignals()
-        self.comms_signals.data_received.connect(self.process_data_main_thread)
-        self.comms_signals.abort_triggered.connect(self.handle_abort)
+    def __init__(self, parent: QWidget):
+        self.parent = parent
+        
+        self.signals = Signals()
+        self.signals.abort_triggered.connect(self.handle_abort)
 
         # The EthernetClient will connect to the "flight" MCU and listen for packets in a backend thread
         self.ethernet_client = EthernetClient()
-        self.ethernet_client.receive_callback = self.handle_received_data
+        self.ethernet_client.receive_callback = self.handle_new_data
         self.ethernet_client.log_event_callback = self.log_event
 
         # For file recording
@@ -34,31 +49,60 @@ class GUIController:
 
         # These are constants and dictionaries that the UI needs to be tracked
         self.abort_active = False
-        self.lockout_mode = False
         self.ncs3_opened_due_to_p2 = False
-        self.current_sensor_values = {}
-        self.abort_modes = {}
-        self.pre_abort_valve_states = {}
-        self.fire_sequence_btn = None
-        self.manual_valve_dialog = None
-        self.p3_p5_violation_start = None
-        self.p4_p6_violation_start = None
+        self.abort_modes: Dict[str, bool] = {}
+        self.pre_abort_valve_states: Dict[str, bool]  = {}
+        self.manual_valve_buttons: [QPushButton] = {}
         self.abort_check_interval = 50
         self.throttling_enabled = False
         self.gimbaling_enabled = False
+        self.manual_valve_dialog: QDialog = None
 
-        # Here we declare most of the UI elements that will be used. They are owned by the Controller to make it easy to manage interconnections
-        self.diagram = ValveDiagramWindow()
-        self.conn_widget = ConnectionWindow(ethernet_client=self.ethernet_client)
-        self.valve_control = ValveControlWindow(apply_valve_state=self.apply_valve_state, show_fire_sequence_dialog=self.show_fire_sequence_dialog)
-        self.status_label = QLabel("Current State: None")
-        self.sensor_grid = SensorGridWindow()
-        self.sensor_graph = SensorGraph("P1")
-        self.daq_window = DAQWindow(self)
-        self.abort_menu = AbortWindow(trigger_manual_abort=self.trigger_manual_abort, confirm_safe_state=self.confirm_safe_state)
+        self.current_sensor_values: Dict[str, float] = {}
 
-        # Some of the UI elements have callbacks that need to connect to functions in GUIController. This behavior may be revisited
-        self.sensor_grid.signals.update_signal.connect(self.update_sensor_value)
+        self.p3_p5_violation_start = None
+        self.p4_p6_violation_start = None
+
+        # Initial valve states: False = closed (red), True = open (green)
+        self.valve_states: Dict[str, bool] = {
+            "NCS1": False,
+            "NCS2": False,
+            "NCS3": False,
+            "NCS5": False,
+            "NCS6": False,
+            "LA-BV1": False,
+            "GV-1": False,
+            "GV-2": False
+        }
+
+        # This is a list of the different buttons and the valves that they manipulate
+        self.valve_operation_states: Dict(str, [str]) = {
+            "Open Oxidizer": ["LA-BV1"],
+            "Oxidizer Fill": ["NCS3", "NCS2", "LA-BV1"],
+            "Oxidizer Leak Check": ["LA-BV1"],
+            "Oxidizer Leak Check Fill": ["NCS1", "LA-BV1"],
+            "Close Oxidizer": ["NCS3", "LA-BV1"],
+            "Oxidizer Vent": ["GV-1", "NCS2", "NCS3", "LA-BV1"],
+
+
+            "Open Pressure": ["LA-BV1"],
+            "Fuel Fill 1": ["NCS5", "NCS6", "LA-BV1"],
+            "Fuel Leak Check": ["LA-BV1"],
+            "Fuel Leak Check Fill": ["NCS1", "LA-BV1"],
+            "Close Pressure 1": ["LA-BV1"],
+            "Vent Pressure": ["NCS1", "NCS3", "LA-BV1"],
+            
+            
+            "Postfire Purge": ["NCS1", "GV-1", "LA-BV1"],
+            "Fuel Fill 2": ["NCS5", "LA-BV1"],
+            "Prefire Purge 1": ["GV-1", "LA-BV1"],
+            "Prefire Purge 2": ["GV-1", "LA-BV1"],
+            "Close Pressure 2": ["NCS3", "LA-BV1"],
+            "Power down": [],
+
+            "Fire": ["GV-1", "GV-2", "NCS1", "LA-BV1"],
+            "Kill and Vent": ["NCS3", "GV-1", "GV-2", "LA-BV1"],
+        }
         
         # Abort related configuration
         self.init_abort_modes()
@@ -91,7 +135,7 @@ class GUIController:
         p2 = self.current_sensor_values.get("P2", 0)
 
         if p2 > 1375:
-            if not self.diagram.valve_states.get("NCS3", False):
+            if not self.valve_states.get("NCS3", False):
                 self.toggle_valve("NCS3", True)
                 self.ncs3_opened_due_to_p2 = True
         elif p2 < 1250 and self.ncs3_opened_due_to_p2:
@@ -99,13 +143,13 @@ class GUIController:
             self.ncs3_opened_due_to_p2 = False
 
         if pc > 700 and self.abort_modes["high_chamber_pressure"]:
-            self.comms_signals.abort_triggered.emit(
+            self.signals.abort_triggered.emit(
                 "high_chamber_pressure",
                 f"Chamber pressure {pc} psi > 700 psi"
             )
 
         if pc > pline and self.abort_modes["reverse_flow"]:
-            self.comms_signals.abort_triggered.emit(
+            self.signals.abort_triggered.emit(
                 "reverse_flow",
                 f"Chamber pressure {pc} psi > Line pressure {pline} psi"
             )
@@ -115,7 +159,7 @@ class GUIController:
                 if self.p3_p5_violation_start is None:
                     self.p3_p5_violation_start = current_time
                 elif current_time - self.p3_p5_violation_start >= 150:
-                    self.comms_signals.abort_triggered.emit(
+                    self.signals.abort_triggered.emit(
                         "high_upstream_pressure",
                         f"P5 {p5} psi > P3 {p3} psi by 5+ psi for 150ms"
                     )
@@ -126,68 +170,23 @@ class GUIController:
                 if self.p4_p6_violation_start is None:
                     self.p4_p6_violation_start = current_time
                 elif current_time - self.p4_p6_violation_start >= 150:
-                    self.comms_signals.abort_triggered.emit(
+                    self.signals.abort_triggered.emit(
                         "high_upstream_pressure",
                         f"P6 {p6} psi > P4 {p4} psi by 5+ psi for 150ms"
                     )
             else:
                 self.p4_p6_violation_start = None
 
-    def update_lockout_state(self):
-        """Update UI based on lockout state (Req 24)"""
-        # Enable/disable control buttons
-        self.daq_window.manual_btn.setEnabled(not self.lockout_mode)
-        
-        # Disable fire sequence button during abort
-        if self.fire_sequence_btn:
-            self.fire_sequence_btn.setEnabled(not self.lockout_mode)
-        
-        # Change manual abort button color during lockout
-        if self.lockout_mode:
-            self.abort_menu.manual_abort_btn.setStyleSheet("""
-                background-color: darkred; 
-                color: gray; 
-                font-weight: bold; 
-                font-size: 20pt;
-                min-height: 80px;
-            """)
-        else:
-            self.abort_menu.manual_abort_btn.setStyleSheet("""
-                background-color: red; 
-                color: white; 
-                font-weight: bold; 
-                font-size: 20pt;
-                min-height: 80px;
-            """)
-        
-        # Disable/enable valve state buttons
-        for btn in self.daq_window.findChildren(QPushButton):
-            if btn.text() in ValveControlWindow.valve_states:
-                btn.setEnabled(not self.lockout_mode)
-
-    def confirm_safe_state(self):
-        """Confirm system is safe after abort without any dialog"""
-        self.abort_active = False
-        self.lockout_mode = False
-        self.update_lockout_state()
-        self.abort_menu.safe_state_btn.setVisible(False)
-        
-        # Update status
-        self.status_label.setText("System in Safe State")
-        
-        # Log safe state confirmation
-        self.daq_window.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
-
     def trigger_manual_abort(self):
         """Manual abort button handler (Req 11)"""
-        self.comms_signals.abort_triggered.emit(
+        self.signals.abort_triggered.emit(
             "manual_abort", 
             "Operator triggered manual abort"
         )
 
     def show_abort_control(self):
         """Abort configuration dialog (Req 9)"""
-        dialog = QDialog(self.daq_window)
+        dialog = QDialog(self.parent)
         dialog.setWindowTitle("Abort Configuration")
         layout = QVBoxLayout(dialog)
         
@@ -206,9 +205,7 @@ class GUIController:
         for mode_id, mode_name in modes:
             check = QCheckBox(mode_name)
             check.setChecked(self.abort_modes.get(mode_id, False))
-            check.stateChanged.connect(
-                lambda state, m=mode_id: self.toggle_abort_mode(m, state)
-            )
+            check.stateChanged.connect(lambda state, m=mode_id: self.toggle_abort_mode(m, state))
             mode_layout.addWidget(check)
         
         mode_group.setLayout(mode_layout)
@@ -221,7 +218,7 @@ class GUIController:
         """Enable/disable specific abort mode (Req 9)"""
         self.abort_modes[mode] = state == 2
         status = "ENABLED" if state == 2 else "DISABLED"
-        self.daq_window.log_event("ABORT_MODE", f"{mode}:{status}")
+        self.log_event("ABORT_MODE", f"{mode}:{status}")
 
 
     def handle_abort(self, abort_type, reason):
@@ -230,91 +227,27 @@ class GUIController:
             return
             
         self.abort_active = True
-        self.lockout_mode = True
-        
-        # Store current valve states before making changes
-        self.pre_abort_valve_states = self.diagram.valve_states.copy()
-        
-        # Apply abort valve sequence (Req 21-23) and update diagram
-        valves_to_set = [
-            ("NCS3", True),     # Open NCS3
-            ("NCS1", False),    # Close NCS1
-            ("NCS2", False),    # Close NCS2
-            # ("NCS4", False),    # Close NCS4
-            ("NCS5", False),    # Close NCS5
-            ("NCS6", False),    # Close NCS6
-            ("LA-BV1", False),  # Close LA-BV1
-            ("GV-1", False),    # Close GV-1
-            ("GV-2", False)     # Close GV-2
-        ]
-        for name, state in valves_to_set:
-            self.diagram.set_valve_state(name, state)
-            try:
-                self.ethernet_client.send_valve_command(name, state)
-            except Exception:
-                pass
-        
+
+        self.pre_abort_valve_states = self.valve_states.copy()
+
+        # Disable all valves
+        for valve in self.valve_states.keys():
+            self.toggle_valve(valve, False)
+
         # Show abort popup (Req 20)
         QMessageBox.critical(
-            self.valve_control, # has to bind to a real widget
+            self.parent, # has to bind to a real widget
             "ABORT TRIGGERED", 
             f"Abort Type: {abort_type}\nReason: {reason}"
         )
-        
-        # Lock out manual control (Req 24)
-        self.update_lockout_state()
-        
-        # Show safe state button
-        self.abort_menu.safe_state_btn.setVisible(True)
-        
+
         # Log abort event
         self.log_event("ABORT", f"{abort_type}:{reason}")
-
-
-    def update_lockout_state(self):
-        """Update UI based on lockout state (Req 24)"""
-        # Enable/disable control buttons
-        self.daq_window.manual_btn.setEnabled(not self.lockout_mode)
-        
-        # Disable fire sequence button during abort
-        if self.fire_sequence_btn:
-            self.fire_sequence_btn.setEnabled(not self.lockout_mode)
-        
-        # Change manual abort button color during lockout
-        if self.lockout_mode:
-            self.abort_menu.manual_abort_btn.setStyleSheet("""
-                background-color: darkred; 
-                color: gray; 
-                font-weight: bold; 
-                font-size: 20pt;
-                min-height: 80px;
-            """)
-        else:
-            self.abort_menu.manual_abort_btn.setStyleSheet("""
-                background-color: red; 
-                color: white; 
-                font-weight: bold; 
-                font-size: 20pt;
-                min-height: 80px;
-            """)
-        
-        # Disable/enable valve state buttons
-        for btn in self.valve_control.findChildren(QPushButton):
-            if btn.text() in ValveControlWindow.valve_states:
-                btn.setEnabled(not self.lockout_mode)
-        self.valve_control.fire_sequence_btn.setEnabled(not self.lockout_mode)
-        self.daq_window.throttling_btn.setEnabled(not self.lockout_mode)
-        self.daq_window.gimbaling_btn.setEnabled(not self.lockout_mode)
 
     def confirm_safe_state(self):
         """Confirm system is safe after abort without any dialog"""
         self.abort_active = False
-        self.lockout_mode = False
-        self.update_lockout_state()
-        self.abort_menu.safe_state_btn.setVisible(False)
-        
-        # Update status
-        self.status_label.setText("System in Safe State")
+        self.signals.safe_state.emit()
         
         # Log safe state confirmation
         self.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
@@ -335,7 +268,6 @@ class GUIController:
 
     def handle_new_data(self, data_str: str):
         """ Parse teensy timestamp (first token) (Req 4) """
-        # print("GUIController handling new data: \n\t", data_str)
 
         timestamp = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz")
         
@@ -345,6 +277,18 @@ class GUIController:
 
         print("teensy_ts: ", teensy_ts)
         print("sensor_data: ", sensor_data)
+
+        readings = sensor_data.strip().split(sep=",")
+        for reading in readings:
+            if ':' in reading:
+                try:
+                    parts = reading.split(':', 1)
+                    sensor_name = parts[0].strip().upper()
+                    value = float(parts[1].strip())
+                    self.current_sensor_values[sensor_name] = value
+                    self.signals.sensor_updated.emit(sensor_name, value)
+                except ValueError:
+                    pass
         
         if self.csv_writer:
             self.csv_writer.writerow([
@@ -353,23 +297,11 @@ class GUIController:
                 "ON" if self.gimbaling_enabled else "OFF",
                 sensor_data, "", ""
             ])
-        
-        if self.sensor_grid:
-            self.sensor_grid.handle_data_line(sensor_data)
-    
-    def update_sensor_value(self, sensor, value):
-        self.current_sensor_values[sensor] = value
-
-    def handle_received_data(self, data_str):
-        self.comms_signals.data_received.emit(data_str)
-
-    def process_data_main_thread(self, data_str):
-        self.handle_new_data(data_str)
 
     # Start recording, returns whether the conditions were fit for recording to start, otherwise returns false
     def start_recording(self, filename: str) -> bool:
         if not filename:
-            QMessageBox.warning(self.daq_window, "Invalid Filename", "Please enter a filename")
+            QMessageBox.warning(self.parent, "Invalid Filename", "Please enter a filename")
             return False
             
         if not filename.endswith(".csv"):
@@ -377,15 +309,15 @@ class GUIController:
             
         # Check if file exists (Req 12)
         if os.path.exists(filename):
-            reply = QMessageBox.question(self.daq_window, "File Exists", 
+            reply = QMessageBox.question(self.parent, "File Exists", 
                                         f"{filename} already exists. Overwrite?",
                                         QMessageBox.Yes | QMessageBox.No)
             if reply != QMessageBox.Yes:
                 return False
         
         try:
-            self.file = open(filename, "w", newline="")
-            self.csv_writer = csv.writer(self.file)
+            self.csv_file = open(filename, "w", newline="")
+            self.csv_writer = csv.writer(self.csv_file)
             # Add columns for throttling/gimbaling (Req 26) and event logging (Req 15)
             self.csv_writer.writerow([
                 "Timestamp", "TeensyTimestamp", "Throttling", "Gimbaling", 
@@ -396,15 +328,15 @@ class GUIController:
             return True
 
         except Exception as e:
-            QMessageBox.critical(self.daq_window, "Error", f"Failed to create file: {str(e)}")
+            QMessageBox.critical(self.parent, "Error", f"Failed to create file: {str(e)}")
             return False
 
     def stop_recording(self):
-        if self.file:
+        if self.csv_file:
             self.log_event("RECORDING:STOP")
 
-            self.file.close()
-            self.file = None
+            self.csv_file.close()
+            self.csv_file = None
             self.csv_writer = None
 
     # VALVE CONTROL ------------------------------------------------------------------------------------------------
@@ -421,12 +353,12 @@ class GUIController:
         self.log_event(f"GIMBALING:{status}")
     
     def show_fire_sequence_dialog(self):
-        if self.lockout_mode:
-            QMessageBox.warning(self.daq_window, "Abort Active", "Auto fire sequence cannot be activated during an abort")
+        if self.abort_active:
+            QMessageBox.warning(self.parent, "Abort Active", "Auto fire sequence cannot be activated during an abort")
             return
             
         # First confirmation dialog
-        confirm_dialog = QDialog(self.valve_control)
+        confirm_dialog = QDialog(self.parent)
         confirm_dialog.setWindowTitle("Confirm Ignition")
         layout = QVBoxLayout()
         label = QLabel("Start ignition sequence?")
@@ -442,7 +374,7 @@ class GUIController:
             return
 
         # Create countdown dialog
-        countdown_dialog = QDialog(self.valve_control)
+        countdown_dialog = QDialog(self.parent)
         countdown_dialog.setWindowTitle("Ignition Sequence")
         countdown_dialog.setMinimumSize(300, 150)
         countdown_layout = QVBoxLayout(countdown_dialog)
@@ -450,12 +382,12 @@ class GUIController:
         # Countdown label
         self.countdown_label = QLabel("Ignition in 10 seconds...")
         self.countdown_label.setAlignment(Qt.AlignCenter)
-        self.countdown_label.setFont(QFont("Arial", 14, QFont.Bold))
+        # self.countdown_label.setFont(QFont("Arial", 14, QFont.Bold))
         countdown_layout.addWidget(self.countdown_label)
         
         # Cancel button
         cancel_btn = QPushButton("CANCEL")
-        cancel_btn.setFont(QFont("Arial", 12, QFont.Bold))
+        # cancel_btn.setFont(QFont("Arial", 12, QFont.Bold))
         cancel_btn.setStyleSheet("background-color: red; color: white;")
         countdown_layout.addWidget(cancel_btn)
         
@@ -487,44 +419,18 @@ class GUIController:
         
         # Show dialog and handle result
         if countdown_dialog.exec_() == QDialog.Accepted:
-            self.apply_valve_state("Pressurization")
-
-    
-    def toggle_valve(self, valve_name, state=None):
-        if self.lockout_mode:
-            return
-            
-        if state is None:
-            # Toggle current state
-            new_state = not self.diagram.valve_states[valve_name]
-        else:
-            new_state = state
-            
-        self.diagram.set_valve_state(valve_name, new_state)
-        
-        # Update manual valve button if dialog is open
-        if hasattr(self, 'manual_valve_buttons') and valve_name in self.manual_valve_buttons:
-            color = "green" if new_state else "red"
-            self.manual_valve_buttons[valve_name].setStyleSheet(
-                f"background-color: {color}; color: white;"
-            )
-        
-        # Send command
-        try:
-            self.ethernet_client.send_valve_command(valve_name, new_state)
-        except Exception:
-            pass
+            self.apply_operation("Pressurization")
 
     def show_manual_valve_control(self):
-        if self.lockout_mode:
-            QMessageBox.warning(self.daq_window, "Lockout Active", "Manual control is disabled during abort")
+        if self.abort_active:
+            QMessageBox.warning(self.parent, "Lockout Active", "Manual control is disabled during abort")
             return
-            
+        
         # Close existing dialog if open
         if self.manual_valve_dialog:
             self.manual_valve_dialog.close()
-            
-        dialog = QDialog(self.daq_window)
+        
+        dialog = QDialog(self.parent)
         dialog.setWindowTitle("Manual Valve Control")
         dialog.setModal(False)  # Allow interaction with main window
         layout = QVBoxLayout(dialog)
@@ -533,59 +439,67 @@ class GUIController:
         self.manual_valve_dialog = dialog
         
         # Get actual valve names from diagram
-        valve_names = list(self.diagram.valve_states.keys())
+        valve_names = list(self.valve_states.keys())
         
         # Create buttons and store references
         self.manual_valve_buttons = {}
         for valve in valve_names:
-            current_state = self.diagram.valve_states[valve]
+            current_state = self.valve_states[valve]
             btn = QPushButton(valve)
             color = "green" if current_state else "red"
             btn.setStyleSheet(f"background-color: {color}; color: white;")
             # Store button reference
             self.manual_valve_buttons[valve] = btn
             # Connect click handler with valve name
-            btn.clicked.connect(lambda checked, v=valve: self.toggle_valve_and_update_button(v))
+            btn.clicked.connect(lambda checked, v=valve: self.toggle_valve(v))
             layout.addWidget(btn)
             
         dialog.show()
 
-    def toggle_valve_and_update_button(self, valve_name):
-        """Toggle valve state and update button color"""
-        if self.lockout_mode:
+    def toggle_valve(self, valve_name: str, state=None):
+        if self.abort_active:
             return
+
+        if state is None:
+            new_state = not self.valve_states[valve_name]
+        else:
+            new_state = state
+
+        self.valve_states[valve_name] = new_state
+        self.signals.valve_updated.emit(valve_name, new_state)
         
-        # Toggle current state
-        new_state = not self.diagram.valve_states[valve_name]
-        self.diagram.set_valve_state(valve_name, new_state)
-        
-        # Update button color
-        if valve_name in self.manual_valve_buttons:
+        # Update manual valve button if dialog is open
+        # if valve_name in self.manual_valve_buttons:
+        if hasattr(self, 'manual_valve_buttons') and valve_name in self.manual_valve_buttons:
             color = "green" if new_state else "red"
             self.manual_valve_buttons[valve_name].setStyleSheet(
                 f"background-color: {color}; color: white;"
             )
         
-        # Send command
         try:
+            # Send command
             self.ethernet_client.send_valve_command(valve_name, new_state)
         except Exception:
             pass
 
-    def apply_valve_state(self, operation):
-        if self.lockout_mode:
+        self.log_event("VALVE_CHANGED", f"{valve_name}:{new_state}")
+
+
+    def apply_operation(self, operation: str):
+        if self.abort_active:
             return
-            
-        active_valves = ValveControlWindow.valve_states.get(operation, [])
-        for name in self.diagram.valve_states:
+        
+        active_valves = self.valve_operation_states.get(operation, [])
+        for name in self.valve_states:
             state = name in active_valves
-            self.diagram.set_valve_state(name, state)
-            try:
-                self.ethernet_client.send_valve_command(name, state)
-            except Exception:
-                pass
-        self.status_label.setText(f"Current State: {operation}")
+            self.toggle_valve(name, state)
+
+        self.signals.system_status.emit(operation)
+
+        # self.status_label.setText(f"Current State: {operation}")
+
+        self.log_event("OPERATION", f"{operation}")
 
         if operation == "Pressurization":
-            QTimer.singleShot(5000, lambda: self.apply_valve_state("Fire"))
-            QTimer.singleShot(20000, lambda: self.apply_valve_state("Kill and Vent"))
+            QTimer.singleShot(5000, lambda: self.apply_operation("Fire"))
+            QTimer.singleShot(20000, lambda: self.apply_operation("Kill and Vent"))

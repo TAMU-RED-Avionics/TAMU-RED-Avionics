@@ -1,12 +1,49 @@
-# GUI_DAQ.py
-# This window hosts controls over Data Acquisition (DAQ), along with buttons for throttling and gimbaling
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QLineEdit, QSizePolicy, QGridLayout
 
+from GUI_CONTROLLER import GUIController
+
+"""
+DAQWindow
+
+This window displays some options for configuring and turning on the data acquisition logging.
+It also contains some buttons for gimbaling and throttling control.
+
+INPUT DEPENDENCIES:
+    GUIController.signals.abort_triggered()
+        This window must disable all non-logging related buttons when an abort happens
+
+    GUIController.signals.safe_state()
+        This window re-unlocks buttons when the system enters back into a safe state
+
+OUTPUT DEPENDENCIES:
+    GUIController.start_recording(filename)
+        When the start recording button is pressed, it must cause the controller to begin logging events that occur
+
+    GUIController.stop_recording()
+        When the stop recording button is pressed, the controller must stop its event logging
+
+    GUIController.show_manual_valve_control()
+        A button in this window will cause the controller to bring up an overlay window that allows the user to select
+        and control each valve independently and manually
+
+    GUIController.show_abort_control()
+        A button in this window will cause the controller to bring up an overlay window that lets the user
+        control which abort conditions are live in the system
+
+    GUIController.toggle_throttling()
+        The toggle throttling button must update the state in the controller accordingly
+    
+    GUIController.toggle_gimbaling()
+        The toggle gimbaling butotn must update the state in the controller accordingly
+
+"""
 class DAQWindow(QWidget):
-    def __init__(self, controller):
+    def __init__(self, controller: GUIController):
         super().__init__()
 
         self.controller = controller
+        self.controller.signals.abort_triggered.connect(self.abort_action)
+        self.controller.signals.safe_state.connect(self.safe_state_action)
 
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -66,12 +103,12 @@ class DAQWindow(QWidget):
 
         self.setLayout(self.layout)
 
-    def toggle_throttling_daq(self, state):
+    def toggle_throttling_daq(self):
         self.controller.toggle_throttling()
 
         self.throttling_btn.setText("Disable Throttling" if self.controller.throttling_enabled else "Enable Throttling")
 
-    def toggle_gimbaling_daq(self, state):
+    def toggle_gimbaling_daq(self):
         self.controller.toggle_gimbaling()
 
         self.gimbaling_btn.setText("Disable Gimbaling" if self.controller.gimbaling_enabled else "Enable Gimbaling")
@@ -87,3 +124,14 @@ class DAQWindow(QWidget):
 
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
+
+    def abort_action(self):
+        # Disable valve state buttons
+        for btn in self.findChildren(QPushButton):
+            if btn.text not in ["Start Recording", "Stop Recording"]:
+                btn.setEnabled(False)
+
+    def safe_state_action(self):
+        # Enable valve state buttons
+        for btn in self.findChildren(QPushButton):
+            btn.setEnabled(True)

@@ -4,6 +4,18 @@ from PyQt5.QtWidgets import QLabel, QWidget, QVBoxLayout
 from PyQt5.QtGui import QPixmap, QImage
 from PyQt5.QtCore import Qt
 
+"""
+LogoWindow
+
+This window displays the RED logo at full resolution, shrinking it down to an arbitrarily provided size
+
+INPUT DEPENDENCIES:
+    None - There are no state changes in this window that manipulate its display
+
+OUTPUT DEPENDENCIES:
+    None - This is only a passive window that does not manipulate anything in the backend
+
+"""
 class LogoWindow(QWidget):
     def __init__(self, scale_width=120):
         super().__init__()
