@@ -15,6 +15,17 @@ from GUI_VALVE_CONTROL import ValveControlWindow
 
 from GUI_CONTROLLER import GUIController
 
+""" 
+Main Window
+
+This window is organizing the main layout of the whole GUI, particually the location and
+orientation of the different windows with respect to each other.
+
+It owns both the controller and the different sub windows, feeding the controller into their initializers
+Note that each window will deal with all their connections internally. If they require an update from external changes,
+they can bind themselves to the controller's signals. If they have buttons which need to do things, they bind those
+buttons to functions in the controller.
+"""
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -32,7 +43,6 @@ class MainWindow(QMainWindow):
         self.valve_control = ValveControlWindow(self.controller)
         self.status_label = QLabel("Current State: None")
         self.sensor_grid = SensorGridWindow(self.controller)
-        self.sensor_graph = SensorGraph("P1")
         self.daq_window = DAQWindow(self.controller)
         self.abort_menu = AbortWindow(self.controller)
 
