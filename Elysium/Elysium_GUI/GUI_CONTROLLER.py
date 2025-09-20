@@ -10,29 +10,37 @@ from GUI_COMMS import EthernetClient
 
 # This may be necessary for ongoing refactors but currently has no use
 class Signals(QObject):
+    abort_triggered = pyqtSignal(str, str)
     safe_state = pyqtSignal()   # Used to update the lockout state in a few different UI windows
     valve_updated = pyqtSignal(str, bool)
     sensor_updated = pyqtSignal(str, float)
-    data_received = pyqtSignal(str)
-    abort_triggered = pyqtSignal(str, str)
+    system_status = pyqtSignal(str)
 
+"""
+GUI CONTROLLER
+
+This class object is the daddy of the entire GUI. It is intended to manage state. All actions that 
+are called by the windows which cant be contained locally are functions within this object. This 
+controller will shit out signals depending on both information it retrieves from the EthernetClient
+as well as the action functions connected to different buttons.
+
+Think of it as the entire backend managed in one spot.
+
+The rest of the windows are configured to take in this controller as an initializer object. Each
+one of them will connect different signals inside here to their internal update actions, and will
+connect functions here to thier buttons in order to configure connections.
+
+"""
 class GUIController:
     def __init__(self, parent: QWidget):
         self.parent = parent
         
-        # These signals are functions that will be run when the backend EthernetClient receives new packets
-        # self.comms_signals = CommsSignals()
-        # self.comms_signals.data_received.connect(self.process_data_main_thread)
-        # self.comms_signals.abort_triggered.connect(self.handle_abort)
-
-        # self.gui_signals = GuiSignals()
         self.signals = Signals()
-        self.signals.data_received.connect(self.process_data_main_thread)
         self.signals.abort_triggered.connect(self.handle_abort)
 
         # The EthernetClient will connect to the "flight" MCU and listen for packets in a backend thread
         self.ethernet_client = EthernetClient()
-        self.ethernet_client.receive_callback = self.handle_received_data
+        self.ethernet_client.receive_callback = self.handle_new_data
         self.ethernet_client.log_event_callback = self.log_event
 
         # For file recording
@@ -51,6 +59,9 @@ class GUIController:
         self.manual_valve_dialog: QDialog = None
 
         self.current_sensor_values: Dict[str, float] = {}
+
+        self.p3_p5_violation_start = None
+        self.p4_p6_violation_start = None
 
         # Initial valve states: False = closed (red), True = open (green)
         self.valve_states: Dict[str, bool] = {
@@ -92,9 +103,6 @@ class GUIController:
             "Fire": ["GV-1", "GV-2", "NCS1", "LA-BV1"],
             "Kill and Vent": ["NCS3", "GV-1", "GV-2", "LA-BV1"],
         }
-
-        self.p3_p5_violation_start = None
-        self.p4_p6_violation_start = None
         
         # Abort related configuration
         self.init_abort_modes()
@@ -220,6 +228,12 @@ class GUIController:
             
         self.abort_active = True
 
+        self.pre_abort_valve_states = self.valve_states.copy()
+
+        # Disable all valves
+        for valve in self.valve_states.keys():
+            self.toggle_valve(valve, False)
+
         # Show abort popup (Req 20)
         QMessageBox.critical(
             self.parent, # has to bind to a real widget
@@ -263,6 +277,18 @@ class GUIController:
 
         print("teensy_ts: ", teensy_ts)
         print("sensor_data: ", sensor_data)
+
+        readings = sensor_data.strip().split(sep=",")
+        for reading in readings:
+            if ':' in reading:
+                try:
+                    parts = reading.split(':', 1)
+                    sensor_name = parts[0].strip().upper()
+                    value = float(parts[1].strip())
+                    self.current_sensor_values[sensor_name] = value
+                    self.signals.sensor_updated.emit(sensor_name, value)
+                except ValueError:
+                    pass
         
         if self.csv_writer:
             self.csv_writer.writerow([
@@ -271,17 +297,6 @@ class GUIController:
                 "ON" if self.gimbaling_enabled else "OFF",
                 sensor_data, "", ""
             ])
-
-        # The sensor grid will listen directly to the same signal this function is connected to 
-    
-    def update_sensor_value(self, sensor, value):
-        self.current_sensor_values[sensor] = value
-
-    def handle_received_data(self, data_str):
-        self.signals.data_received.emit(data_str)
-
-    def process_data_main_thread(self, data_str):
-        self.handle_new_data(data_str)
 
     # Start recording, returns whether the conditions were fit for recording to start, otherwise returns false
     def start_recording(self, filename: str) -> bool:
@@ -467,6 +482,9 @@ class GUIController:
         except Exception:
             pass
 
+        self.log_event("VALVE_CHANGED", f"{valve_name}:{new_state}")
+
+
     def apply_operation(self, operation: str):
         if self.abort_active:
             return
@@ -476,7 +494,11 @@ class GUIController:
             state = name in active_valves
             self.toggle_valve(name, state)
 
+        self.signals.system_status.emit(operation)
+
         # self.status_label.setText(f"Current State: {operation}")
+
+        self.log_event("OPERATION", f"{operation}")
 
         if operation == "Pressurization":
             QTimer.singleShot(5000, lambda: self.apply_operation("Fire"))

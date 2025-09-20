@@ -10,7 +10,7 @@ and close valves. It must update the GUI state with the controller when a manual
 as well as update itself based on whether the engine automatically aborts itself
 
 INPUT DEPENDENCIES:
-    GUIController.comms_signals.abort_triggered(abort_type, reason)
+    GUIController.signals.abort_triggered(abort_type, reason)
         Aborts can be caused by either the button in this window being pressed as well as 
         the engine automatically hitting an abort state, therefore this window must update its 
         safe state button based on this signal, rather than a local function attached to the button
@@ -49,9 +49,6 @@ class AbortWindow(QWidget):
         self.safe_state_btn.clicked.connect(self.safe_state_action)
         self.safe_state_btn.setVisible(False)
         layout.addWidget(self.safe_state_btn)
-
-        # Update the safe state button when an abort is triggered for any reason
-        self.controller.signals.abort_triggered.connect(lambda: self.safe_state_btn.setVisible(True))
 
         self.setLayout(layout)
 

@@ -9,8 +9,11 @@ This window displays some options for configuring and turning on the data acquis
 It also contains some buttons for gimbaling and throttling control.
 
 INPUT DEPENDENCIES:
-    abort action - TODO
-    safe state action - TODO
+    GUIController.signals.abort_triggered()
+        This window must disable all non-logging related buttons when an abort happens
+
+    GUIController.signals.safe_state()
+        This window re-unlocks buttons when the system enters back into a safe state
 
 OUTPUT DEPENDENCIES:
     GUIController.start_recording(filename)

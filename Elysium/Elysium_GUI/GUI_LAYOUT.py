@@ -36,6 +36,8 @@ class MainWindow(QMainWindow):
         self.daq_window = DAQWindow(self.controller)
         self.abort_menu = AbortWindow(self.controller)
 
+        self.controller.signals.system_status.connect(self.update_status_label)
+
         self.init_ui()
 
     def init_ui(self):
@@ -114,6 +116,10 @@ class MainWindow(QMainWindow):
 
         central_widget.setLayout(main_layout)
         self.setCentralWidget(central_widget)
+
+
+    def update_status_label(self, status: str):
+        self.status_label.setText("Current State: " + status)
 
     def make_divider(self):
         line = QFrame()

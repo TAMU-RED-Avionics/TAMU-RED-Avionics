@@ -12,8 +12,11 @@ This window displays a list of buttons that will control the valves, these are n
 rather a series of more complex actions that often manipulate multiple valves at the same time
 
 INPUT DEPENDENCIES:
-    abort action - TODO
-    safe state action - TODO
+    GUIController.signals.abort_triggered()
+        When an abort is triggered, this window must disable all of its buttons
+        
+    GUIController.signals.safe_state()
+        When the system returns to a safe state, all the buttons need to be re-enabled
 
 OUTPUT DEPENDENCIES:
     GUIController.apply_valve_state(op)

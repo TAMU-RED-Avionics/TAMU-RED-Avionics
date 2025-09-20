@@ -12,26 +12,14 @@ from typing import Dict, Tuple
 
 from GUI_CONTROLLER import GUIController
 
-# class SensorSignals(QObject):
-#     update_signal = pyqtSignal(str, float)
 
-class SensorPopupGraph(QDialog):
-    def __init__(self, sensor_name: str, parent=None):
-        super().__init__(parent)
-        self.setWindowTitle(f"{sensor_name} - Live Graph")
-        self.resize(800, 500)
-        self.sensor_name = sensor_name
-        self.setModal(False)
+"""
+Sensor Graph
 
-        self.sensor_graph = SensorGraph(sensor_name=self.sensor_name, parent=parent)
-
-        layout = QVBoxLayout()
-        layout.addWidget(self.sensor_graph)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
-        self.setLayout(layout)
-
-
+This widget uses matplotlib in order to plot data. It is inteded to be heavily manually
+controlled by its parent, as such it is a very passive widget, only containing functions
+that change its state which are meant to be called by the parent
+"""
 class SensorGraph(QWidget):
     def __init__(self, sensor_name: str, parent=None):
         super().__init__(parent)
@@ -163,7 +151,39 @@ class SensorGraph(QWidget):
 
         self.canvas.draw()
 
-# Type downcast to make global configuration more manageable
+"""
+Sensor Popup Graph
+
+This is a container for a graph that has it inside a dedicated window, it is extremely
+passive and is manually controlled in its entirety by SensorGridWindow
+
+"""
+class SensorPopupGraph(QDialog):
+    def __init__(self, sensor_name: str, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle(f"{sensor_name} - Live Graph")
+        self.resize(800, 500)
+        self.sensor_name = sensor_name
+        self.setModal(False)
+
+        self.sensor_graph = SensorGraph(sensor_name=self.sensor_name, parent=parent)
+
+        layout = QVBoxLayout()
+        layout.addWidget(self.sensor_graph)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
+        self.setLayout(layout)
+
+
+"""
+Sensor Frame
+
+This is simply a wrapper for the QFrame type, which is helpful for making global style
+configuration easier. Frames used in SensorGridWindow need to have different style settings
+from the rest of the QFrames in the GUI, so it just calls this wrapper type instead. 
+
+Globally they are treated as different types
+"""
 class SensorFrame(QFrame):
     def __init__(self):
         super().__init__()
@@ -176,11 +196,13 @@ A single click to each sensor reading will update the main graph in the layout t
 A double click to each sensor reading opens up a separate window containing its data
 
 INPUT DEPENDENCIES:
-    TODO: comms_signals.data_received
-    TODO: signals.update_signal
+    GUIController.signals.sensor_updated(str, float)
+        When data comes in directly from the comms system and is post processed by the GUIController, it updates
+        this view in order to see new sensor readings and updated graphs
 
 OUTPUT DEPENDENCIES:
-    TODO: signals.update_signal
+    self.open_graph(str)
+        Opens a new window with a corresponding graph (albeit that window is still owned and managed by this window)
 
 """
 class SensorGridWindow(QWidget):
@@ -188,7 +210,6 @@ class SensorGridWindow(QWidget):
         super().__init__()
 
         self.controller = controller
-        self.controller.signals.data_received.connect(self.handle_new_data)
         self.controller.signals.sensor_updated.connect(self.update_sensor_value)
         
         self.grid = QGridLayout()
@@ -328,7 +349,6 @@ class SensorGridWindow(QWidget):
             for ts, val in history:
                 self.main_graph.update_graph(val, ts)
         
-
     def open_graph(self, sensor: str):
         if sensor not in self.graphs:
             self.graphs[sensor] = SensorPopupGraph(sensor)
@@ -341,22 +361,3 @@ class SensorGridWindow(QWidget):
         self.graphs[sensor].show()
         self.graphs[sensor].raise_()
         self.graphs[sensor].activateWindow()
-
-    def handle_new_data(self, data_str: str):
-        """ Parse teensy timestamp (first token) (Req 4) """        
-        parts = data_str.split(sep=",",maxsplit=1)
-        sensor_data = parts[1] if len(parts) > 1 else data_str
-
-        self.handle_data_line(sensor_data)
-
-    def handle_data_line(self, line: str):
-        readings = line.strip().split(sep=",")
-        for reading in readings:
-            if ':' in reading:
-                try:
-                    parts = reading.split(':', 1)
-                    sensor_name = parts[0].strip().upper()
-                    value = float(parts[1].strip())
-                    self.controller.signals.sensor_updated.emit(sensor_name, value)
-                except ValueError:
-                    pass

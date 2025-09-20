@@ -7,7 +7,7 @@ class EthernetClient:
     def __init__(self, log_event_callback: (str)=None, receive_callback: (str)=None):
         self.receive_callback = receive_callback
         self.log_event_callback = log_event_callback
-
+        
         self.sock: socket = None
         self.connecting = False
         self.connected = False
@@ -33,7 +33,7 @@ class EthernetClient:
                 self.sock.settimeout(3)   # seconds
 
                 # Tells the socket to connect to the MCU's IP and port
-                host = socket.get
+                # host = socket.get
                 self.sock.bind(('', port))     # bind to the hardcoded port (should be configurable live in the future
                 # self.sock.connect((ip, port))
                 self.connected = True
