@@ -12,8 +12,8 @@ from typing import Dict, Tuple
 
 from GUI_CONTROLLER import GUIController
 
-class SensorSignals(QObject):
-    update_signal = pyqtSignal(str, float)
+# class SensorSignals(QObject):
+#     update_signal = pyqtSignal(str, float)
 
 class SensorPopupGraph(QDialog):
     def __init__(self, sensor_name: str, parent=None):
@@ -186,11 +186,10 @@ OUTPUT DEPENDENCIES:
 class SensorGridWindow(QWidget):
     def __init__(self, controller: GUIController):
         super().__init__()
-        self.signals = SensorSignals()
 
         self.controller = controller
-        self.controller.comms_signals.data_received.connect(self.handle_new_data)
-        self.signals.update_signal.connect(self.update_sensor_value)
+        self.controller.signals.data_received.connect(self.handle_new_data)
+        self.controller.signals.sensor_updated.connect(self.update_sensor_value)
         
         self.grid = QGridLayout()
         self.grid.setContentsMargins(0, 0, 0, 0)
@@ -204,7 +203,7 @@ class SensorGridWindow(QWidget):
         
         self.sensor_frames: Dict[str, SensorFrame] = {}  # Container frames for each sensor
         self.sensor_labels: Dict[str, str] = {}  # Sensor name labels
-        self.value_labels: Dict[str, str] = {}   # Value display labels
+        self.value_labels: Dict[str, QLabel] = {}   # Value display labels
         self.unit_labels: Dict[str, str] = {}   # Unit labels
         self.graphs: Dict[str, SensorPopupGraph] = {}
         self.main_graph: SensorGraph = None
@@ -291,7 +290,7 @@ class SensorGridWindow(QWidget):
         self.sensor_history[sensor].append((current_time, value))
         
         if sensor in self.graphs:
-            self.graphs[sensor].update_graph(value, current_time)
+            self.graphs[sensor].sensor_graph.update_graph(value, current_time)
         
         if sensor == self.main_graph.sensor_name:
             self.main_graph.update_graph(value, current_time)
@@ -337,7 +336,7 @@ class SensorGridWindow(QWidget):
             
             history = self.sensor_history.get(sensor, [])
             for ts, val in history:
-                self.graphs[sensor].update_graph(val, ts)
+                self.graphs[sensor].sensor_graph.update_graph(val, ts)
         
         self.graphs[sensor].show()
         self.graphs[sensor].raise_()
@@ -358,6 +357,6 @@ class SensorGridWindow(QWidget):
                     parts = reading.split(':', 1)
                     sensor_name = parts[0].strip().upper()
                     value = float(parts[1].strip())
-                    self.signals.update_signal.emit(sensor_name, value)
+                    self.controller.signals.sensor_updated.emit(sensor_name, value)
                 except ValueError:
                     pass

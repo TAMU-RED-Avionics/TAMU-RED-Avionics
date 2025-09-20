@@ -29,8 +29,8 @@ class ValveControlWindow(QWidget):
         super().__init__()
 
         self.controller = controller
-        self.controller.comms_signals.abort_triggered.connect(self.abort_action)
-        self.controller.gui_signals.safe_state.connect(self.safe_state_action)
+        self.controller.signals.abort_triggered.connect(self.abort_action)
+        self.controller.signals.safe_state.connect(self.safe_state_action)
 
         top_layout = QVBoxLayout()
         top_layout.setContentsMargins(0, 0, 0, 0)

@@ -6,23 +6,29 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QDialog, QLabel, 
 from PyQt5.QtCore import Qt, QTimer, QDateTime
 from PyQt5.QtGui import QFont
 from PyQt5.QtCore import QObject, pyqtSignal
-from GUI_COMMS import EthernetClient, CommsSignals
+from GUI_COMMS import EthernetClient
 
 # This may be necessary for ongoing refactors but currently has no use
-class GuiSignals(QObject):
+class Signals(QObject):
     safe_state = pyqtSignal()   # Used to update the lockout state in a few different UI windows
     valve_updated = pyqtSignal(str, bool)
+    sensor_updated = pyqtSignal(str, float)
+    data_received = pyqtSignal(str)
+    abort_triggered = pyqtSignal(str, str)
 
 class GUIController:
     def __init__(self, parent: QWidget):
         self.parent = parent
         
         # These signals are functions that will be run when the backend EthernetClient receives new packets
-        self.comms_signals = CommsSignals()
-        self.comms_signals.data_received.connect(self.process_data_main_thread)
-        self.comms_signals.abort_triggered.connect(self.handle_abort)
+        # self.comms_signals = CommsSignals()
+        # self.comms_signals.data_received.connect(self.process_data_main_thread)
+        # self.comms_signals.abort_triggered.connect(self.handle_abort)
 
-        self.gui_signals = GuiSignals()
+        # self.gui_signals = GuiSignals()
+        self.signals = Signals()
+        self.signals.data_received.connect(self.process_data_main_thread)
+        self.signals.abort_triggered.connect(self.handle_abort)
 
         # The EthernetClient will connect to the "flight" MCU and listen for packets in a backend thread
         self.ethernet_client = EthernetClient()
@@ -87,9 +93,8 @@ class GUIController:
             "Kill and Vent": ["NCS3", "GV-1", "GV-2", "LA-BV1"],
         }
 
-
-        # self.p3_p5_violation_start = None
-        # self.p4_p6_violation_start = None
+        self.p3_p5_violation_start = None
+        self.p4_p6_violation_start = None
         
         # Abort related configuration
         self.init_abort_modes()
@@ -130,13 +135,13 @@ class GUIController:
             self.ncs3_opened_due_to_p2 = False
 
         if pc > 700 and self.abort_modes["high_chamber_pressure"]:
-            self.comms_signals.abort_triggered.emit(
+            self.signals.abort_triggered.emit(
                 "high_chamber_pressure",
                 f"Chamber pressure {pc} psi > 700 psi"
             )
 
         if pc > pline and self.abort_modes["reverse_flow"]:
-            self.comms_signals.abort_triggered.emit(
+            self.signals.abort_triggered.emit(
                 "reverse_flow",
                 f"Chamber pressure {pc} psi > Line pressure {pline} psi"
             )
@@ -146,7 +151,7 @@ class GUIController:
                 if self.p3_p5_violation_start is None:
                     self.p3_p5_violation_start = current_time
                 elif current_time - self.p3_p5_violation_start >= 150:
-                    self.comms_signals.abort_triggered.emit(
+                    self.signals.abort_triggered.emit(
                         "high_upstream_pressure",
                         f"P5 {p5} psi > P3 {p3} psi by 5+ psi for 150ms"
                     )
@@ -157,7 +162,7 @@ class GUIController:
                 if self.p4_p6_violation_start is None:
                     self.p4_p6_violation_start = current_time
                 elif current_time - self.p4_p6_violation_start >= 150:
-                    self.comms_signals.abort_triggered.emit(
+                    self.signals.abort_triggered.emit(
                         "high_upstream_pressure",
                         f"P6 {p6} psi > P4 {p4} psi by 5+ psi for 150ms"
                     )
@@ -166,7 +171,7 @@ class GUIController:
 
     def trigger_manual_abort(self):
         """Manual abort button handler (Req 11)"""
-        self.comms_signals.abort_triggered.emit(
+        self.signals.abort_triggered.emit(
             "manual_abort", 
             "Operator triggered manual abort"
         )
@@ -224,75 +229,14 @@ class GUIController:
 
         # Log abort event
         self.log_event("ABORT", f"{abort_type}:{reason}")
-        
-        # Emit the signal to the windows to update
-        # self.comms_signals.lockout_signal.emit(True)
-
-        # # Store current valve states before making changes
-        # self.pre_abort_valve_states = self.diagram.valve_states.copy()
-        
-        # # Apply abort valve sequence (Req 21-23) and update diagram
-        # valves_to_set = [
-        #     ("NCS3", True),     # Open NCS3
-        #     ("NCS1", False),    # Close NCS1
-        #     ("NCS2", False),    # Close NCS2
-        #     # ("NCS4", False),    # Close NCS4
-        #     ("NCS5", False),    # Close NCS5
-        #     ("NCS6", False),    # Close NCS6
-        #     ("LA-BV1", False),  # Close LA-BV1
-        #     ("GV-1", False),    # Close GV-1
-        #     ("GV-2", False)     # Close GV-2
-        # ]
-        # for name, state in valves_to_set:
-        #     self.diagram.set_valve_state(name, state)
-        #     try:
-        #         self.ethernet_client.send_valve_command(name, state)
-        #     except Exception:
-        #         pass
-
-        
-        # Lock out manual control (Req 24)
-        # self.gui_signals.lockout_signal.emit(True)
-        # self.update_lockout_state()
-        
-        
-        # Show safe state button
-        # self.abort_menu.safe_state_btn.setVisible(True)
 
     def confirm_safe_state(self):
-        print("GUIController confirming safe state")
         """Confirm system is safe after abort without any dialog"""
         self.abort_active = False
-        self.gui_signals.safe_state.emit()
+        self.signals.safe_state.emit()
         
         # Log safe state confirmation
         self.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
-
-    # def update_lockout_state(self):
-    #     """Update UI based on lockout state (Req 24)"""
-       
-        
-    #     # Disable fire sequence button during abort
-    #     # if self.fire_sequence_btn:
-    #     #     self.fire_sequence_btn.setEnabled(not self.abort_active)
-        
-    #     # Change manual abort button color during lockout
-    #     if self.abort_active:
-    #         self.abort_menu.manual_abort_btn.setStyleSheet("""
-    #             background-color: darkred; 
-    #             color: gray; 
-    #             font-weight: bold; 
-    #             font-size: 20pt;
-    #             min-height: 80px;
-    #         """)
-    #     else:
-    #         self.abort_menu.manual_abort_btn.setStyleSheet("""
-    #             background-color: red; 
-    #             color: white; 
-    #             font-weight: bold; 
-    #             font-size: 20pt;
-    #             min-height: 80px;
-    #         """)
 
     # DAQ RECORDING ------------------------------------------------------------------------------------------------
     def log_event(self, event_type, event_details=""):
@@ -334,7 +278,7 @@ class GUIController:
         self.current_sensor_values[sensor] = value
 
     def handle_received_data(self, data_str):
-        self.comms_signals.data_received.emit(data_str)
+        self.signals.data_received.emit(data_str)
 
     def process_data_main_thread(self, data_str):
         self.handle_new_data(data_str)
@@ -507,7 +451,7 @@ class GUIController:
             new_state = state
 
         self.valve_states[valve_name] = new_state
-        self.gui_signals.valve_updated.emit(valve_name, new_state)
+        self.signals.valve_updated.emit(valve_name, new_state)
         
         # Update manual valve button if dialog is open
         # if valve_name in self.manual_valve_buttons:

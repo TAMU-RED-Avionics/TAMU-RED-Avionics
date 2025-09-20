@@ -31,7 +31,7 @@ class AbortWindow(QWidget):
         super().__init__()
 
         self.controller = controller
-        self.controller.comms_signals.abort_triggered.connect(self.abort_action)
+        self.controller.signals.abort_triggered.connect(self.abort_action)
 
         layout = QVBoxLayout()
         # layout.setContentsMargins(10, 10, 10, 10)
@@ -51,7 +51,7 @@ class AbortWindow(QWidget):
         layout.addWidget(self.safe_state_btn)
 
         # Update the safe state button when an abort is triggered for any reason
-        self.controller.comms_signals.abort_triggered.connect(lambda: self.safe_state_btn.setVisible(True))
+        self.controller.signals.abort_triggered.connect(lambda: self.safe_state_btn.setVisible(True))
 
         self.setLayout(layout)
 

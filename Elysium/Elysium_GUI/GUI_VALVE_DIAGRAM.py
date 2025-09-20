@@ -31,7 +31,7 @@ class ValveDiagramWindow(QWidget):
         super().__init__()
 
         self.controller = controller
-        self.controller.gui_signals.valve_updated.connect(self.set_valve_state)
+        self.controller.signals.valve_updated.connect(self.set_valve_state)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
