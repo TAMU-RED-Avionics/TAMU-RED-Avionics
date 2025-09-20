@@ -12,7 +12,8 @@ This window displays a list of buttons that will control the valves, these are n
 rather a series of more complex actions that often manipulate multiple valves at the same time
 
 INPUT DEPENDENCIES:
-    None - There are no state changes in this window that manipulate its display
+    abort action - TODO
+    safe state action - TODO
 
 OUTPUT DEPENDENCIES:
     GUIController.apply_valve_state(op)
@@ -26,6 +27,10 @@ OUTPUT DEPENDENCIES:
 class ValveControlWindow(QWidget):
     def __init__(self, controller: GUIController):
         super().__init__()
+
+        self.controller = controller
+        self.controller.comms_signals.abort_triggered.connect(self.abort_action)
+        self.controller.gui_signals.safe_state.connect(self.safe_state_action)
 
         top_layout = QVBoxLayout()
         top_layout.setContentsMargins(0, 0, 0, 0)
@@ -45,7 +50,7 @@ class ValveControlWindow(QWidget):
         current_column_layout.setContentsMargins(0, 0, 0, 0)
         current_column_layout.setSpacing(10)
 
-        for op in self.valve_states:
+        for op in self.controller.valve_operation_states:
             if op in ["Fire", "Kill and Vent"]:
                 continue
             
@@ -71,33 +76,12 @@ class ValveControlWindow(QWidget):
 
         self.setLayout(top_layout)
 
-    # This is a list of the different buttons and the valves that they manipulate
-    valve_states = {
-        "Open Oxidizer": ["LA-BV1"],
-        "Oxidizer Fill": ["NCS3", "NCS2", "LA-BV1"],
-        "Oxidizer Leak Check": ["LA-BV1"],
-        "Oxidizer Leak Check Fill": ["NCS1", "LA-BV1"],
-        "Close Oxidizer": ["NCS3", "LA-BV1"],
-        "Oxidizer Vent": ["GV-1", "NCS2", "NCS3", "LA-BV1"],
+    def abort_action(self):
+        # Disable valve state buttons
+        for btn in self.findChildren(QPushButton):
+            btn.setEnabled(False)
 
-
-        "Open Pressure": ["LA-BV1"],
-        "Fuel Fill 1": ["NCS5", "NCS6", "LA-BV1"],
-        "Fuel Leak Check": ["LA-BV1"],
-        "Fuel Leak Check Fill": ["NCS1", "LA-BV1"],
-        "Close Pressure 1": ["LA-BV1"],
-        "Vent Pressure": ["NCS1", "NCS3", "LA-BV1"],
-        
-        
-        "Postfire Purge": ["NCS1", "GV-1", "LA-BV1"],
-        "Fuel Fill 2": ["NCS5", "LA-BV1"],
-        "Prefire Purge 1": ["GV-1", "LA-BV1"],
-        "Prefire Purge 2": ["GV-1", "LA-BV1"],
-        "Close Pressure 2": ["NCS3", "LA-BV1"],
-        "Power down": [],
-
-        "Fire": ["GV-1", "GV-2", "NCS1", "LA-BV1"],
-        "Kill and Vent": ["NCS3", "GV-1", "GV-2", "LA-BV1"],
-    }
-
-    
+    def safe_state_action(self):
+        # Enable valve state buttons
+        for btn in self.findChildren(QPushButton):
+            btn.setEnabled(True)

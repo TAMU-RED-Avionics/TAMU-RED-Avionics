@@ -31,6 +31,7 @@ class AbortWindow(QWidget):
         super().__init__()
 
         self.controller = controller
+        self.controller.comms_signals.abort_triggered.connect(self.abort_action)
 
         layout = QVBoxLayout()
         # layout.setContentsMargins(10, 10, 10, 10)
@@ -39,21 +40,41 @@ class AbortWindow(QWidget):
 
         self.manual_abort_btn = QPushButton("MANUAL ABORT")
         self.manual_abort_btn.setStyleSheet("""background-color: red; color: white; font-weight: bold; font-size: 20pt; min-height: 80px;""")
+        # This will trigger the signal, which will spin around and trigger self.abort_action here
         self.manual_abort_btn.clicked.connect(self.controller.trigger_manual_abort)
         layout.addWidget(self.manual_abort_btn)
 
         self.safe_state_btn = QPushButton("CONFIRM SAFE STATE")
         self.safe_state_btn.setStyleSheet("""background-color: green; color: white; font-weight: bold; font-size: 16pt; min-height: 30px;""")
-        self.safe_state_btn.clicked.connect(self.safe_state_callback)
+        self.safe_state_btn.clicked.connect(self.safe_state_action)
         self.safe_state_btn.setVisible(False)
         layout.addWidget(self.safe_state_btn)
 
         # Update the safe state button when an abort is triggered for any reason
         self.controller.comms_signals.abort_triggered.connect(lambda: self.safe_state_btn.setVisible(True))
-        
+
         self.setLayout(layout)
 
+    def abort_action(self):
+        self.safe_state_btn.setVisible(True)
+        self.manual_abort_btn.setStyleSheet("""
+                background-color: darkred; 
+                color: gray; 
+                font-weight: bold; 
+                font-size: 20pt;
+                min-height: 80px;
+            """)
+    
     # Updates the controller and the local window when a safe state is commanded
-    def safe_state_callback(self):
-        self.controller.confirm_safe_state
+    def safe_state_action(self):
+        print("AbortWindow confirming safe state")
+        self.controller.confirm_safe_state()
         self.safe_state_btn.setVisible(False)
+
+        self.manual_abort_btn.setStyleSheet("""
+                background-color: red; 
+                color: white; 
+                font-weight: bold; 
+                font-size: 20pt;
+                min-height: 80px;
+            """)

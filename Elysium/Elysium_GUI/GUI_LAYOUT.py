@@ -24,10 +24,10 @@ class MainWindow(QMainWindow):
         # Dark mode is the only setting where it makes sense to have contained to this window
         self.dark_mode = False
 
-        self.controller = GUIController()
+        self.controller = GUIController(self)
 
         # Here we declare most of the UI elements that will be used. They are owned by the Controller to make it easy to manage interconnections
-        self.diagram = ValveDiagramWindow()
+        self.diagram = ValveDiagramWindow(self.controller)
         self.conn_widget = ConnectionWindow(self.controller.ethernet_client)
         self.valve_control = ValveControlWindow(self.controller)
         self.status_label = QLabel("Current State: None")

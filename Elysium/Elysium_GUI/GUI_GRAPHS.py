@@ -176,8 +176,11 @@ A single click to each sensor reading will update the main graph in the layout t
 A double click to each sensor reading opens up a separate window containing its data
 
 INPUT DEPENDENCIES:
+    TODO: comms_signals.data_received
+    TODO: signals.update_signal
 
 OUTPUT DEPENDENCIES:
+    TODO: signals.update_signal
 
 """
 class SensorGridWindow(QWidget):
@@ -185,9 +188,9 @@ class SensorGridWindow(QWidget):
         super().__init__()
         self.signals = SensorSignals()
 
-        # TBD which one of these is the right way to do it
-        # self.signals.update_signal.connect(self.update_sensor_value)
-        # self.signals.update_signal.connect(controller.update_sensor_value)
+        self.controller = controller
+        self.controller.comms_signals.data_received.connect(self.handle_new_data)
+        self.signals.update_signal.connect(self.update_sensor_value)
         
         self.grid = QGridLayout()
         self.grid.setContentsMargins(0, 0, 0, 0)
@@ -339,6 +342,13 @@ class SensorGridWindow(QWidget):
         self.graphs[sensor].show()
         self.graphs[sensor].raise_()
         self.graphs[sensor].activateWindow()
+
+    def handle_new_data(self, data_str: str):
+        """ Parse teensy timestamp (first token) (Req 4) """        
+        parts = data_str.split(sep=",",maxsplit=1)
+        sensor_data = parts[1] if len(parts) > 1 else data_str
+
+        self.handle_data_line(sensor_data)
 
     def handle_data_line(self, line: str):
         print("SensorGridWIndow handling new data: ", line)

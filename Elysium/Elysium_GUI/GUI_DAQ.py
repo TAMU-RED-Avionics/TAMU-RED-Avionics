@@ -9,7 +9,8 @@ This window displays some options for configuring and turning on the data acquis
 It also contains some buttons for gimbaling and throttling control.
 
 INPUT DEPENDENCIES:
-    None - all changes to display in this window are caused by its own buttons
+    abort action - TODO
+    safe state action - TODO
 
 OUTPUT DEPENDENCIES:
     GUIController.start_recording(filename)
@@ -38,6 +39,8 @@ class DAQWindow(QWidget):
         super().__init__()
 
         self.controller = controller
+        self.controller.comms_signals.abort_triggered.connect(self.abort_action)
+        self.controller.gui_signals.safe_state.connect(self.safe_state_action)
 
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -118,3 +121,15 @@ class DAQWindow(QWidget):
 
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
+
+    def abort_action(self):
+        # Disable valve state buttons
+        for btn in self.findChildren(QPushButton):
+            if btn.text not in ["Start Recording", "Stop Recording"]:
+                btn.setEnabled(False)
+
+    def safe_state_action(self):
+        print("DAQWindow confirming safe state")
+        # Enable valve state buttons
+        for btn in self.findChildren(QPushButton):
+            btn.setEnabled(True)

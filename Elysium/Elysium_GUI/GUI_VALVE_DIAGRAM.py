@@ -7,6 +7,8 @@ from PyQt5.QtWidgets import QWidget, QLabel, QPushButton, QVBoxLayout, QSizePoli
 from PyQt5.QtGui import QPixmap, QColor, QImage
 from PyQt5.QtCore import Qt, QSize
 
+from GUI_CONTROLLER import GUIController
+
 
 """
 ValveDiagramWindow
@@ -17,14 +19,17 @@ would not be too large or too small on different computers, so its size is set t
 the overall screen size.
 
 INPUT DEPENDENCIES:
+    TODO - abort signal 
 
 OUTPUT DEPENDENCIES:
     None - This window is passive only
 
 """
 class ValveDiagramWindow(QWidget):
-    def __init__(self, parent=None):
-        super().__init__(parent)
+    def __init__(self, controller: GUIController):
+        super().__init__()
+
+        self.controller = controller
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -50,18 +55,17 @@ class ValveDiagramWindow(QWidget):
         layout.addWidget(self.label)
         self.setLayout(layout)
 
-        # Initial valve states: False = closed (red), True = open (green)
-        self.valve_states: Dict[str, bool] = {
-            "NCS1": False,
-            "NCS2": False,
-            "NCS3": False,
-            # "NCS4": False,
-            "NCS5": False,
-            "NCS6": False,
-            "LA-BV1": False,
-            "GV-1": False,
-            "GV-2": False
-        }
+        # # Initial valve states: False = closed (red), True = open (green)
+        # self.valve_states: Dict[str, bool] = {
+        #     "NCS1": False,
+        #     "NCS2": False,
+        #     "NCS3": False,
+        #     "NCS5": False,
+        #     "NCS6": False,
+        #     "LA-BV1": False,
+        #     "GV-1": False,
+        #     "GV-2": False
+        # }
 
         # Create and position valve indicators (not clickable)
         self.valve_symbols: Dict[str, QLabel] = {}
@@ -69,7 +73,6 @@ class ValveDiagramWindow(QWidget):
             "NCS1": (670, 671),
             "NCS2": (239, 541),
             "NCS3": (582, 531),
-            # "NCS4": (582, 585),   # Removed by Simeon according to Austin's instruction on Aug 31
             "NCS5": (464, 72),
             "NCS6": (464, 5),
             "LA-BV1": (513, 226),
@@ -92,11 +95,28 @@ class ValveDiagramWindow(QWidget):
             self.valve_symbols[name].setGeometry(int(x * sf), int(y * sf), int(40 * sf), int(40 * sf))
             self.valve_symbols[name].setStyleSheet(f"background-color: red; border-radius: {int(20 * sf)}px;")
 
-    def set_valve_state(self, name, state):
-        sf = self.scalingFactor
-        self.valve_states[name] = state
-        color = "green" if state else "red"
-        self.valve_symbols[name].setStyleSheet(f"background-color: {color}; border-radius: {int(20 * sf)}px;")
+    def abort_action(self):
+        # Store current valve states before making changes
+        self.controller.pre_abort_valve_states = self.valve_states.copy()
+        
+        # Apply abort valve sequence (Req 21-23) and update diagram
+        valves_to_set = [
+            ("NCS3", True),     # Open NCS3
+            ("NCS1", False),    # Close NCS1
+            ("NCS2", False),    # Close NCS2
+            ("NCS5", False),    # Close NCS5
+            ("NCS6", False),    # Close NCS6
+            ("LA-BV1", False),  # Close LA-BV1
+            ("GV-1", False),    # Close GV-1
+            ("GV-2", False)     # Close GV-2
+        ]
+        for name, state in valves_to_set:
+            self.set_valve_state(name, state)
+            try:
+                # Might want to move this to a different location or make a new signal for it
+                self.controller.ethernet_client.send_valve_command(name, state)
+            except Exception:
+                pass
 
     def set_dark_image(self):
         self.pixmap = QPixmap("P&ID Dark.png")
