@@ -22,8 +22,8 @@ class EthernetClient:
         self.listen_thread: Thread = None
 
 
-        self.heartbeat_tx_cadence: int = 1               # ms
-        self.heartbeat_rx_miss_interval: int = 3         # ms
+        self.heartbeat_tx_cadence: int = 10               # ms
+        self.heartbeat_rx_miss_interval: int = 30         # ms
         self.heartbeat_rx_miss_count: int = 0
         self.heartbeat_last_rx: int = None
 
@@ -54,6 +54,8 @@ class EthernetClient:
                 # self.sock.connect((ip, port))
                 self.connected = True
                 self.connecting = False
+
+                self.sock.sendto("START\n".encode(), (self.remote_ip, self.remote_port))
 
                 # Start NOOP heartbeat (Req 25)
                 self.start_heartbeat()

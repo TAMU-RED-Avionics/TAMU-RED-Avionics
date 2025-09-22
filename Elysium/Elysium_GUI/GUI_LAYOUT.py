@@ -200,7 +200,10 @@ class MainWindow(QMainWindow):
                     border-style: inset;
                 }}
                 QPushButton:hover {{
-                    background-color: #666666;
+                    background-color: #222222;
+                }}
+                QPushButton:disabled {{
+                    background-color: #222222;
                 }}
                 QLineEdit {{
                     background-color: #333333;
@@ -252,8 +255,11 @@ class MainWindow(QMainWindow):
                     background-color: #CCCCCC;
                     border-style: inset;
                 }}
+                QPushButton:disabled {{
+                    background-color: #CCCCCC;
+                }}
                 QPushButton:pressed {{
-                    background-color: #666666;
+                    background-color: #CCCCCC;
                     border-style: inset;
                 }}
                 QLineEdit {{
