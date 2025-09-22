@@ -28,7 +28,7 @@ class ConnectionWindow(QWidget):
         eth_layout.setContentsMargins(0, 0, 0, 0)
         eth_layout.setSpacing(10)
 
-        self.conn_status_label = QLabel("Not connected")
+        self.conn_status_label = QLabel("Not Connected")
         eth_layout.addWidget(self.conn_status_label)
 
         eth_input_layout = QHBoxLayout()
@@ -67,11 +67,9 @@ class ConnectionWindow(QWidget):
         # it completes or times out
         def connection_callback(success):
             if success:
-                self.conn_status_label.setText("Connected successfully")
-                # If connected successfully, we enable all the controls
-                self.controller.signals.exit_lockout.emit()
+                self.conn_status_label.setText("Connected Successfully")
             else:
-                self.conn_status_label.setText("Connection failed")
+                self.conn_status_label.setText("Connection Failed")
         
         # Use asynchronous connection to avoid blocking the UI
         self.controller.ethernet_client.connect(ip, port, connection_callback)

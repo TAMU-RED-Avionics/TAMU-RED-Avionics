@@ -31,7 +31,7 @@ class AbortWindow(QWidget):
         super().__init__()
 
         self.controller = controller
-        # self.controller.signals.abort_triggered.connect(self.abort_action)
+        self.controller.signals.abort_triggered.connect(self.abort_action)
 
         layout = QVBoxLayout()
         # layout.setContentsMargins(10, 10, 10, 10)
@@ -41,7 +41,7 @@ class AbortWindow(QWidget):
         self.manual_abort_btn = QPushButton("MANUAL ABORT")
         self.manual_abort_btn.setStyleSheet("""background-color: red; color: white; font-weight: bold; font-size: 20pt; min-height: 80px;""")
         # This will trigger the signal, which will spin around and trigger self.abort_action here
-        self.manual_abort_btn.clicked.connect(self.abort_action)
+        self.manual_abort_btn.clicked.connect(self.controller.trigger_manual_abort)
         layout.addWidget(self.manual_abort_btn)
 
         self.safe_state_btn = QPushButton("CONFIRM SAFE STATE")
@@ -53,7 +53,7 @@ class AbortWindow(QWidget):
         self.setLayout(layout)
 
     def abort_action(self):
-        self.controller.trigger_manual_abort()
+        # self.controller.trigger_manual_abort()
         self.safe_state_btn.setVisible(True)
 
         self.manual_abort_btn.setStyleSheet("""

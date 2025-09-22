@@ -11,15 +11,15 @@ from GUI_COMMS import EthernetClient
 
 # This may be necessary for ongoing refactors but currently has no use
 class Signals(QObject):
-    # abort_triggered = pyqtSignal(str, str)
+    abort_triggered = pyqtSignal(str, str)
+    disconnected = pyqtSignal(str)
+    enter_lockout = pyqtSignal()
+    exit_lockout = pyqtSignal()
 
     valve_updated = pyqtSignal(str, bool)
     sensor_updated = pyqtSignal(str, float)
     system_status = pyqtSignal(str)
 
-    disconnected = pyqtSignal(str)
-    enter_lockout = pyqtSignal()
-    exit_lockout = pyqtSignal()
 
 """
 GUI CONTROLLER
@@ -41,17 +41,20 @@ class GUIController:
         self.parent = parent
 
         # The EthernetClient will connect to the "flight" MCU and listen for packets in a backend thread
-        self.ethernet_client = EthernetClient()
-        self.ethernet_client.receive_callback = self.handle_new_data
-        self.ethernet_client.log_event_callback = self.log_event
-        self.ethernet_client.disconnect_callback = lambda reason: self.signals.disconnected.emit(reason)
+        self.ethernet_client = EthernetClient(
+            receive_callback = self.handle_new_data,
+            log_event_callback = self.log_event,
+            connect_callback = self.handle_connect,
+            disconnect_callback = lambda reason: self.signals.disconnected.emit(reason)
+        )
         
-        self.signals = Signals()
 
         # Explaining the disconnect loop - the ethernet client calls the disconnect_callback
         # in a separate thread, therefore we must use a signal that pops out of it and back in here
         # to safely change things in the main thread as a result
-        self.signals.disconnected.connect(lambda reason: self.handle_abort("disconnected", reason))
+        self.signals = Signals()
+        self.signals.disconnected.connect(lambda reason: self.signals.enter_lockout.emit())
+        self.signals.abort_triggered.connect(self.handle_abort)
 
         # For file recording
         self.csv_file = None
@@ -59,6 +62,8 @@ class GUIController:
 
         # These are constants and dictionaries that the UI needs to be tracked
         self.lockout = True                     # default to lockout until a connection starts
+        self.abort_state = False
+
         self.ncs3_opened_due_to_p2 = False
         self.abort_modes: Dict[str, bool] = {}
         self.pre_abort_valve_states: Dict[str, bool]  = {}
@@ -71,10 +76,6 @@ class GUIController:
 
         self.p3_p5_violation_start = None
         self.p4_p6_violation_start = None
-
-        # self.heartbeat_abort_interval: int = self.abort_check_interval * 2     # ms (roughly 3 sender units of time but consider the abort_check_interval)
-        # self.last_heartbeat_time: int = None        # ms since epoch
-        # self.heartbeat_misses: int = 0
 
         # Initial valve states: False = closed (red), True = open (green)
         self.valve_states: Dict[str, bool] = {
@@ -142,7 +143,8 @@ class GUIController:
         # Beyond this point we shouldn't check for abort conditions if there is no data
         if not self.current_sensor_values:
             return
-        current_time = QDateTime.currentDateTime().toMSecsSinceEpoch()
+
+        current_time = QDateTime.currentMSecsSinceEpoch()
         p3 = self.current_sensor_values.get("P3", 0)
         p4 = self.current_sensor_values.get("P4", 0)
         p5 = self.current_sensor_values.get("P5", 0)
@@ -160,13 +162,13 @@ class GUIController:
             self.ncs3_opened_due_to_p2 = False
 
         if pc > 700 and self.abort_modes["high_chamber_pressure"]:
-            self.handle_abort(
+            self.signals.abort_triggered.emit(
                 "high_chamber_pressure",
                 f"Chamber pressure {pc} psi > 700 psi"
             )
 
         if pc > pline and self.abort_modes["reverse_flow"]:
-            self.handle_abort(
+            self.signals.abort_triggered.emit(
                 "reverse_flow",
                 f"Chamber pressure {pc} psi > Line pressure {pline} psi"
             )
@@ -176,7 +178,7 @@ class GUIController:
                 if self.p3_p5_violation_start is None:
                     self.p3_p5_violation_start = current_time
                 elif current_time - self.p3_p5_violation_start >= 150:
-                    self.handle_abort(
+                    self.signals.abort_triggered.emit(
                         "high_upstream_pressure",
                         f"P5 {p5} psi > P3 {p3} psi by 5+ psi for 150ms"
                     )
@@ -187,7 +189,7 @@ class GUIController:
                 if self.p4_p6_violation_start is None:
                     self.p4_p6_violation_start = current_time
                 elif current_time - self.p4_p6_violation_start >= 150:
-                    self.handle_abort(
+                    self.signals.abort_triggered.emit(
                         "high_upstream_pressure",
                         f"P6 {p6} psi > P4 {p4} psi by 5+ psi for 150ms"
                     )
@@ -196,7 +198,7 @@ class GUIController:
 
     def trigger_manual_abort(self):
         """Manual abort button handler (Req 11)"""
-        self.handle_abort(
+        self.signals.abort_triggered.emit(
             "manual_abort", 
             "Operator triggered manual abort"
         )
@@ -240,10 +242,11 @@ class GUIController:
 
     def handle_abort(self, abort_type, reason):
         """Handle abort sequence (Req 11, 20-24)"""
-        # if self.lockout:
-        #     return
+        if self.abort_state:
+            return
             
         self.lockout = True
+        self.abort_state = True
         self.signals.enter_lockout.emit()
 
         self.pre_abort_valve_states = self.valve_states.copy()
@@ -266,17 +269,22 @@ class GUIController:
         """Confirm system is safe after abort without any dialog"""
         if self.ethernet_client.connected:
             self.lockout = False
+            self.abort_state = False
             self.signals.exit_lockout.emit()
         
         # Log safe state confirmation
         self.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
 
     # DAQ RECORDING ------------------------------------------------------------------------------------------------
-    def handle_disconnect(self, reason: str):
-        # Will potentially add more functionality later
-        self.signals.disconnected.emit(reason)
+    def handle_connect(self, success: bool):
+        if success and not self.abort_state:
+            self.signals.exit_lockout.emit()
+            
+    # def handle_disconnect(self, reason: str):
+    #     # Will potentially add more functionality later
+    #     self.signals.disconnected.emit(reason)
 
-        # self.handle_abort("disconnected", reason)
+    #     # self.handle_abort("disconnected", reason)
 
     def log_event(self, event_type, event_details=""):
         """Log an event to CSV (Req 15)"""
@@ -291,6 +299,8 @@ class GUIController:
             "", event_type, event_details
         ])
 
+
+    # WILL BE RUN INSIDE A BACKGROUND THREAD
     def handle_new_data(self, data_str: str):
         """ Parse teensy timestamp (first token) (Req 4) """
         timestamp = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz")
@@ -301,7 +311,10 @@ class GUIController:
 
         readings = sensor_data.strip().split(sep=",")
         for reading in readings:
-            if ':' in reading:
+            if "ABORTED" in reading:
+                self.signals.abort_triggered.emit("engine_abort", "The engine MCU triggered a local abort")
+
+            elif ':' in reading:
                 try:
                     parts = reading.split(':', 1)
                     sensor_name = parts[0].strip().upper()
@@ -310,9 +323,6 @@ class GUIController:
                     self.signals.sensor_updated.emit(sensor_name, value)
                 except ValueError:
                     pass
-            # elif reading == "NOOP":
-            #     print("Received Teensy NOOP")
-            #     self.last_heartbeat_time = QDateTime.currentMSecsSinceEpoch()
         
         if self.csv_writer:
             self.csv_writer.writerow([
