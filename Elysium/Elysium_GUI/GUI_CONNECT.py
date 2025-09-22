@@ -26,7 +26,7 @@ class ConnectionWindow(QWidget):
         
         eth_layout = QVBoxLayout()
         eth_layout.setContentsMargins(0, 0, 0, 0)
-        eth_layout.setSpacing(0)
+        eth_layout.setSpacing(10)
 
         self.conn_status_label = QLabel("Not connected")
         eth_layout.addWidget(self.conn_status_label)

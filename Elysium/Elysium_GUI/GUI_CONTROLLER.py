@@ -44,6 +44,10 @@ class GUIController:
         self.ethernet_client.receive_callback = self.handle_new_data
         self.ethernet_client.log_event_callback = self.log_event
         self.ethernet_client.disconnect_callback = lambda: self.signals.disconnected.emit()
+        self.ethernet_client.heartbeat_lost_callback = lambda: self.signals.abort_triggered.emit(
+            "HEARTBEAT_LOST", 
+            "3 or more incoming heartbeats were missed"
+        )
 
         # For file recording
         self.csv_file = None
@@ -64,8 +68,9 @@ class GUIController:
         self.p3_p5_violation_start = None
         self.p4_p6_violation_start = None
 
-        self.heartbeat_abort_interval: int = 20     # ms (roughly 3 sender units of time but consider the abort_check_interval)
-        self.last_heartbeat_time: int = None    # ms since epoch
+        # self.heartbeat_abort_interval: int = self.abort_check_interval * 2     # ms (roughly 3 sender units of time but consider the abort_check_interval)
+        # self.last_heartbeat_time: int = None        # ms since epoch
+        # self.heartbeat_misses: int = 0
 
         # Initial valve states: False = closed (red), True = open (green)
         self.valve_states: Dict[str, bool] = {
@@ -130,12 +135,18 @@ class GUIController:
         if self.abort_active:
             return
 
-        cur_ms = QDateTime.currentMSecsSinceEpoch()
-        if self.last_heartbeat_time and self.ethernet_client.connected and (cur_ms - self.last_heartbeat_time) > self.heartbeat_abort_interval:
-            self.signals.abort_triggered.emit(
-                "no_heartbeat_received",
-                f"last heartbeat time: {self.last_heartbeat_time}, current time: {cur_ms}, abort interval: {self.heartbeat_abort_interval}"
-            )
+        # cur_ms = QDateTime.currentMSecsSinceEpoch()
+        # if self.last_heartbeat_time and self.ethernet_client.connected and (cur_ms - self.last_heartbeat_time) > self.heartbeat_abort_interval:
+        #     if self.heartbeat_misses >= 3:
+        #         self.signals.abort_triggered.emit(
+        #             "no_heartbeat_received",
+        #             f"last heartbeat time: {self.last_heartbeat_time}, current time: {cur_ms}, abort interval: {self.heartbeat_abort_interval}"
+        #         )
+        #     else:   # if this one missed but there hasn't been 3 misses yet
+        #         print("Missed a heartbeat! ")
+        #         self.heartbeat_misses += 1
+        # else:
+        #     self.heartbeat_misses = 0
 
         # Beyond this point we shouldn't check for abort conditions if there is no data
         if not self.current_sensor_values:
@@ -268,8 +279,9 @@ class GUIController:
         self.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
 
     # DAQ RECORDING ------------------------------------------------------------------------------------------------
-    # def handle_disconnect(self):
-    #     self.disconnect
+    # def handle_disconnect(self, reason: str):
+    #     # Will potentially add more functionality later
+    #     self.signals.disconnected.emit()
 
     def log_event(self, event_type, event_details=""):
         """Log an event to CSV (Req 15)"""
@@ -303,9 +315,9 @@ class GUIController:
                     self.signals.sensor_updated.emit(sensor_name, value)
                 except ValueError:
                     pass
-            elif reading == "NOOP":
-                print("Received Teensy NOOP")
-                self.last_heartbeat_time = QDateTime.currentMSecsSinceEpoch()
+            # elif reading == "NOOP":
+            #     print("Received Teensy NOOP")
+            #     self.last_heartbeat_time = QDateTime.currentMSecsSinceEpoch()
         
         if self.csv_writer:
             self.csv_writer.writerow([
