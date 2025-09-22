@@ -1,7 +1,8 @@
 # GUI_CONTROLLER.py
 # This file will manage all UI related states, and stores functions that will manipulate them
 import csv, os
-from ast import Dict
+from ast import Dict, Str
+from re import S
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QDialog, QLabel, QDialogButtonBox, QCheckBox, QMessageBox, QGroupBox
 from PyQt5.QtCore import QDate, Qt, QTimer, QDateTime
 from PyQt5.QtGui import QFont
@@ -10,12 +11,15 @@ from GUI_COMMS import EthernetClient
 
 # This may be necessary for ongoing refactors but currently has no use
 class Signals(QObject):
-    abort_triggered = pyqtSignal(str, str)
-    safe_state = pyqtSignal()   # Used to update the lockout state in a few different UI windows
+    # abort_triggered = pyqtSignal(str, str)
+
     valve_updated = pyqtSignal(str, bool)
     sensor_updated = pyqtSignal(str, float)
     system_status = pyqtSignal(str)
-    disconnected = pyqtSignal()
+
+    disconnected = pyqtSignal(str)
+    enter_lockout = pyqtSignal()
+    exit_lockout = pyqtSignal()
 
 """
 GUI CONTROLLER
@@ -35,26 +39,26 @@ connect functions here to their buttons in order to configure connections.
 class GUIController:
     def __init__(self, parent: QWidget):
         self.parent = parent
-        
-        self.signals = Signals()
-        self.signals.abort_triggered.connect(self.handle_abort)
 
         # The EthernetClient will connect to the "flight" MCU and listen for packets in a backend thread
         self.ethernet_client = EthernetClient()
         self.ethernet_client.receive_callback = self.handle_new_data
         self.ethernet_client.log_event_callback = self.log_event
-        self.ethernet_client.disconnect_callback = lambda: self.signals.disconnected.emit()
-        self.ethernet_client.heartbeat_lost_callback = lambda: self.signals.abort_triggered.emit(
-            "HEARTBEAT_LOST", 
-            "3 or more incoming heartbeats were missed"
-        )
+        self.ethernet_client.disconnect_callback = lambda reason: self.signals.disconnected.emit(reason)
+        
+        self.signals = Signals()
+
+        # Explaining the disconnect loop - the ethernet client calls the disconnect_callback
+        # in a separate thread, therefore we must use a signal that pops out of it and back in here
+        # to safely change things in the main thread as a result
+        self.signals.disconnected.connect(lambda reason: self.handle_abort("disconnected", reason))
 
         # For file recording
         self.csv_file = None
         self.csv_writer = None
 
         # These are constants and dictionaries that the UI needs to be tracked
-        self.abort_active = False
+        self.lockout = True                     # default to lockout until a connection starts
         self.ncs3_opened_due_to_p2 = False
         self.abort_modes: Dict[str, bool] = {}
         self.pre_abort_valve_states: Dict[str, bool]  = {}
@@ -132,21 +136,8 @@ class GUIController:
         }
     
     def check_abort_conditions(self):
-        if self.abort_active:
+        if self.lockout:
             return
-
-        # cur_ms = QDateTime.currentMSecsSinceEpoch()
-        # if self.last_heartbeat_time and self.ethernet_client.connected and (cur_ms - self.last_heartbeat_time) > self.heartbeat_abort_interval:
-        #     if self.heartbeat_misses >= 3:
-        #         self.signals.abort_triggered.emit(
-        #             "no_heartbeat_received",
-        #             f"last heartbeat time: {self.last_heartbeat_time}, current time: {cur_ms}, abort interval: {self.heartbeat_abort_interval}"
-        #         )
-        #     else:   # if this one missed but there hasn't been 3 misses yet
-        #         print("Missed a heartbeat! ")
-        #         self.heartbeat_misses += 1
-        # else:
-        #     self.heartbeat_misses = 0
 
         # Beyond this point we shouldn't check for abort conditions if there is no data
         if not self.current_sensor_values:
@@ -169,13 +160,13 @@ class GUIController:
             self.ncs3_opened_due_to_p2 = False
 
         if pc > 700 and self.abort_modes["high_chamber_pressure"]:
-            self.signals.abort_triggered.emit(
+            self.handle_abort(
                 "high_chamber_pressure",
                 f"Chamber pressure {pc} psi > 700 psi"
             )
 
         if pc > pline and self.abort_modes["reverse_flow"]:
-            self.signals.abort_triggered.emit(
+            self.handle_abort(
                 "reverse_flow",
                 f"Chamber pressure {pc} psi > Line pressure {pline} psi"
             )
@@ -185,7 +176,7 @@ class GUIController:
                 if self.p3_p5_violation_start is None:
                     self.p3_p5_violation_start = current_time
                 elif current_time - self.p3_p5_violation_start >= 150:
-                    self.signals.abort_triggered.emit(
+                    self.handle_abort(
                         "high_upstream_pressure",
                         f"P5 {p5} psi > P3 {p3} psi by 5+ psi for 150ms"
                     )
@@ -196,7 +187,7 @@ class GUIController:
                 if self.p4_p6_violation_start is None:
                     self.p4_p6_violation_start = current_time
                 elif current_time - self.p4_p6_violation_start >= 150:
-                    self.signals.abort_triggered.emit(
+                    self.handle_abort(
                         "high_upstream_pressure",
                         f"P6 {p6} psi > P4 {p4} psi by 5+ psi for 150ms"
                     )
@@ -205,7 +196,7 @@ class GUIController:
 
     def trigger_manual_abort(self):
         """Manual abort button handler (Req 11)"""
-        self.signals.abort_triggered.emit(
+        self.handle_abort(
             "manual_abort", 
             "Operator triggered manual abort"
         )
@@ -249,10 +240,11 @@ class GUIController:
 
     def handle_abort(self, abort_type, reason):
         """Handle abort sequence (Req 11, 20-24)"""
-        if self.abort_active:
-            return
+        # if self.lockout:
+        #     return
             
-        self.abort_active = True
+        self.lockout = True
+        self.signals.enter_lockout.emit()
 
         self.pre_abort_valve_states = self.valve_states.copy()
 
@@ -272,16 +264,19 @@ class GUIController:
 
     def confirm_safe_state(self):
         """Confirm system is safe after abort without any dialog"""
-        self.abort_active = False
-        self.signals.safe_state.emit()
+        if self.ethernet_client.connected:
+            self.lockout = False
+            self.signals.exit_lockout.emit()
         
         # Log safe state confirmation
         self.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
 
     # DAQ RECORDING ------------------------------------------------------------------------------------------------
-    # def handle_disconnect(self, reason: str):
-    #     # Will potentially add more functionality later
-    #     self.signals.disconnected.emit()
+    def handle_disconnect(self, reason: str):
+        # Will potentially add more functionality later
+        self.signals.disconnected.emit(reason)
+
+        # self.handle_abort("disconnected", reason)
 
     def log_event(self, event_type, event_details=""):
         """Log an event to CSV (Req 15)"""
@@ -382,7 +377,7 @@ class GUIController:
         self.log_event(f"GIMBALING:{status}")
     
     def show_fire_sequence_dialog(self):
-        if self.abort_active:
+        if self.lockout:
             QMessageBox.warning(self.parent, "Abort Active", "Auto fire sequence cannot be activated during an abort")
             return
             
@@ -451,7 +446,7 @@ class GUIController:
             self.apply_operation("Pressurization")
 
     def show_manual_valve_control(self):
-        if self.abort_active:
+        if self.lockout:
             QMessageBox.warning(self.parent, "Lockout Active", "Manual control is disabled during abort")
             return
         
@@ -486,7 +481,7 @@ class GUIController:
         dialog.show()
 
     def toggle_valve(self, valve_name: str, state=None):
-        if self.abort_active:
+        if self.lockout:
             return
 
         if state is None:
@@ -515,7 +510,7 @@ class GUIController:
 
 
     def apply_operation(self, operation: str):
-        if self.abort_active:
+        if self.lockout:
             return
         
         active_valves = self.valve_operation_states.get(operation, [])

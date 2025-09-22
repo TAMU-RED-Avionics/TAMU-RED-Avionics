@@ -32,8 +32,8 @@ class ValveControlWindow(QWidget):
         super().__init__()
 
         self.controller = controller
-        self.controller.signals.abort_triggered.connect(self.abort_action)
-        self.controller.signals.safe_state.connect(self.safe_state_action)
+        self.controller.signals.enter_lockout.connect(self.enter_lockout_action)
+        self.controller.signals.exit_lockout.connect(self.exit_lockout_action)
 
         top_layout = QVBoxLayout()
         top_layout.setContentsMargins(0, 0, 0, 0)
@@ -44,6 +44,7 @@ class ValveControlWindow(QWidget):
         operations_layout.setSpacing(10)
 
         self.fire_sequence_btn = QPushButton("Auto Fire Sequence")
+        self.fire_sequence_btn.setEnabled(False)   # Disabled until a connection is established
         self.fire_sequence_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.fire_sequence_btn.clicked.connect(controller.show_fire_sequence_dialog)
 
@@ -58,6 +59,7 @@ class ValveControlWindow(QWidget):
                 continue
             
             btn = QPushButton(op)
+            btn.setEnabled(False)   # Disabled until a connection is established
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
             # This is defined as a lambda function because it requires an argument, and simply writing
@@ -79,12 +81,12 @@ class ValveControlWindow(QWidget):
 
         self.setLayout(top_layout)
 
-    def abort_action(self):
+    def enter_lockout_action(self):
         # Disable valve state buttons
         for btn in self.findChildren(QPushButton):
             btn.setEnabled(False)
 
-    def safe_state_action(self):
+    def exit_lockout_action(self):
         # Enable valve state buttons
         for btn in self.findChildren(QPushButton):
             btn.setEnabled(True)

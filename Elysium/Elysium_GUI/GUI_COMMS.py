@@ -5,11 +5,10 @@ import time
 from PyQt5.QtCore import QObject, pyqtSignal, QDate, Qt, QTimer, QDateTime
 
 class EthernetClient:
-    def __init__(self, log_event_callback: (str)=None, receive_callback: (str)=None, disconnect_callback: ()=None, heartbeat_lost_callback: ()=None):
+    def __init__(self, log_event_callback: (str)=None, receive_callback: (str)=None, disconnect_callback: (str)=None):
         self.log_event_callback: (str) = log_event_callback
         self.receive_callback: (str) = receive_callback
-        self.disconnect_callback: () = disconnect_callback
-        self.heartbeat_lost_callback: () = heartbeat_lost_callback
+        self.disconnect_callback: (str) = disconnect_callback
         
         self.remote_ip: str = None
         self.remote_port: int = None
@@ -52,6 +51,15 @@ class EthernetClient:
                 # host = socket.get
                 self.sock.bind(("", port))     # bind to the hardcoded port (should be configurable live in the future
                 # self.sock.connect((ip, port))
+
+                # Listen for a packet to come in
+                data = self.sock.recv(1024)
+                if not data:
+                    ConnectionError("No data received in packet")
+                # If we reach past this point in execution, it means that we have timed out or
+                # encountered some other issue
+
+
                 self.connected = True
                 self.connecting = False
 
@@ -90,7 +98,7 @@ class EthernetClient:
             
         self.heartbeat_active = True
         def heartbeat_loop():
-            while self.connected and self.heartbeat_active:
+            while self.heartbeat_active:    # For now I am going to ignore the connection requirement
                 # Check on the RX heartbeat
                 now = QDateTime.currentMSecsSinceEpoch()
                 if (now - self.heartbeat_last_rx) > self.heartbeat_rx_miss_interval:
@@ -102,12 +110,11 @@ class EthernetClient:
                     print(f"Missed a beat - {self.heartbeat_rx_miss_count}!")
 
                     if self.heartbeat_rx_miss_count >= 3:
-                        self.heartbeat_lost_callback()
                         self.heartbeat_active = False
-                        # self.disconnect("Heartbeat Missed")
-                else:
-                    # Reset the miss count to zero
-                    self.heartbeat_rx_miss_count = 0
+                        self.disconnect("Heartbeat missed 3 times")
+                # else:
+                #     # Reset the miss count to zero
+                #     self.heartbeat_rx_miss_count = 0
 
                 # Send the TX heartbeat
                 try:
@@ -117,7 +124,7 @@ class EthernetClient:
                     if self.log_event_callback:
                         self.log_event_callback("HEARTBEAT:NOOP")
                 except Exception as e:
-                    self.disconnect(e)
+                    self.disconnect(str(e))
                     break
                 time.sleep(self.heartbeat_tx_cadence / 1000)    # conversion from ms to s
                 
@@ -127,37 +134,40 @@ class EthernetClient:
     def stop_heartbeat(self):
         self.heartbeat_active = False
 
-    def listen_loop(self):
-        buffer = ""
-        while self.connected and self.listening_active:
-            try:
-                data = self.sock.recv(1024)
-                if not data:
-                    self.disconnect("data is empty")
-                    break
-                decoded = buffer + data.decode(errors='ignore')
-                
-                # Split into lines while preserving partial messages
-                lines = decoded.split('\n')
-                for line in lines[:-1]:
-                    strip = line.strip()
-                    if strip and self.receive_callback:
-                        if strip == "NOOP":
-                            self.heartbeat_last_rx = QDateTime.currentMSecsSinceEpoch()
-                        else:
-                            self.receive_callback(strip)
-                buffer = lines[-1]
-                
-            except Exception as e:
-                self.disconnect(e)
-                break
 
     def start_listening(self):
         if self.listening_active:
             return
 
+        def listen_loop():
+            buffer = ""
+            while self.connected and self.listening_active:
+                try:
+                    data = self.sock.recv(1024)
+                    if not data:
+                        self.disconnect("Data is empty")
+                        break
+                    decoded = buffer + data.decode(errors='ignore')
+                    
+                    # Split into lines while preserving partial messages
+                    lines = decoded.split('\n')
+                    for line in lines[:-1]:
+                        strip = line.strip()
+                        if strip and self.receive_callback:
+                            if strip == "NOOP":
+                                # Reset the heartbeat stuff when one is received
+                                self.heartbeat_last_rx = QDateTime.currentMSecsSinceEpoch()
+                                self.heartbeat_rx_miss_count = 0
+                            else:
+                                self.receive_callback(strip)
+                    buffer = lines[-1]
+                    
+                except Exception as e:
+                    self.disconnect(str(e))
+                    break
+
         self.listening_active = True
-        self.listen_thread = Thread(target=self.listen_loop, daemon=True)
+        self.listen_thread = Thread(target=listen_loop, daemon=True)
         self.listen_thread.start()
 
     def stop_listening(self):
@@ -174,11 +184,14 @@ class EthernetClient:
             except Exception:
                 pass
 
-    def disconnect(self, reason: str=None):
-        if reason:
-            print("EthernetClient disconnected: ", reason)
-            if self.log_event_callback:
-                self.log_event_callback(f"DISCONNECT:{reason}")
+    def disconnect(self, reason: str):
+        # Bounce if we are already disconnected
+        if not self.connected:
+            return
+
+        print("EthernetClient disconnected: ", reason)
+        if self.log_event_callback:
+            self.log_event_callback(f"DISCONNECT:{reason}")
         
         self.connected = False
         self.stop_heartbeat()
@@ -187,4 +200,4 @@ class EthernetClient:
             self.sock.close()
             self.sock = None
         if self.disconnect_callback:
-            self.disconnect_callback()
+            self.disconnect_callback(reason)

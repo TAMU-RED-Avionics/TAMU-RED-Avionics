@@ -68,6 +68,8 @@ class ConnectionWindow(QWidget):
         def connection_callback(success):
             if success:
                 self.conn_status_label.setText("Connected successfully")
+                # If connected successfully, we enable all the controls
+                self.controller.signals.exit_lockout.emit()
             else:
                 self.conn_status_label.setText("Connection failed")
         
