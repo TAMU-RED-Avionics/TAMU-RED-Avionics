@@ -15,6 +15,8 @@ To test this with your laptop:
 */
 
 // Timing variables
+const int unsigned SYSTEM_LOOP_INTERVAL = 10;             // milliseconds
+
 long unsigned LAST_SENSOR_UPDATE = 0;                     // Timestamp of last sensor reading (microsec)
 const long unsigned SENSOR_UPDATE_INTERVAL = 1000;        // sensor update interval (microsec)              <-- USER INPUT
 
@@ -32,9 +34,13 @@ const long unsigned ABORTED_TIME_INTERVAL = 500000;       // microsec between pr
 const long unsigned SHUTDOWN_PURGE_TIME = 2000;           // duration of purge for shutdown, in milliseconds
 
 // BAUD rate 
-const int BAUD = 115200;                   // serial com in bits per second     <-- USER INPUT
+const int BAUD = 115200;                                  // serial com in bits per second     <-- USER INPUT
 unsigned int PORT = 8888;
-char packetBuffer[UDP_TX_PACKET_MAX_SIZE];  // buffer to hold incoming packet,
+char packetBuffer[UDP_TX_PACKET_MAX_SIZE];                // buffer to hold incoming packet,
+
+// Heartbeat params
+int unsigned HEARTBEAT_RX_COUNT = 0;
+int unsigned HEARTBEAT_TX_COUNT = 0;
 
 // An EthernetUDP instance to let us send and receive packets over UDP
 EthernetUDP udp;
@@ -104,29 +110,52 @@ LOOP
 -------------------------------------------------------------------
 */
 void loop() {
-  // Send the teensy side's heartbeat signal
+  // Send the TX NOOP Heartbeat
   output_string(PORT, "NOOP\n");
+  Serial.printf("NOOP TX - %d\n", ++HEARTBEAT_TX_COUNT);
 
-  // Checks for the heartbeat from the GUI
+  // Check for the RX NOOP Heartbeat
   udp.parsePacket();
   if (udp.available() > 0) {
     // read communication
     String input = input_until('\n');
 
     if (input == "NOOP") {
+      Serial.printf("NOOP RX - %d\n", ++HEARTBEAT_RX_COUNT);
       LAST_COMMUNICATION_TIME = micros();
     }
   }
 
-  // Lost communication shutdown
+  // If there hasn't been a heartbeat (or other packet) received in a sufficiently recent amount of time, enter abort state
   if ((micros() - LAST_COMMUNICATION_TIME) > CONNECTION_TIMEOUT) {
     
     // While system is aborted, print "aborted" until a start command is received
     bool aborted = true;
     while(aborted) {
-      Serial.writeln("ABORT STATE");
-    }
-  }
+      // Spit out a packet saying ABORTED once every ABORT_TIME_INTERVAL number of seconds
+      if ((micros() - ABORT_TIME_TRACKING) > ABORTED_TIME_INTERVAL) {
+        ABORT_TIME_TRACKING = micros();
+        output_string(PORT, "ABORTED\n");
+        // Also print it to the terminal
+        Serial.println("ABORTED");
+      }
+      
+      // Check for a packet coming in that says START
+      udp.parsePacket();
+      if (udp.available() > 0) {
+        String input = input_until('\n');
 
-  delay(100);
+        if (input == "START") {
+          // Exit the abort state if you receive a START packet
+          aborted = false;
+          LAST_COMMUNICATION_TIME = micros();
+          LAST_HUMAN_UPDATE = micros();
+          Serial.println("LEAVING ABORT STATE");
+        }
+      }
+
+    }
+  } // if in abort state
+
+  delay(SYSTEM_LOOP_INTERVAL);
 }
