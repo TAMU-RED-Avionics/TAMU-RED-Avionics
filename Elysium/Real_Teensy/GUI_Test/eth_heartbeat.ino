@@ -14,47 +14,50 @@ To test this with your laptop:
 -------------------------------------------------------------------
 */
 
+
+//                       USER INPUT SETTINGS
+// ----------------------------------------------------------------
+
+IPAddress REMOTE(192, 168, 1, 175);                       // The IP Address of the master computer we are connecting to 
+IPAddress LOCAL(192, 168, 1, 174);                        // The IP Address of this microcontroller on the master's network
+const int BAUD = 115200;                                  // Serial BAUD rate (bits/second)
+unsigned int PORT = 8888;                                 // The port to bind to (assumed to be identical to the GUI running on the master)
+
+const int unsigned SYSTEM_LOOP_INTERVAL = 1;              // The loop delay of the overall system - configures the NOOP TX Rate (millisec)
+
+const long unsigned NOOP_TX_INTERVAL = 10 * 1000;         // Minimum time to wait in between sending NOOP heartbeats (microsec)
+const long unsigned NOOP_RX_TIMEOUT =  30 * 1000;         // Timeout to consider a lack of a NOOP packet coming in as a miss (microsec)
+const int unsigned MAX_NOOP_RX_MISSES = 3;                // The maximum number of missed heartbeats in order to trigger an abort state
+
+const long unsigned ABORTED_MSG_INTERVAL = 500 * 1000;    // Interval for printing "aborted" when in an abort state (microsec)
+
+// ----------------------------------------------------------------
+
+
 // Timing variables
-const int unsigned SYSTEM_LOOP_INTERVAL = 10;             // milliseconds
-
-long unsigned LAST_SENSOR_UPDATE = 0;                     // Timestamp of last sensor reading (microsec)
-const long unsigned SENSOR_UPDATE_INTERVAL = 1000;        // sensor update interval (microsec)              <-- USER INPUT
-
-long unsigned LAST_LC_UPDATE = 0;                         // Timestamp of last Load Cell reading (microsec)
-const long unsigned LC_UPDATE_INTERVAL = 100000;          // Load Cell update interval (microsec)           <-- USER INPUT
-
-long unsigned LAST_COMMUNICATION_TIME = 0;                // Timestamp of last communication of any type (microsec)
-const long unsigned CONNECTION_TIMEOUT = 200000;          // automated shutdown timeout for complete comms failure (microsec)           <-- USER INPUT
-
-long unsigned LAST_HUMAN_UPDATE = 0;                      // Timestamp of last human communication(microsec)
-const long unsigned HUMAN_CONNECTION_TIMEOUT = 300000000; // automated shutdown timeout for human comms failure (microsec)              <-- USER INPUT
-
-long unsigned ABORT_TIME_TRACKING = 0;
-const long unsigned ABORTED_TIME_INTERVAL = 500000;       // microsec between printing "aborted" (when aborted)
-const long unsigned SHUTDOWN_PURGE_TIME = 2000;           // duration of purge for shutdown, in milliseconds
-
-// BAUD rate 
-const int BAUD = 115200;                                  // serial com in bits per second     <-- USER INPUT
-unsigned int PORT = 8888;
-char packetBuffer[UDP_TX_PACKET_MAX_SIZE];                // buffer to hold incoming packet,
+long unsigned LAST_NOOP_TX_TIME = 0;                      // Timestamp of the most recent transmit
+long unsigned LAST_NOOP_RX_TIME = 0;                      // Timestamp of last communication of any type (microsec)
+long unsigned LAST_ABORT_MSG_TX = 0;                      // Timestamp of the last abort message that was sent
+int unsigned MISSED_NOOP_RX_COUNT = 0;                    // The current number of missed heartbeat packets     
 
 // Heartbeat params
-int unsigned HEARTBEAT_RX_COUNT = 0;
-int unsigned HEARTBEAT_TX_COUNT = 0;
+int unsigned HEARTBEAT_RX_COUNT = 0;                      // [DEBUG] The total number of heartbeat signals received
+int unsigned HEARTBEAT_TX_COUNT = 0;                      // [DEBUG] The total number of heartbeat signals sent to the master
+
 
 // An EthernetUDP instance to let us send and receive packets over UDP
 EthernetUDP udp;
 byte MAC_ADDRESS[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
-IPAddress REMOTE(192, 168, 1, 175);
-IPAddress LOCAL(192, 168, 1, 174);
+char packetBuffer[UDP_TX_PACKET_MAX_SIZE];                // buffer to hold incoming packet,
 
-void output_string(unsigned int port, const char *to_write) {
+
+void tx_string(unsigned int port, const char *to_write) {
   udp.beginPacket(REMOTE, port);
   udp.write(to_write);
   udp.endPacket();
 }
 
-void output_float(unsigned int port, float to_write) {
+void tx_float(unsigned int port, float to_write) {
   char buf[100]; // *slaps roof* yeah that'll do nicely
   constexpr unsigned long PRECISION = 5;
   dtostrf(to_write, 1, PRECISION, buf);
@@ -63,7 +66,7 @@ void output_float(unsigned int port, float to_write) {
   udp.endPacket();
 }
 
-String input_until(char stop_character) {
+String rx_until(char stop_character) {
   String ret = "";
   char c = udp.read();
   while (c != stop_character) {
@@ -111,45 +114,54 @@ LOOP
 */
 void loop() {
   // Send the TX NOOP Heartbeat
-  output_string(PORT, "NOOP\n");
-  Serial.printf("NOOP TX - %d\n", ++HEARTBEAT_TX_COUNT);
+  if ((micros() - LAST_NOOP_TX_TIME) > NOOP_TX_INTERVAL) {
+    tx_string(PORT, "NOOP\n");
+    Serial.printf("NOOP TX - %d\n", ++HEARTBEAT_TX_COUNT);
+    LAST_NOOP_TX_TIME = micros();
+  }
 
   // Check for the RX NOOP Heartbeat
   udp.parsePacket();
   if (udp.available() > 0) {
     // read communication
-    String input = input_until('\n');
+    String input = rx_until('\n');
 
     if (input == "NOOP") {
       Serial.printf("NOOP RX - %d\n", ++HEARTBEAT_RX_COUNT);
-      LAST_COMMUNICATION_TIME = micros();
+      LAST_NOOP_RX_TIME = micros();
+      MISSED_NOOP_RX_COUNT = 0;
     }
   }
 
-  // If there hasn't been a heartbeat (or other packet) received in a sufficiently recent amount of time, enter abort state
-  if ((micros() - LAST_COMMUNICATION_TIME) > CONNECTION_TIMEOUT) {
+  // If there hasn't been a received heartbeat in too long
+  if ((micros() - LAST_NOOP_RX_TIME) > NOOP_RX_TIMEOUT) {
+    Serial.printf("Missed Heartbeat RX - %d\n", ++MISSED_NOOP_RX_COUNT);
+  }
+
+  // If there have been too many missed hearbeats, enter abort state
+  if (MISSED_NOOP_RX_COUNT >= MAX_NOOP_RX_MISSES) {
     
     // While system is aborted, print "aborted" until a start command is received
     bool aborted = true;
     while(aborted) {
       // Spit out a packet saying ABORTED once every ABORT_TIME_INTERVAL number of seconds
-      if ((micros() - ABORT_TIME_TRACKING) > ABORTED_TIME_INTERVAL) {
-        ABORT_TIME_TRACKING = micros();
-        output_string(PORT, "ABORTED\n");
-        // Also print it to the terminal
+      if ((micros() - LAST_ABORT_MSG_TX) > ABORTED_MSG_INTERVAL) {
+        tx_string(PORT, "ABORTED\n");
         Serial.println("ABORTED");
+        
+        LAST_ABORT_MSG_TX = micros();
       }
       
       // Check for a packet coming in that says START
       udp.parsePacket();
       if (udp.available() > 0) {
-        String input = input_until('\n');
+        String input = rx_until('\n');
 
         if (input == "START") {
           // Exit the abort state if you receive a START packet
           aborted = false;
-          LAST_COMMUNICATION_TIME = micros();
-          LAST_HUMAN_UPDATE = micros();
+          MISSED_NOOP_RX_COUNT = 0;
+          LAST_NOOP_RX_TIME = micros();
           Serial.println("LEAVING ABORT STATE");
         }
       }
