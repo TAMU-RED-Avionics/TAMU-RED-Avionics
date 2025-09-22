@@ -123,6 +123,10 @@ class GUIController:
         self.setup_abort_monitor()
     
     # ABORT CONTROL ------------------------------------------------------------------------------------------------
+    def handle_connect(self, success: bool):
+        if success and not self.abort_state:
+            self.signals.exit_lockout.emit()
+    
     def setup_abort_monitor(self):
         self.abort_timer = QTimer()
         self.abort_timer.timeout.connect(self.check_abort_conditions)
@@ -276,15 +280,6 @@ class GUIController:
         self.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
 
     # DAQ RECORDING ------------------------------------------------------------------------------------------------
-    def handle_connect(self, success: bool):
-        if success and not self.abort_state:
-            self.signals.exit_lockout.emit()
-            
-    # def handle_disconnect(self, reason: str):
-    #     # Will potentially add more functionality later
-    #     self.signals.disconnected.emit(reason)
-
-    #     # self.handle_abort("disconnected", reason)
 
     def log_event(self, event_type, event_details=""):
         """Log an event to CSV (Req 15)"""

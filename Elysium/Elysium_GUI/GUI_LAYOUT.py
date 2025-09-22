@@ -15,7 +15,7 @@ from GUI_VALVE_CONTROL import ValveControlWindow
 
 from GUI_CONTROLLER import GUIController
 
-""" 
+"""
 Main Window
 
 This window is organizing the main layout of the whole GUI, particually the location and
