@@ -123,7 +123,7 @@ class EthernetClient:
                         break
 
                 # Check on the RX heartbeat
-                now = QDateTime.currentMSecsSinceEpoch()
+                # now = QDateTime.currentMSecsSinceEpoch()
                 if (now - self.heartbeat_last_rx) > self.heartbeat_rx_miss_interval:
                     # Add one to the miss count
                     self.heartbeat_rx_miss_count += 1
@@ -138,11 +138,10 @@ class EthernetClient:
 
                 time.sleep(0.001)    # measured in seconds
         
-        # self.heartbeat_thread = Thread(target=heartbeat_loop, daemon=True)
         self.heartbeat_thread = QThread()
         self.heartbeat_thread.run = heartbeat_loop
         self.heartbeat_thread.start()
-        # self.heartbeat_thread.setPriority(QThread.TimeCriticalPriority)
+        self.heartbeat_thread.setPriority(QThread.TimeCriticalPriority)
 
     def stop_heartbeat(self):
         self.heartbeat_active = False
