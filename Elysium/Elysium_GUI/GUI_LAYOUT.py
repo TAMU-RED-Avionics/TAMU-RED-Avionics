@@ -104,7 +104,7 @@ class MainWindow(QMainWindow):
         lhs_layout.addWidget(self.daq_window, stretch=3)
 
         # Setup of abort menu
-        lhs_layout.addWidget(self.abort_menu, stretch=1)
+        lhs_layout.addWidget(self.abort_menu, stretch=5)
 
         # Setup of the valve control grid
         lhs_layout.addWidget(self.valve_control, stretch=7)

@@ -1,4 +1,4 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QSizePolicy
 
 from GUI_CONTROLLER import GUIController
 
@@ -43,15 +43,13 @@ class AbortWindow(QWidget):
 
         self.manual_abort_btn = QPushButton("MANUAL ABORT")
         self.manual_abort_btn.setObjectName("manual_abort_btn")
+        self.manual_abort_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         # self.manual_abort_btn.setStyleSheet("""background-color: red; color: white; font-weight: bold; font-size: 20pt; min-height: 80px;""")
         self.manual_abort_btn.setStyleSheet("""
             QPushButton {
                 background-color: red;
                 color: white;
-                font-weight: bold;
-                font-size: 20pt;
                 min-height: 80px;
-                border-radius: 8px;
             }
             QPushButton:hover { background-color: #700000; }
             QPushButton:pressed { background-color: #500000; }
@@ -60,19 +58,18 @@ class AbortWindow(QWidget):
 
         # This will trigger the signal, which will spin around and trigger self.abort_action here
         self.manual_abort_btn.clicked.connect(self.controller.trigger_manual_abort)
-        self.manual_abort_btn.setEnabled(False)
+        self.manual_abort_btn.setVisible(False)
         layout.addWidget(self.manual_abort_btn)
 
         self.safe_state_btn = QPushButton("CONFIRM SAFE STATE")
         self.safe_state_btn.setObjectName("safe_state_btn")
+        self.safe_state_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         # self.safe_state_btn.setStyleSheet("""background-color: green; color: white; min-height: 25px;""")
         self.safe_state_btn.setStyleSheet("""
             QPushButton {
                 background-color: #009900;
                 color: white;
-                font-weight: bold;
-                font-size: 16pt;
-                min-height: 25px;
+                min-height: 80px;
             }
             QPushButton:hover { background-color: #006600; }
             QPushButton:pressed { background-color: #005500; }
@@ -93,7 +90,7 @@ class AbortWindow(QWidget):
 
     def abort_action(self):
         self.safe_state_btn.setVisible(True)
-        self.manual_abort_btn.setEnabled(False)
+        self.manual_abort_btn.setVisible(False)
 
         # self.controller.trigger_manual_abort()
         # self.manual_abort_btn.setStyleSheet("""
