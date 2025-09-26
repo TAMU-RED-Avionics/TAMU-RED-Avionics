@@ -138,6 +138,12 @@ class EthernetClient:
 
                 time.sleep(0.001)    # measured in seconds
         
+        # Start the thread
+        # NOTE - Although this is a separate high priority thread, applying a stylesheet or doing other
+        #        basic things on the GUI can cause 40-50ms pauses in this thread's execution.
+        #        As a result the timing loop is constrained to a precision of that amount to not get an abort
+        #        Currently to see an abort, you need to miss 3*30ms intervals (90ms), which has a comfortable 
+        #        safety factor under the 3 strikes you are out rule.
         self.heartbeat_thread = QThread()
         self.heartbeat_thread.run = heartbeat_loop
         self.heartbeat_thread.start()

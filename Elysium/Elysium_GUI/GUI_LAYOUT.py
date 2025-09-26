@@ -140,16 +140,16 @@ class MainWindow(QMainWindow):
     
     def change_text_size(self):
         if self.text_size == 12:
-            self.text_size = 14
+            self.text_size = 16
             self.apply_stylesheet()
             self.text_size_btn.setText("Small Text")
 
-        elif self.text_size == 14:
-            self.text_size = 10
+        elif self.text_size == 16:
+            self.text_size = 8
             self.apply_stylesheet()
             self.text_size_btn.setText("Medium Text")
 
-        elif self.text_size == 10:
+        elif self.text_size == 8:
             self.text_size = 12
             self.apply_stylesheet()
             self.text_size_btn.setText("Large Text")
