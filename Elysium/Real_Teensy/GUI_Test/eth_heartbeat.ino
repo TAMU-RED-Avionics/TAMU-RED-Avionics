@@ -135,6 +135,8 @@ void loop() {
 
   // If there hasn't been a received heartbeat in too long
   if ((micros() - LAST_NOOP_RX_TIME) > NOOP_RX_TIMEOUT) {
+    // Update the time so that it must wait an additional full timeout to trigger another one
+    LAST_NOOP_RX_TIME = micros();
     Serial.printf("Missed Heartbeat RX - %d\n", ++MISSED_NOOP_RX_COUNT);
   }
 
