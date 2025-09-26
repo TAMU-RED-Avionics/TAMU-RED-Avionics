@@ -9,8 +9,12 @@ ConnectionWindow
 This window will display a set of options which will allow the user to establish a connection to the engine MCU
 
 INPUT DEPENDENCIES:
-    EthernetClient.connect(ip, port, callback)
-        This window will update its connection label based on the results of the ethernet client's connection attempt
+    GUIController.signals.connected()
+        When the system's ethernet client connects, this view must update the status label and 
+        the connect button
+
+    GUIController.singals.disconnected(reason)
+        When the system disconnects for any reason, the status label and connect button must update
 
 OUTPUT DEPENDENCIES:
     EthernetClient.connect(ip, port, callback)

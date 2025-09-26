@@ -10,10 +10,25 @@ and close valves. It must update the GUI state with the controller when a manual
 as well as update itself based on whether the engine automatically aborts itself
 
 INPUT DEPENDENCIES:
+    GUIController.signals.connected()
+        When we connect to the MCU, we need to enable the safe state button from its is initially
+        disabled state.
+
+    GUIController.signals.disconnected(reason)
+        When we disconnect from the MCU for any reason, we need to disable the safe state button.
+        Note that an auto disconnect will also trigger an abort, so both disconnected and abort_triggered
+        signals will emit. The callbacks play nicely with each other here, the abort flips wich button is 
+        visible and this signal determines whether the safe state button is enabled, order of operations will
+        not matter thankfully.
+
     GUIController.signals.abort_triggered(abort_type, reason)
         Aborts can be caused by either the button in this window being pressed as well as 
-        the engine automatically hitting an abort state, therefore this window must update its 
-        safe state button based on this signal, rather than a local function attached to the button
+        the engine automatically hitting an abort state, therefore this window must update the buttons
+        based on this signal, rather than a local function attached to the button.
+    
+    GUIController.signals.safe_state()
+        When the system enters a safe state, the button shown in this window must switch from being the abort
+        button to the safe state button.
 
 OUTPUT DEPENDENCIES:
     GUIController.trigger_manual_abort()
