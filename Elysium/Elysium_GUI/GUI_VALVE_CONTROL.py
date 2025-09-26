@@ -32,8 +32,8 @@ class ValveControlWindow(QWidget):
         super().__init__()
 
         self.controller = controller
-        self.controller.signals.enter_lockout.connect(self.enter_lockout_action)
-        self.controller.signals.exit_lockout.connect(self.exit_lockout_action)
+        self.controller.signals.abort_triggered.connect(self.abort_action)
+        self.controller.signals.safe_state.connect(self.safe_state_action)
 
         top_layout = QVBoxLayout()
         top_layout.setContentsMargins(0, 0, 0, 0)
@@ -81,12 +81,12 @@ class ValveControlWindow(QWidget):
 
         self.setLayout(top_layout)
 
-    def enter_lockout_action(self):
+    def abort_action(self):
         # Disable valve state buttons
         for btn in self.findChildren(QPushButton):
             btn.setEnabled(False)
 
-    def exit_lockout_action(self):
+    def safe_state_action(self):
         # Enable valve state buttons
         for btn in self.findChildren(QPushButton):
             btn.setEnabled(True)

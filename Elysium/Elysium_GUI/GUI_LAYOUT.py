@@ -15,7 +15,7 @@ from GUI_VALVE_CONTROL import ValveControlWindow
 
 from GUI_CONTROLLER import GUIController
 
-"""
+""" 
 Main Window
 
 This window is organizing the main layout of the whole GUI, particually the location and
@@ -139,22 +139,22 @@ class MainWindow(QMainWindow):
         return line
     
     def change_text_size(self):
-        if self.text_size == 10:
-            self.text_size = 12
+        if self.text_size == 12:
+            self.text_size = 14
             self.apply_stylesheet()
             self.text_size_btn.setText("Small Text")
 
-        elif self.text_size == 12:
-            self.text_size = 8
+        elif self.text_size == 14:
+            self.text_size = 10
             self.apply_stylesheet()
             self.text_size_btn.setText("Medium Text")
 
-        elif self.text_size == 8:
-            self.text_size = 10
+        elif self.text_size == 10:
+            self.text_size = 12
             self.apply_stylesheet()
             self.text_size_btn.setText("Large Text")
         else:
-            self.text_size = 10
+            self.text_size = 12
             self.apply_stylesheet()
             self.text_size_btn.setText("Large Text")
 

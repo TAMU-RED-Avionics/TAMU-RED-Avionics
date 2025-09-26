@@ -42,8 +42,8 @@ class DAQWindow(QWidget):
         super().__init__()
 
         self.controller = controller
-        self.controller.signals.enter_lockout.connect(self.enter_lockout_action)
-        self.controller.signals.exit_lockout.connect(self.exit_lockout_action)
+        self.controller.signals.abort_triggered.connect(self.abort_action)
+        self.controller.signals.safe_state.connect(self.safe_state_action)
 
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -130,12 +130,12 @@ class DAQWindow(QWidget):
         self.start_button.setEnabled(True)
         self.stop_button.setEnabled(False)
 
-    def enter_lockout_action(self):
+    def abort_action(self):
         self.manual_btn.setEnabled(False)
         self.throttling_btn.setEnabled(False)
         self.gimbaling_btn.setEnabled(False)
 
-    def exit_lockout_action(self):
+    def safe_state_action(self):
         self.manual_btn.setEnabled(True)
         self.throttling_btn.setEnabled(True)
         self.gimbaling_btn.setEnabled(True)

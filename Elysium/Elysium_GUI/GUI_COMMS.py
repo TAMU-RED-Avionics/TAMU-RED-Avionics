@@ -2,7 +2,7 @@ from re import I
 from socket import socket, SocketKind, AddressFamily
 from threading import Thread
 import time
-from PyQt5.QtCore import QObject, pyqtSignal, QDate, Qt, QTimer, QDateTime
+from PyQt5.QtCore import QObject, pyqtSignal, QDate, Qt, QTimer, QDateTime, QThread
 
 class EthernetClient:
     def __init__(self, log_event_callback: (str)=None, receive_callback: (str)=None, connect_callback: (bool)=None, disconnect_callback: (str)=None):
@@ -17,9 +17,9 @@ class EthernetClient:
         self.connecting = False
         self.connected = False
         self.heartbeat_active = False
-        self.heartbeat_thread: Thread = None
+        self.heartbeat_thread: QThread = None
         self.listening_active = False
-        self.listen_thread: Thread = None
+        self.listen_thread: QThread = None
 
 
         self.heartbeat_tx_cadence: int = 10                 # ms
@@ -73,7 +73,8 @@ class EthernetClient:
                 # Start the listening thread in order to receive telemetry
                 self.start_listening()
                 ui_callback(True)
-                self.connect_callback(True)  # Success
+                if self.connect_callback:
+                    self.connect_callback(True)  # Success
             
             # Handle errors, notably timeouts which will be common
             except Exception as e:
@@ -84,7 +85,8 @@ class EthernetClient:
                 self.connected = False
 
                 ui_callback(False)
-                self.connect_callback(False)  # Failure
+                if self.connect_callback:
+                    self.connect_callback(False)  # Failure
 
                 print("Connect ran into exception: ", e)
 
@@ -135,9 +137,12 @@ class EthernetClient:
                         self.disconnect("Heartbeat missed 3 times")
 
                 time.sleep(0.001)    # measured in seconds
-                
-        self.heartbeat_thread = Thread(target=heartbeat_loop, daemon=True)
+        
+        # self.heartbeat_thread = Thread(target=heartbeat_loop, daemon=True)
+        self.heartbeat_thread = QThread()
+        self.heartbeat_thread.run = heartbeat_loop
         self.heartbeat_thread.start()
+        # self.heartbeat_thread.setPriority(QThread.TimeCriticalPriority)
 
     def stop_heartbeat(self):
         self.heartbeat_active = False
@@ -175,8 +180,11 @@ class EthernetClient:
                     break
 
         self.listening_active = True
-        self.listen_thread = Thread(target=listen_loop, daemon=True)
+        # self.listen_thread = Thread(target=listen_loop, daemon=True)
+        self.listen_thread = QThread()
+        self.listen_thread.run = listen_loop
         self.listen_thread.start()
+        # self.listen_thread.setPriority(QThread.TimeCriticalPriority)
 
     def stop_listening(self):
         self.listening_active = False

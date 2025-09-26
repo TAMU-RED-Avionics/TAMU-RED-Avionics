@@ -12,9 +12,11 @@ from GUI_COMMS import EthernetClient
 # This may be necessary for ongoing refactors but currently has no use
 class Signals(QObject):
     abort_triggered = pyqtSignal(str, str)
+    safe_state = pyqtSignal()
+    connected = pyqtSignal(bool)
     disconnected = pyqtSignal(str)
-    enter_lockout = pyqtSignal()
-    exit_lockout = pyqtSignal()
+    # enter_lockout = pyqtSignal(str)
+    # exit_lockout = pyqtSignal()
 
     valve_updated = pyqtSignal(str, bool)
     sensor_updated = pyqtSignal(str, float)
@@ -44,7 +46,7 @@ class GUIController:
         self.ethernet_client = EthernetClient(
             receive_callback = self.handle_new_data,
             log_event_callback = self.log_event,
-            connect_callback = self.handle_connect,
+            connect_callback = lambda result: self.signals.connected.emit(result),
             disconnect_callback = lambda reason: self.signals.disconnected.emit(reason)
         )
         
@@ -53,7 +55,8 @@ class GUIController:
         # in a separate thread, therefore we must use a signal that pops out of it and back in here
         # to safely change things in the main thread as a result
         self.signals = Signals()
-        self.signals.disconnected.connect(lambda reason: self.signals.enter_lockout.emit())
+        # self.signals.connected.connect(self.handle_connect)
+        self.signals.disconnected.connect(lambda reason: self.signals.abort_triggered.emit("DISCONNECTED", reason))
         self.signals.abort_triggered.connect(self.handle_abort)
 
         # For file recording
@@ -62,7 +65,6 @@ class GUIController:
 
         # These are constants and dictionaries that the UI needs to be tracked
         self.lockout = True                     # default to lockout until a connection starts
-        self.abort_state = False
 
         self.ncs3_opened_due_to_p2 = False
         self.abort_modes: Dict[str, bool] = {}
@@ -123,9 +125,9 @@ class GUIController:
         self.setup_abort_monitor()
     
     # ABORT CONTROL ------------------------------------------------------------------------------------------------
-    def handle_connect(self, success: bool):
-        if success and not self.abort_state:
-            self.signals.exit_lockout.emit()
+    # def handle_connect(self, success: bool):
+    #     if success:
+    #         self.signals.exit_lockout.emit()
     
     def setup_abort_monitor(self):
         self.abort_timer = QTimer()
@@ -246,12 +248,10 @@ class GUIController:
 
     def handle_abort(self, abort_type, reason):
         """Handle abort sequence (Req 11, 20-24)"""
-        if self.abort_state:
+        if self.lockout:
             return
-            
+        
         self.lockout = True
-        self.abort_state = True
-        self.signals.enter_lockout.emit()
 
         self.pre_abort_valve_states = self.valve_states.copy()
 
@@ -265,7 +265,7 @@ class GUIController:
             "ABORT TRIGGERED", 
             f"Abort Type: {abort_type}\nReason: {reason}"
         )
-
+        
         # Log abort event
         self.log_event("ABORT", f"{abort_type}:{reason}")
 
@@ -273,11 +273,12 @@ class GUIController:
         """Confirm system is safe after abort without any dialog"""
         if self.ethernet_client.connected:
             self.lockout = False
-            self.abort_state = False
-            self.signals.exit_lockout.emit()
+            # self.abort_state = False
+            self.signals.safe_state.emit()
         
-        # Log safe state confirmation
-        self.log_event("ABORT_RESOLVED", "Operator confirmed safe state")
+            # Log safe state confirmation
+            self.log_event("SAFE_STATE", "Operator confirmed safe state")
+
 
     # DAQ RECORDING ------------------------------------------------------------------------------------------------
 

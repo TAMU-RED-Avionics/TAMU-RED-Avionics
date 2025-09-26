@@ -31,7 +31,10 @@ class AbortWindow(QWidget):
         super().__init__()
 
         self.controller = controller
+        self.controller.signals.connected.connect(self.connect_action)
+        self.controller.signals.disconnected.connect(self.disconnect_action)
         self.controller.signals.abort_triggered.connect(self.abort_action)
+        self.controller.signals.safe_state.connect(self.safe_state_action)
 
         layout = QVBoxLayout()
         # layout.setContentsMargins(10, 10, 10, 10)
@@ -40,41 +43,76 @@ class AbortWindow(QWidget):
 
         self.manual_abort_btn = QPushButton("MANUAL ABORT")
         self.manual_abort_btn.setObjectName("manual_abort_btn")
-        self.manual_abort_btn.setStyleSheet("""background-color: red; color: white; font-weight: bold; font-size: 20pt; min-height: 80px;""")
+        # self.manual_abort_btn.setStyleSheet("""background-color: red; color: white; font-weight: bold; font-size: 20pt; min-height: 80px;""")
+        self.manual_abort_btn.setStyleSheet("""
+            QPushButton {
+                background-color: red;
+                color: white;
+                font-weight: bold;
+                font-size: 20pt;
+                min-height: 80px;
+                border-radius: 8px;
+            }
+            QPushButton:hover { background-color: #700000; }
+            QPushButton:pressed { background-color: #500000; }
+            QPushButton:disabled { background-color: #700000; }
+        """)
+
         # This will trigger the signal, which will spin around and trigger self.abort_action here
         self.manual_abort_btn.clicked.connect(self.controller.trigger_manual_abort)
+        self.manual_abort_btn.setEnabled(False)
         layout.addWidget(self.manual_abort_btn)
 
         self.safe_state_btn = QPushButton("CONFIRM SAFE STATE")
         self.safe_state_btn.setObjectName("safe_state_btn")
-        self.safe_state_btn.setStyleSheet("""background-color: green; color: white; font-weight: bold; font-size: 16pt; min-height: 30px;""")
-        self.safe_state_btn.clicked.connect(self.safe_state_action)
-        self.safe_state_btn.setVisible(False)
+        # self.safe_state_btn.setStyleSheet("""background-color: green; color: white; min-height: 25px;""")
+        self.safe_state_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #009900;
+                color: white;
+                font-weight: bold;
+                font-size: 16pt;
+                min-height: 25px;
+            }
+            QPushButton:hover { background-color: #006600; }
+            QPushButton:pressed { background-color: #005500; }
+            QPushButton:disabled { background-color: #005500; }
+        """)
+
+        self.safe_state_btn.clicked.connect(self.controller.confirm_safe_state)
+        self.safe_state_btn.setEnabled(False)
         layout.addWidget(self.safe_state_btn)
 
         self.setLayout(layout)
 
-    def abort_action(self):
-        # self.controller.trigger_manual_abort()
-        self.safe_state_btn.setVisible(True)
+    def connect_action(self):
+        self.safe_state_btn.setEnabled(True)
 
-        self.manual_abort_btn.setStyleSheet("""
-                background-color: darkred; 
-                color: gray; 
-                font-weight: bold; 
-                font-size: 20pt;
-                min-height: 80px;
-            """)
+    def disconnect_action(self):
+        self.safe_state_btn.setEnabled(False)
+
+    def abort_action(self):
+        self.safe_state_btn.setVisible(True)
+        self.manual_abort_btn.setEnabled(False)
+
+        # self.controller.trigger_manual_abort()
+        # self.manual_abort_btn.setStyleSheet("""
+        #         background-color: darkred; 
+        #         color: gray; 
+        #         font-weight: bold; 
+        #         font-size: 20pt;
+        #         min-height: 80px;
+        #     """)
     
     # Updates the controller and the local window when a safe state is commanded
-    def safe_state_action(self):
-        self.controller.confirm_safe_state()
+    def safe_state_action(self):            
         self.safe_state_btn.setVisible(False)
+        self.manual_abort_btn.setEnabled(True)
 
-        self.manual_abort_btn.setStyleSheet("""
-                background-color: red; 
-                color: white; 
-                font-weight: bold; 
-                font-size: 20pt;
-                min-height: 80px;
-            """)
+        # self.manual_abort_btn.setStyleSheet("""
+        #         background-color: red; 
+        #         color: white; 
+        #         font-weight: bold; 
+        #         font-size: 20pt;
+        #         min-height: 80px;
+        #     """)
