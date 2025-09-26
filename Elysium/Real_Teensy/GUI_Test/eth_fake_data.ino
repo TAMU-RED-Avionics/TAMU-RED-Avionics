@@ -6,6 +6,14 @@
 /*
 -------------------------------------------------------------------
 To test this with your laptop:
+
+1. Test with a simple terminal, on my mac this is how I did it
+
+  ifconfig         (check for an enX number to pop up that isn't there when the cable is unplugged)
+  sudo ifconfig enX inet 192.168.1.175 netmask 255.255.255.0 up
+  nc -u -l 8888
+
+2. Test with the GUI
   cd Elysium_GUI
   python GUI_MAIN.py
 
@@ -13,7 +21,6 @@ To test this with your laptop:
   Connect and look at the graphs
 -------------------------------------------------------------------
 */
-
 
 //                       USER INPUT SETTINGS
 // ----------------------------------------------------------------
@@ -31,6 +38,8 @@ const int unsigned MAX_NOOP_RX_MISSES = 3;                // The maximum number 
 
 const long unsigned ABORTED_MSG_INTERVAL = 500 * 1000;    // Interval for printing "aborted" when in an abort state (microsec)
 
+const long unsigned SENSOR_UPDATE_INTERVAL = 100 * 1000;  // Interval for sending sensor data (microsec)
+
 // ----------------------------------------------------------------
 
 
@@ -42,12 +51,16 @@ const long unsigned ABORTED_MSG_INTERVAL = 500 * 1000;    // Interval for printi
 long unsigned LAST_NOOP_TX_TIME = 0;                      // Timestamp of the most recent transmit
 long unsigned LAST_NOOP_RX_TIME = 0;                      // Timestamp of last communication of any type (microsec)
 long unsigned LAST_ABORT_MSG_TX = 0;                      // Timestamp of the last abort message that was sent
+long unsigned LAST_SENSOR_UPDATE = 0;                     // Timestamp of the last time sensor reading was sent
 int unsigned MISSED_NOOP_RX_COUNT = 0;                    // The current number of missed heartbeat packets     
 
-// Heartbeat params
+// Heartbeat variables
 int unsigned HEARTBEAT_RX_COUNT = 0;                      // [DEBUG] The total number of heartbeat signals received
 int unsigned HEARTBEAT_TX_COUNT = 0;                      // [DEBUG] The total number of heartbeat signals sent to the master
 
+// Fake data variables
+double CUR_FAKE_ANGLE = 0;
+double CUR_FAKE_VAL = 0;
 
 // An EthernetUDP instance to let us send and receive packets over UDP
 EthernetUDP udp;
@@ -115,6 +128,7 @@ void setup() {
   init_comms(MAC_ADDRESS, PORT);
 }
 
+
 /*
 -------------------------------------------------------------------
 LOOP
@@ -128,7 +142,7 @@ void loop() {
     LAST_NOOP_TX_TIME = micros();
   }
 
-  // Check for the RX NOOP Heartbeat
+  // Listen for the RX NOOP Heartbeat
   udp.parsePacket();
   if (udp.available() > 0) {
     // read communication
@@ -141,7 +155,7 @@ void loop() {
     }
   }
 
-  // If there hasn't been a received heartbeat in too long
+  // Check how long it has been since the last rx heartbeat
   if ((micros() - LAST_NOOP_RX_TIME) > NOOP_RX_TIMEOUT) {
     // Update the time so that it must wait an additional full timeout to trigger another one
     LAST_NOOP_RX_TIME = micros();
@@ -178,6 +192,46 @@ void loop() {
 
     }
   } // if in abort state
+
+  
+
+  // Sensor readings
+  if ((micros() - LAST_SENSOR_UPDATE) > SENSOR_UPDATE_INTERVAL) {
+    LAST_SENSOR_UPDATE = micros();                               // update time
+        
+    CUR_FAKE_ANGLE += PI / 12;
+    CUR_FAKE_VAL = sin(CUR_FAKE_ANGLE) + 1;
+
+    Serial.print("Sensor Readings TX - angle: ");
+    Serial.print(CUR_FAKE_ANGLE);
+    Serial.print("\tcurrent_fake_val: ");
+    Serial.println(CUR_FAKE_VAL);
+    
+    // send data to serial monitor
+    tx_string(PORT, "t:");
+    tx_float(PORT, LAST_SENSOR_UPDATE);
+    tx_string(PORT, ",P1:");
+    tx_float(PORT, CUR_FAKE_VAL);
+    tx_string(PORT, ",P2:");
+    tx_float(PORT, CUR_FAKE_VAL);
+    tx_string(PORT, ",P3:");
+    tx_float(PORT, CUR_FAKE_VAL);
+    tx_string(PORT, ",P4:");
+    tx_float(PORT, CUR_FAKE_VAL);
+    tx_string(PORT, ",P5:");
+    tx_float(PORT, CUR_FAKE_VAL);
+    tx_string(PORT, ",P6:");
+    tx_float(PORT, CUR_FAKE_VAL);
+    tx_string(PORT, ",T1:");
+    tx_float(PORT, CUR_FAKE_VAL);
+    tx_string(PORT, ",L1:");
+    tx_float(PORT, CUR_FAKE_VAL);
+    tx_string(PORT, ",L2:");
+    tx_float(PORT, CUR_FAKE_VAL);
+    tx_string(PORT, ",L3:");
+    tx_float(PORT, CUR_FAKE_VAL);
+    tx_string(PORT, "\n");
+  }
 
   delay(SYSTEM_LOOP_INTERVAL);
 }
