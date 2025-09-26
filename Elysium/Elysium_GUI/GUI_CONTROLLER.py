@@ -13,7 +13,7 @@ from GUI_COMMS import EthernetClient
 class Signals(QObject):
     abort_triggered = pyqtSignal(str, str)
     safe_state = pyqtSignal()
-    connected = pyqtSignal(bool)
+    connected = pyqtSignal()
     disconnected = pyqtSignal(str)
     # enter_lockout = pyqtSignal(str)
     # exit_lockout = pyqtSignal()
@@ -46,7 +46,7 @@ class GUIController:
         self.ethernet_client = EthernetClient(
             receive_callback = self.handle_new_data,
             log_event_callback = self.log_event,
-            connect_callback = lambda result: self.signals.connected.emit(result),
+            connect_callback = self.handle_connect,
             disconnect_callback = lambda reason: self.signals.disconnected.emit(reason)
         )
         
@@ -125,9 +125,12 @@ class GUIController:
         self.setup_abort_monitor()
     
     # ABORT CONTROL ------------------------------------------------------------------------------------------------
-    # def handle_connect(self, success: bool):
-    #     if success:
-    #         self.signals.exit_lockout.emit()
+    
+    def handle_connect(self, success: bool):
+        if success:
+            self.signals.connected.emit()
+        else:
+            self.signals.disconnected.emit("Connection failed")
     
     def setup_abort_monitor(self):
         self.abort_timer = QTimer()
@@ -265,7 +268,7 @@ class GUIController:
             "ABORT TRIGGERED", 
             f"Abort Type: {abort_type}\nReason: {reason}"
         )
-        
+
         # Log abort event
         self.log_event("ABORT", f"{abort_type}:{reason}")
 

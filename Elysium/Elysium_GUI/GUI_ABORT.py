@@ -37,14 +37,12 @@ class AbortWindow(QWidget):
         self.controller.signals.safe_state.connect(self.safe_state_action)
 
         layout = QVBoxLayout()
-        # layout.setContentsMargins(10, 10, 10, 10)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(10)
 
         self.manual_abort_btn = QPushButton("MANUAL ABORT")
         self.manual_abort_btn.setObjectName("manual_abort_btn")
         self.manual_abort_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        # self.manual_abort_btn.setStyleSheet("""background-color: red; color: white; font-weight: bold; font-size: 20pt; min-height: 80px;""")
         self.manual_abort_btn.setStyleSheet("""
             QPushButton {
                 background-color: red;
@@ -64,7 +62,6 @@ class AbortWindow(QWidget):
         self.safe_state_btn = QPushButton("CONFIRM SAFE STATE")
         self.safe_state_btn.setObjectName("safe_state_btn")
         self.safe_state_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        # self.safe_state_btn.setStyleSheet("""background-color: green; color: white; min-height: 25px;""")
         self.safe_state_btn.setStyleSheet("""
             QPushButton {
                 background-color: #009900;
@@ -89,27 +86,10 @@ class AbortWindow(QWidget):
         self.safe_state_btn.setEnabled(False)
 
     def abort_action(self):
-        self.safe_state_btn.setVisible(True)
         self.manual_abort_btn.setVisible(False)
+        self.safe_state_btn.setVisible(True)
 
-        # self.controller.trigger_manual_abort()
-        # self.manual_abort_btn.setStyleSheet("""
-        #         background-color: darkred; 
-        #         color: gray; 
-        #         font-weight: bold; 
-        #         font-size: 20pt;
-        #         min-height: 80px;
-        #     """)
-    
     # Updates the controller and the local window when a safe state is commanded
     def safe_state_action(self):            
         self.safe_state_btn.setVisible(False)
-        self.manual_abort_btn.setEnabled(True)
-
-        # self.manual_abort_btn.setStyleSheet("""
-        #         background-color: red; 
-        #         color: white; 
-        #         font-weight: bold; 
-        #         font-size: 20pt;
-        #         min-height: 80px;
-        #     """)
+        self.manual_abort_btn.setVisible(True)

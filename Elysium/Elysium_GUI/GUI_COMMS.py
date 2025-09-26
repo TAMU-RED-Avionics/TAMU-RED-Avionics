@@ -14,13 +14,17 @@ class EthernetClient:
         self.remote_ip: str = None
         self.remote_port: int = None
         self.sock: socket = None
+        
+        # Declaration of the three threads in this controller
+        self.connection_thread: QThread = None
+        self.heartbeat_thread: QThread = None
+        self.listen_thread: QThread = None
+
+        # State values related to the threads
         self.connecting = False
         self.connected = False
         self.heartbeat_active = False
-        self.heartbeat_thread: QThread = None
         self.listening_active = False
-        self.listen_thread: QThread = None
-
 
         self.heartbeat_tx_cadence: int = 10                 # ms
         self.heartbeat_rx_miss_interval: int = 30           # ms
@@ -31,18 +35,15 @@ class EthernetClient:
 
     # Connects to the MCU over Ethernet in an asynchronous manner to preserve the main thread
     # The callback function is called with the result of the connection attempt
-    def connect(self, ip: str, port: int, ui_callback: (bool)):
+    def connect(self, ip: str, port: int):
         self.remote_ip = ip     # In the future we can probably automatically determine remote_ip when we sniff the first heartbeat packets
         self.remote_port = port
 
-        if self.connecting:     # If it is already connecting, just bounce because the command is redundant
+        if self.connecting or self.connected:     # If it is already connecting, just bounce because the command is redundant
             return
-        elif self.connected:    # If it is connected already, return true so that the UI adjusts its text back to "Connected"
-            # callback(True)
-            # return
-            self.disconnect("Manual Reconnect")
-
         
+        self.connecting = True
+
         # The connection worker is a separate thread that handles the connection attempt
         def connection_worker():
             try:
@@ -72,7 +73,7 @@ class EthernetClient:
                 
                 # Start the listening thread in order to receive telemetry
                 self.start_listening()
-                ui_callback(True)
+
                 if self.connect_callback:
                     self.connect_callback(True)  # Success
             
@@ -84,17 +85,15 @@ class EthernetClient:
                 self.connecting = False
                 self.connected = False
 
-                ui_callback(False)
                 if self.connect_callback:
                     self.connect_callback(False)  # Failure
 
                 print("Connect ran into exception: ", e)
-
-        self.connecting = True
         
         # Start connection in the separate thread
-        connection_thread = Thread(target=connection_worker, daemon=True)
-        connection_thread.start()
+        self.connection_thread = QThread()
+        self.connection_thread.run = connection_worker
+        self.connection_thread.start()
 
     def start_heartbeat(self):
         """Start sending heartbeat NOOP signals (Req 25)"""
@@ -103,10 +102,10 @@ class EthernetClient:
 
         # Configure the last received heartbeat time to be right now to start the process
         self.heartbeat_last_rx = QDateTime.currentMSecsSinceEpoch()
-            
+        
         self.heartbeat_active = True
         def heartbeat_loop():
-            while self.heartbeat_active:    # For now I am going to ignore the connection requirement
+            while self.connected and self.heartbeat_active:    # For now I am going to ignore the connection requirement
                 # Send the TX heartbeat
                 now = QDateTime.currentMSecsSinceEpoch()
                 if (now - self.heartbeat_last_tx) > self.heartbeat_tx_cadence:
@@ -123,7 +122,7 @@ class EthernetClient:
                         break
 
                 # Check on the RX heartbeat
-                # now = QDateTime.currentMSecsSinceEpoch()
+                now = QDateTime.currentMSecsSinceEpoch()
                 if (now - self.heartbeat_last_rx) > self.heartbeat_rx_miss_interval:
                     # Add one to the miss count
                     self.heartbeat_rx_miss_count += 1
@@ -136,7 +135,7 @@ class EthernetClient:
                         self.heartbeat_active = False
                         self.disconnect("Heartbeat missed 3 times")
 
-                time.sleep(0.001)    # measured in seconds
+                time.sleep(0.001)    # Control the pace of this thread to 1ms to prevent it from burning too much CPU
         
         # Start the thread
         # NOTE - Although this is a separate high priority thread, applying a stylesheet or doing other
@@ -151,7 +150,6 @@ class EthernetClient:
 
     def stop_heartbeat(self):
         self.heartbeat_active = False
-
 
     def start_listening(self):
         if self.listening_active:

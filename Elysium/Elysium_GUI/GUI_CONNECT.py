@@ -22,7 +22,8 @@ class ConnectionWindow(QWidget):
         super().__init__()
 
         self.controller = controller
-        self.controller.signals.disconnected.connect(lambda: self.conn_status_label.setText("Disconnected"))
+        self.controller.signals.connected.connect(self.connect_action)
+        self.controller.signals.disconnected.connect(self.disconnect_action)
         
         eth_layout = QVBoxLayout()
         eth_layout.setContentsMargins(0, 0, 0, 0)
@@ -38,18 +39,29 @@ class ConnectionWindow(QWidget):
         self.ip_input = QLineEdit("192.168.1.174")
         self.port_input = QLineEdit("8888")
         
-        connect_btn = QPushButton("Connect")
-        connect_btn.clicked.connect(self.connect_ethernet)
+        self.connect_btn = QPushButton("Connect")
+        self.connect_btn.clicked.connect(self.connect_ethernet)
 
         eth_input_layout.addWidget(QLabel("IP Address:"))
         eth_input_layout.addWidget(self.ip_input)
         eth_input_layout.addWidget(QLabel("Port:"))
         eth_input_layout.addWidget(self.port_input)
-        eth_input_layout.addWidget(connect_btn)
+        eth_input_layout.addWidget(self.connect_btn)
         eth_layout.addLayout(eth_input_layout)
 
         self.setLayout(eth_layout)
 
+    def connect_action(self):
+        self.conn_status_label.setText("Connected Successfully")
+        self.connect_btn.setEnabled(False)
+
+    def disconnect_action(self):
+        self.connect_btn.setEnabled(True)
+
+        if self.conn_status_label.text() == "Connecting...":
+            self.conn_status_label.setText("Connection Failed")
+        else:
+            self.conn_status_label.setText("Disconnected")
 
     def connect_ethernet(self):
         # Get the IP and port from the input fields
@@ -63,14 +75,6 @@ class ConnectionWindow(QWidget):
         # Update the UI to show connecting state
         self.conn_status_label.setText("Connecting...")
 
-        # Here we define the behavior we want from from the connection thread when
-        # it completes or times out
-        def connection_callback(success):
-            if success:
-                self.conn_status_label.setText("Connected Successfully")
-            else:
-                self.conn_status_label.setText("Connection Failed")
-        
         # Use asynchronous connection to avoid blocking the UI
-        self.controller.ethernet_client.connect(ip, port, connection_callback)
+        self.controller.ethernet_client.connect(ip, port)
 
