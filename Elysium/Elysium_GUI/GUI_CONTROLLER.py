@@ -15,9 +15,7 @@ class Signals(QObject):
     safe_state = pyqtSignal()
     connected = pyqtSignal()
     disconnected = pyqtSignal(str)
-    # enter_lockout = pyqtSignal(str)
-    # exit_lockout = pyqtSignal()
-
+    
     valve_updated = pyqtSignal(str, bool)
     sensor_updated = pyqtSignal(str, float)
     system_status = pyqtSignal(str)

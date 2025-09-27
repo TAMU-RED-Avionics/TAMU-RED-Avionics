@@ -27,8 +27,7 @@ class EthernetClient:
         self.listening_active = False
 
         self.heartbeat_tx_cadence: int = 10                 # ms
-        self.heartbeat_rx_miss_interval: int = 30           # ms
-        self.heartbeat_rx_miss_count: int = 0
+        self.heartbeat_rx_miss_interval: int = 100           # ms
 
         self.heartbeat_last_tx: int = 0                     # ms since Jan 1 1970
         self.heartbeat_last_rx: int = 0                     # ms since Jan 1 1970
@@ -60,8 +59,8 @@ class EthernetClient:
                 data = self.sock.recv(1024)
                 if not data:
                     ConnectionError("No data received in packet")
-                # If we reach past this point in execution, it means that we have timed out or
-                # encountered some other issue
+
+                # If we reach past this point in execution, it means that we have NOT timed out or encountered some other issue
 
                 self.connected = True
                 self.connecting = False
@@ -100,16 +99,18 @@ class EthernetClient:
         if self.heartbeat_active:
             return
 
+        self.heartbeat_active = True
+
         # Configure the last received heartbeat time to be right now to start the process
         self.heartbeat_last_rx = QDateTime.currentMSecsSinceEpoch()
         
-        self.heartbeat_active = True
         def heartbeat_loop():
             while self.connected and self.heartbeat_active:    # For now I am going to ignore the connection requirement
                 # Send the TX heartbeat
                 now = QDateTime.currentMSecsSinceEpoch()
                 if (now - self.heartbeat_last_tx) > self.heartbeat_tx_cadence:
                     try:
+                        # print("heartbeat loop tx time: ", now - self.heartbeat_last_tx)
                         if self.remote_ip and self.remote_port:
                             # self.sock.sendall("NOOP\n".encode())
                             self.sock.sendto("NOOP\n".encode(), (self.remote_ip, self.remote_port))
@@ -124,16 +125,8 @@ class EthernetClient:
                 # Check on the RX heartbeat
                 now = QDateTime.currentMSecsSinceEpoch()
                 if (now - self.heartbeat_last_rx) > self.heartbeat_rx_miss_interval:
-                    # Add one to the miss count
-                    self.heartbeat_rx_miss_count += 1
-                    # Update the last rx so that it needs to wait another interval to count as another miss
-                    self.heartbeat_last_rx = now
-
-                    print(f"Missed a beat - {self.heartbeat_rx_miss_count}!")
-
-                    if self.heartbeat_rx_miss_count >= 3:
-                        self.heartbeat_active = False
-                        self.disconnect("Heartbeat missed 3 times")
+                    self.heartbeat_active = False
+                    self.disconnect("Heartbeat missed")
 
                 time.sleep(0.001)    # Control the pace of this thread to 1ms to prevent it from burning too much CPU
         
@@ -146,7 +139,7 @@ class EthernetClient:
         self.heartbeat_thread = QThread()
         self.heartbeat_thread.run = heartbeat_loop
         self.heartbeat_thread.start()
-        self.heartbeat_thread.setPriority(QThread.TimeCriticalPriority)
+        # self.heartbeat_thread.setPriority(QThread.TimeCriticalPriority)
 
     def stop_heartbeat(self):
         self.heartbeat_active = False
