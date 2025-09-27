@@ -32,9 +32,8 @@ unsigned int PORT = 8888;                                 // The port to bind to
 
 const int unsigned SYSTEM_LOOP_INTERVAL = 1;              // The loop delay of the overall system - configures the NOOP TX Rate (millisec)
 
-const long unsigned NOOP_TX_INTERVAL = 10 * 1000;         // Minimum time to wait in between sending NOOP heartbeats (microsec)
-const long unsigned NOOP_RX_TIMEOUT =  30 * 1000;         // Timeout to consider a lack of a NOOP packet coming in as a miss (microsec)
-const int unsigned MAX_NOOP_RX_MISSES = 3;                // The maximum number of missed heartbeats in order to trigger an abort state
+const long unsigned NOOP_TX_INTERVAL = 10 * 1000;          // Minimum time to wait in between sending NOOP heartbeats (microsec)
+const long unsigned NOOP_RX_TIMEOUT =  100 * 1000;         // Timeout to consider a lack of a NOOP packet coming in as a miss (microsec)
 
 const long unsigned ABORTED_MSG_INTERVAL = 500 * 1000;    // Interval for printing "aborted" when in an abort state (microsec)
 
@@ -52,7 +51,6 @@ long unsigned LAST_NOOP_TX_TIME = 0;                      // Timestamp of the mo
 long unsigned LAST_NOOP_RX_TIME = 0;                      // Timestamp of last communication of any type (microsec)
 long unsigned LAST_ABORT_MSG_TX = 0;                      // Timestamp of the last abort message that was sent
 long unsigned LAST_SENSOR_UPDATE = 0;                     // Timestamp of the last time sensor reading was sent
-int unsigned MISSED_NOOP_RX_COUNT = 0;                    // The current number of missed heartbeat packets     
 
 // Heartbeat variables
 int unsigned HEARTBEAT_RX_COUNT = 0;                      // [DEBUG] The total number of heartbeat signals received
@@ -153,6 +151,7 @@ void loop() {
     LAST_NOOP_TX_TIME = micros();
   }
 
+
   // Listen for the RX NOOP Heartbeat
   udp.parsePacket();
   if (udp.available() > 0) {
@@ -162,20 +161,15 @@ void loop() {
     if (input == "NOOP") {
       Serial.printf("NOOP RX - %d\n", ++HEARTBEAT_RX_COUNT);
       LAST_NOOP_RX_TIME = micros();
-      MISSED_NOOP_RX_COUNT = 0;
+      // MISSED_NOOP_RX_COUNT = 0;
     }
   }
 
-  // Check how long it has been since the last rx heartbeat
-  if ((micros() - LAST_NOOP_RX_TIME) > NOOP_RX_TIMEOUT) {
-    // Update the time so that it must wait an additional full timeout to trigger another one
-    LAST_NOOP_RX_TIME = micros();
-    Serial.printf("Missed Heartbeat RX - %d\n", ++MISSED_NOOP_RX_COUNT);
-  }
 
   // If there have been too many missed hearbeats, enter abort state
-  if (MISSED_NOOP_RX_COUNT >= MAX_NOOP_RX_MISSES) {
-    
+  if ((micros() - LAST_NOOP_RX_TIME) > NOOP_RX_TIMEOUT) {
+    Serial.printf("Missed Heartbeat RX\n");
+
     // While system is aborted, print "aborted" until a start command is received
     bool aborted = true;
     while(aborted) {
@@ -195,7 +189,7 @@ void loop() {
         if (input == "START") {
           // Exit the abort state if you receive a START packet
           aborted = false;
-          MISSED_NOOP_RX_COUNT = 0;
+          // MISSED_NOOP_RX_COUNT = 0;
           LAST_NOOP_RX_TIME = micros();
           Serial.println("LEAVING ABORT STATE");
         }
