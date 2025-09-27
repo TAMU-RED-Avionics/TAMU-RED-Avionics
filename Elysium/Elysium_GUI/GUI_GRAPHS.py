@@ -91,7 +91,7 @@ class SensorGraph(QWidget):
         now = QDateTime.currentMSecsSinceEpoch() / 1000.0
         
         # Reload the render data
-        self.render_data = []
+        # self.render_data = []
         for val, ts in self.backend_data:
             relative_ts = ts - now
 
