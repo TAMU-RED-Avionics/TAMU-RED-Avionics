@@ -3,10 +3,10 @@
 # They will update automatically according to various settings
 from stat import SF_APPEND
 from ast import Dict
-from PyQt5.QtWidgets import QWidget, QLabel, QPushButton, QVBoxLayout, QSizePolicy, QDesktopWidget
+from PyQt5.QtWidgets import QWidget, QLabel, QPushButton, QVBoxLayout, QStackedLayout, QSizePolicy, QDesktopWidget
 from PyQt5.QtGui import QPixmap, QColor, QImage
 from PyQt5.QtCore import Qt, QSize
-# from pyqtwaitingspinner import WaitingSpinner
+from pyqtspinner import WaitingSpinner          # pip install pyqtspinner (later on we should have install scripts that do this automatically)
 
 from GUI_CONTROLLER import GUIController
 
@@ -51,7 +51,6 @@ class ValveDiagramWindow(QWidget):
 
         self.label.setPixmap(self.pixmap)
         self.label.setScaledContents(True)
-        # self.label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.label.setFixedSize(self.pixmap.size() * self.scalingFactor)
         self.label.setStyleSheet("border-radius: 20px;")
         
@@ -59,7 +58,7 @@ class ValveDiagramWindow(QWidget):
         self.setLayout(layout)
 
         # Create and position valve indicators (not clickable)
-        self.valve_symbols: Dict[str, QLabel] = {}
+        self.valve_symbols: Dict[str, QWidget] = {}
         self.positions: Dict[str, (int, int)] = {
             "NCS1": (670, 671),
             "NCS2": (239, 541),
@@ -73,23 +72,50 @@ class ValveDiagramWindow(QWidget):
         sf = self.scalingFactor
 
         for name, (x, y) in self.positions.items():
-            sym = QLabel(self.label)
-            # btn = QPushButton("", self.label)
-            sym.setGeometry(int(x * sf), int(y * sf), int(40 * sf), int(40 * sf))
-            sym.setStyleSheet(f"background-color: red; border-radius: {int(20 * sf)}px;")
-            self.valve_symbols[name] = sym
-            sym.show()
+            # Convert the simple label into a stacked layout with a gray background and a spinner
+            container = QWidget(self.label)
+            container.setGeometry(int(x * sf), int(y * sf), int(40 * sf), int(40 * sf))
+            container.setStyleSheet(f"background-color: red; border-radius: {int(20 * sf)}px;")
+            
+            stacked_layout = QStackedLayout(container)
+            stacked_layout.setContentsMargins(0, 0, 0, 0)
+            
+            scale = min(container.height(), container.width())
+            container.spinner = WaitingSpinner(
+                container,
+                roundness = 0,
+                fade = 73.0,
+                radius = 0.2 * scale,
+                lines = 10,
+                line_length = 0.2 * scale,
+                line_width = 0.1 * scale,
+                speed = 0.83,
+                color = QColor(0, 0, 0)
+            )
+            stacked_layout.addWidget(container.spinner)
+            container.spinner.setVisible(False)
+
+            self.valve_symbols[name] = container
+            container.show()
 
     def set_valve_state(self, name: str, state: str):
         sf = self.scalingFactor
         
+        sym: QWidget = self.valve_symbols[name]
         if state == "PENDING":
-            # self.valve_symbols[name] = WaitingSpinner(self.valve_symbols[name])
-            self.valve_symbols[name].setStyleSheet(f"background-color: gray; border-radius: {int(20 * sf)}px;")
+            sym.setStyleSheet(f"background-color: transparent; border-radius: {int(20 * sf)}px;")
+            sym.spinner.setVisible(True)
+            sym.spinner.start()
+
         elif state == "OPEN":
-            self.valve_symbols[name].setStyleSheet(f"background-color: green; border-radius: {int(20 * sf)}px;")
+            sym.setStyleSheet(f"background-color: green; border-radius: {int(20 * sf)}px;")
+            sym.spinner.stop()
+            sym.spinner.setVisible(False)
+            
         elif state == "CLOSED":
-            self.valve_symbols[name].setStyleSheet(f"background-color: red; border-radius: {int(20 * sf)}px;")
+            sym.setStyleSheet(f"background-color: red; border-radius: {int(20 * sf)}px;")
+            sym.spinner.stop()
+            sym.spinner.setVisible(False)
 
     def set_dark_image(self):
         self.pixmap = QPixmap("P&ID Dark.png")
