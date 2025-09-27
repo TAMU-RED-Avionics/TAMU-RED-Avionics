@@ -139,7 +139,7 @@ class EthernetClient:
         self.heartbeat_thread = QThread()
         self.heartbeat_thread.run = heartbeat_loop
         self.heartbeat_thread.start()
-        # self.heartbeat_thread.setPriority(QThread.TimeCriticalPriority)
+        self.heartbeat_thread.setPriority(QThread.TimeCriticalPriority)
 
     def stop_heartbeat(self):
         self.heartbeat_active = False
@@ -166,7 +166,6 @@ class EthernetClient:
                             if strip == "NOOP":
                                 # Reset the heartbeat stuff when one is received
                                 self.heartbeat_last_rx = QDateTime.currentMSecsSinceEpoch()
-                                self.heartbeat_rx_miss_count = 0
                             else:
                                 self.receive_callback(strip)
                     buffer = lines[-1]
@@ -180,7 +179,7 @@ class EthernetClient:
         self.listen_thread = QThread()
         self.listen_thread.run = listen_loop
         self.listen_thread.start()
-        # self.listen_thread.setPriority(QThread.TimeCriticalPriority)
+        self.listen_thread.setPriority(QThread.TimeCriticalPriority)
 
     def stop_listening(self):
         self.listening_active = False

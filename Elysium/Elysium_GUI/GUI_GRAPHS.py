@@ -39,7 +39,7 @@ class SensorGraph(QWidget):
         self.ax.set_title(f"{self.sensor_name} ({unit})")
         self.ax.set_xlabel("Time (seconds ago)")
         self.ax.set_ylabel(f"Value ({unit})")
-        self.line, = self.ax.plot([], [], 'g-', linewidth=2)
+        self.line = self.ax.plot([], [], 'g-', linewidth=2)[0]
         self.ax.grid(True)
         
         layout = QVBoxLayout()
@@ -70,12 +70,11 @@ class SensorGraph(QWidget):
         for font in fonts:
             print(f"Name: {font.name}, File: {font.fname}")
 
-    def update_graph(self, value: float, current_time: float):
-        self.timestamps.append(current_time)
-        self.values.append(value)
-        
+    def update_graph(self):
         if not self.timestamps:
             return
+
+        current_time = QDateTime.currentMSecsSinceEpoch() / 1000.0
             
         relative_times = [(ts - current_time) for ts in self.timestamps]
         self.line.set_data(relative_times, self.values)
@@ -91,6 +90,12 @@ class SensorGraph(QWidget):
                 self.ax.set_ylim(y_min - padding, y_max + padding)
         
         self.canvas.draw()
+    
+    def update_single(self, value: float, current_time: float):
+        self.timestamps.append(current_time)
+        self.values.append(value)
+
+        self.update_graph()
 
     def set_graph_styling(self):
         # Get the actual screen DPI
@@ -230,6 +235,7 @@ class SensorGridWindow(QWidget):
         self.graphs: Dict[str, SensorPopupGraph] = {}
         self.main_graph: SensorGraph = None
         self.sensor_history: Dict[str, deque[Tuple[float, float]]] = {}
+        # self.sensor_history: Dict[ str, [Tuple[float, float]] ] = {}
         self.dark_mode = False
 
         self.update_main_graph(self.sensors[0])
@@ -308,14 +314,14 @@ class SensorGridWindow(QWidget):
             return
             
         self.value_labels[sensor].setText(f"{value:.2f}")
-        current_time = QDateTime.currentDateTime().toMSecsSinceEpoch() / 1000.0
+        current_time = QDateTime.currentMSecsSinceEpoch() / 1000.0
         self.sensor_history[sensor].append((current_time, value))
         
         if sensor in self.graphs:
-            self.graphs[sensor].sensor_graph.update_graph(value, current_time)
+            self.graphs[sensor].sensor_graph.update_single(value, current_time)
         
         if sensor == self.main_graph.sensor_name:
-            self.main_graph.update_graph(value, current_time)
+            self.main_graph.update_single(value, current_time)
 
     def update_main_graph(self, sensor: str):
         # If we already have a main_graph update its data to maintain the link to the UI
@@ -323,23 +329,33 @@ class SensorGridWindow(QWidget):
             # Update the sensor name and title
             self.main_graph.sensor_name = sensor
             unit = self.main_graph.get_unit(sensor)
-            self.main_graph.ax.set_title(f"{sensor} ({unit})")
-            self.main_graph.ax.set_ylabel(f"Value ({unit})")
             
             # Clear existing data
             self.main_graph.timestamps.clear()
             self.main_graph.values.clear()
-            self.main_graph.line.set_data([], [])
-            # self.main_graph.ax.set_xlim(-10, 0)   # Most likely not necessary
+            self.main_graph.ax.clear()
+
+            self.main_graph.ax.set_title(f"{sensor} ({unit})")
+            self.main_graph.ax.set_xlabel("Time (seconds ago)")
+            self.main_graph.ax.set_ylabel(f"Value ({unit})")
+            self.main_graph.line = self.main_graph.ax.plot([], [], 'g-', linewidth=2)[0]
+            self.main_graph.ax.grid(True)
 
             self.main_graph.set_graph_styling()
 
+            self.main_graph.line.set_data([], [])
+            self.main_graph.ax.set_xlim(-10, 0)
+            self.main_graph.ax.set_ylim(0, 1)
             self.main_graph.canvas.draw()
             
             # Load historical data for this sensor
             history = self.sensor_history.get(sensor, [])
             for ts, val in history:
-                self.main_graph.update_graph(val, ts)
+                self.main_graph.timestamps.append(ts)
+                self.main_graph.values.append(val)
+
+            self.main_graph.update_graph()
+
         else:
             # Create new graph only if we don't have one yet
             self.main_graph = SensorGraph(sensor)
@@ -348,7 +364,10 @@ class SensorGridWindow(QWidget):
             
             history = self.sensor_history.get(sensor, [])
             for ts, val in history:
-                self.main_graph.update_graph(val, ts)
+                self.main_graph.timestamps.append(ts)
+                self.main_graph.values.append(val)
+
+            self.main_graph.update_graph()
         
     def open_graph(self, sensor: str):
         if sensor not in self.graphs:
@@ -357,7 +376,12 @@ class SensorGridWindow(QWidget):
             
             history = self.sensor_history.get(sensor, [])
             for ts, val in history:
-                self.graphs[sensor].sensor_graph.update_graph(val, ts)
+                self.graphs[sensor].sensor_graph.timestamps.append(ts)
+                self.graphs[sensor].sensor_graph.values.append(val)
+            
+            self.graphs[sensor].sensor_graph.update_graph()
+            # for ts, val in history:
+            #     self.graphs[sensor].sensor_graph.update_graph(val, ts)
         
         self.graphs[sensor].show()
         self.graphs[sensor].raise_()
