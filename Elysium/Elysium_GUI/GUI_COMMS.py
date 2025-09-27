@@ -26,8 +26,9 @@ class EthernetClient:
         self.heartbeat_active = False
         self.listening_active = False
 
+        self.timeout: float = 3                             # seconds
         self.heartbeat_tx_cadence: int = 10                 # ms
-        self.heartbeat_rx_miss_interval: int = 100           # ms
+        self.heartbeat_rx_miss_interval: int = 100          # ms
 
         self.heartbeat_last_tx: int = 0                     # ms since Jan 1 1970
         self.heartbeat_last_rx: int = 0                     # ms since Jan 1 1970
@@ -48,7 +49,7 @@ class EthernetClient:
             try:
                 # Create the socket
                 self.sock = socket(AddressFamily.AF_INET, SocketKind.SOCK_DGRAM)
-                self.sock.settimeout(1)   # seconds
+                self.sock.settimeout(self.timeout)   # seconds
 
                 # Tells the socket to connect to the MCU's IP and port
                 # host = socket.get
@@ -163,8 +164,11 @@ class EthernetClient:
                     for line in lines[:-1]:
                         strip = line.strip()
                         if strip and self.receive_callback:
-                            self.heartbeat_last_rx = QDateTime.currentMSecsSinceEpoch()
-                            self.receive_callback(strip)
+                            if strip == "NOOP":                                
+                                # Reset the heartbeat stuff when one is received
+                                self.heartbeat_last_rx = QDateTime.currentMSecsSinceEpoch()
+                            else:
+                                self.receive_callback(strip)
                     buffer = lines[-1]
                     
                 except Exception as e:

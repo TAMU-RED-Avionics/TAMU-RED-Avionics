@@ -3,6 +3,7 @@
 from re import S
 from PyQt5.QtWidgets import QMainWindow, QSizePolicy, QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QFrame, QLabel
 from PyQt5.QtCore import QSize, Qt
+from PyQt5.QtGui import QColor
 
 from GUI_LOGO import LogoWindow
 from GUI_ABORT import AbortWindow
@@ -299,3 +300,14 @@ class MainWindow(QMainWindow):
             self.setStyleSheet(light_stylesheet)
 
         self.sensor_grid.set_dark_mode(self.dark_mode)
+
+        if self.dark_mode:
+            self.conn_widget.spinner.color = QColor(255,255,255)
+            
+            for sym in self.diagram.valve_symbols.values():
+                sym.spinner.color = QColor(255,255,255)
+        else:
+            self.conn_widget.spinner.color = QColor(0,0,0)
+
+            for sym in self.diagram.valve_symbols.values():
+                sym.spinner.color = QColor(0,0,0)
