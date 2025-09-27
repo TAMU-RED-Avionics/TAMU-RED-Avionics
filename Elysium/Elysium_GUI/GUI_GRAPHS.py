@@ -26,13 +26,14 @@ class SensorGraph(QWidget):
         super().__init__(parent)
         self.sensor_name = sensor_name
         
-        self.render_seconds: int = 10           # render the last 10 seconds
-        
-        self.backend_maxlen: int = 1000         # enough to store 10s of 100Hz data
-        self.render_maxlen: int = 300           # cheaper to render
+        self.render_seconds: int = 10                               # render the last 10 seconds
+        self.backend_maxlen: int = 1000                             # enough to store 10s of 100Hz data
+        self.render_maxlen: int = 500                               # cheaper to render
+        self.step = self.render_seconds / self.render_maxlen        # the gap between x points
 
-        self.backend_data: deque[float, float] = deque(maxlen=self.backend_maxlen)  # value, timestamp
-        self.render_data: deque[float, float] = deque(maxlen=self.render_maxlen)    # value, timestamp
+        # self.last_backend_timestamp: float = None
+        self.backend_data: deque[float, float] = deque(maxlen=self.backend_maxlen)  # timestamp, value
+        self.render_data: deque[float, float] = deque(maxlen=self.render_maxlen)    # timestamp, value
 
         
         
@@ -84,30 +85,30 @@ class SensorGraph(QWidget):
         if not self.backend_data:
             return
 
-        # Determine the step size needed to produce an evenly spaced array to render
-        step = self.render_seconds / self.render_maxlen
-
         # Grab the current time in a float
         now = QDateTime.currentMSecsSinceEpoch() / 1000.0
         
-        # Reload the render data
-        # self.render_data = []
-        for val, ts in self.backend_data:
+        # Reset the render data
+        self.render_data = []
+        for ts, val in self.backend_data:
             relative_ts = ts - now
 
-            # If this val is within the time range
-            if -self.render_seconds <= relative_ts <= 0:
-                # If ts is an appropiate step size away from the previous item
-                if not self.render_data or abs(relative_ts - self.render_data[-1][1]) > step:
-                    self.render_data.append([val, relative_ts])
+            if not self.render_data:
+                self.render_data.append((relative_ts, val))
+            else:
+                last_render_ts = self.render_data[-1][0]
+
+                # If this val is within the time range
+                if -self.render_seconds <= relative_ts <= 0 and abs(relative_ts - last_render_ts) > self.step:
+                        self.render_data.append((relative_ts, val))
 
         # Quit if no data matched the profile
         if not self.render_data:
             return
 
         # Set the line data
-        render_timestamps = [item[1] for item in self.render_data]
-        render_values = [item[0] for item in self.render_data]
+        render_timestamps = [ts for ts, _ in self.render_data]
+        render_values = [val for _, val in self.render_data]
         self.line.set_data(render_timestamps, render_values)
         
         # Determine x and y constraints
@@ -122,7 +123,7 @@ class SensorGraph(QWidget):
     
     def update_single(self, value: float, timestamp: float):
         # Add the data to the backend
-        self.backend_data.append([value, timestamp])
+        self.backend_data.append((timestamp, value))
         
         # Re-render ONLY at regular time intervals
         now = QDateTime.currentMSecsSinceEpoch()
@@ -363,8 +364,8 @@ class SensorGridWindow(QWidget):
             unit = self.main_graph.get_unit(sensor)
             
             # Clear existing data
-            self.main_graph.timestamps.clear()
-            self.main_graph.values.clear()
+            self.main_graph.backend_data.clear()
+            self.main_graph.render_data.clear()
             self.main_graph.ax.clear()
 
             self.main_graph.ax.set_title(f"{sensor} ({unit})")
@@ -383,8 +384,7 @@ class SensorGridWindow(QWidget):
             # Load historical data for this sensor
             history = self.sensor_history.get(sensor, [])
             for ts, val in history:
-                self.main_graph.timestamps.append(ts)
-                self.main_graph.values.append(val)
+                self.main_graph.backend_data.append((ts, val))
 
             self.main_graph.update_graph()
 
@@ -396,8 +396,7 @@ class SensorGridWindow(QWidget):
             
             history = self.sensor_history.get(sensor, [])
             for ts, val in history:
-                self.main_graph.timestamps.append(ts)
-                self.main_graph.values.append(val)
+                self.main_graph.backend_data.append((ts, val))
 
             self.main_graph.update_graph()
         
@@ -408,12 +407,9 @@ class SensorGridWindow(QWidget):
             
             history = self.sensor_history.get(sensor, [])
             for ts, val in history:
-                self.graphs[sensor].sensor_graph.timestamps.append(ts)
-                self.graphs[sensor].sensor_graph.values.append(val)
+                self.graphs[sensor].sensor_graph.backend_data.append((ts, val))
             
             self.graphs[sensor].sensor_graph.update_graph()
-            # for ts, val in history:
-            #     self.graphs[sensor].sensor_graph.update_graph(val, ts)
         
         self.graphs[sensor].show()
         self.graphs[sensor].raise_()
