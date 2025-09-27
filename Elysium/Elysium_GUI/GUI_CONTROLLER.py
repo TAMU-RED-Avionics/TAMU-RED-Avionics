@@ -317,7 +317,7 @@ class GUIController:
             elif "VALVE_SUCCESS" in reading:
                 
                 parts = reading.split(':')
-                if len(parts) == 3:
+                if len(parts) >= 3:
                     valve_name: str = parts[1]
                     new_state: str = "OPEN" if parts[2] == "1" else "CLOSED"
 
@@ -329,8 +329,6 @@ class GUIController:
                 if len(parts) >= 2:
                     valve_name: str = parts[1]
                     prev_state = self.valve_states[valve_name]
-
-                    print(f"valve_fail: {valve_name}")
 
                     self.signals.valve_updated.emit(valve_name, "OPEN" if prev_state else "CLOSED")
 
@@ -475,9 +473,7 @@ class GUIController:
         if countdown_dialog.exec_() == QDialog.Accepted:
             self.apply_operation("Pressurization")
 
-    def update_valve_state(self, valve_name: str, new_val: str):
-        print(f"update_manual valve {valve_name} to {new_val}")
-        
+    def update_valve_state(self, valve_name: str, new_val: str):        
         # Only update the internal state if it was confirmed open or closed
         if new_val == "OPEN":
             self.valve_states[valve_name] = True
@@ -536,8 +532,6 @@ class GUIController:
             new_state = not self.valve_states[valve_name]
         else:
             new_state = state
-
-        print(f"toggle_valve {valve_name}, to {new_state}")
 
         # self.valve_states[valve_name] = new_state     # needs to update when we get a response
         self.signals.valve_updated.emit(valve_name, "PENDING")
