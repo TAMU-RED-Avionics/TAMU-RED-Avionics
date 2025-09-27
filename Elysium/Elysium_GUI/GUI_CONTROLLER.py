@@ -17,7 +17,7 @@ class Signals(QObject):
     disconnected = pyqtSignal(str)
     
     valve_updated = pyqtSignal(str, bool)
-    sensor_updated = pyqtSignal(str, float)
+    sensor_updated = pyqtSignal(str, float, float)      # sensor_name, val, timestamp
     system_status = pyqtSignal(str)
 
 
@@ -300,7 +300,7 @@ class GUIController:
     # WILL BE RUN INSIDE A BACKGROUND THREAD
     def handle_new_data(self, data_str: str):
         """ Parse teensy timestamp (first token) (Req 4) """
-        timestamp = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz")
+        timestamp = QDateTime.currentMSecsSinceEpoch() / 1000.0     # seconds, but at a precision of 1 ms
         
         parts = data_str.split(sep=",",maxsplit=1)
         teensy_ts = parts[0] if len(parts) > 1 else ""
@@ -317,13 +317,14 @@ class GUIController:
                     sensor_name = parts[0].strip().upper()
                     value = float(parts[1].strip())
                     self.current_sensor_values[sensor_name] = value
-                    self.signals.sensor_updated.emit(sensor_name, value)
+                    self.signals.sensor_updated.emit(sensor_name, value, timestamp)
                 except ValueError:
                     pass
         
         if self.csv_writer:
+            timestamp_str = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz")
             self.csv_writer.writerow([
-                timestamp, teensy_ts, 
+                timestamp_str, teensy_ts, 
                 "ON" if self.throttling_enabled else "OFF",
                 "ON" if self.gimbaling_enabled else "OFF",
                 sensor_data, "", ""

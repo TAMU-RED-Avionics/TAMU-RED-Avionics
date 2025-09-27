@@ -164,6 +164,9 @@ class EthernetClient:
                         strip = line.strip()
                         if strip and self.receive_callback:
                             if strip == "NOOP":
+                                now = QDateTime.currentMSecsSinceEpoch()
+                                if now - self.heartbeat_last_rx > 35:
+                                    print(f"NOOP RX - {now - self.heartbeat_last_rx}")
                                 # Reset the heartbeat stuff when one is received
                                 self.heartbeat_last_rx = QDateTime.currentMSecsSinceEpoch()
                             else:

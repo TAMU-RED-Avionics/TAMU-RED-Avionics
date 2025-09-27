@@ -26,8 +26,15 @@ class SensorGraph(QWidget):
         super().__init__(parent)
         self.sensor_name = sensor_name
         
-        self.timestamps = deque(maxlen=100)
-        self.values = deque(maxlen=100)
+        self.render_seconds: int = 10           # render the last 10 seconds
+        
+        self.backend_maxlen: int = 1000         # enough to store 10s of 100Hz data
+        self.render_maxlen: int = 300           # cheaper to render
+
+        self.backend_data: deque[float, float] = deque(maxlen=self.backend_maxlen)  # value, timestamp
+        self.render_data: deque[float, float] = deque(maxlen=self.render_maxlen)    # value, timestamp
+
+        
         
         self.figure = Figure()
         self.canvas = FigureCanvas(self.figure)
@@ -41,6 +48,9 @@ class SensorGraph(QWidget):
         self.ax.set_ylabel(f"Value ({unit})")
         self.line = self.ax.plot([], [], 'g-', linewidth=2)[0]
         self.ax.grid(True)
+
+        self.last_render_time: int = 0          # ms since Jan 1 1970 (UNIX time)
+        self.max_render_interval: int = 100     # ms
         
         layout = QVBoxLayout()
         layout.addWidget(self.canvas)
@@ -71,31 +81,54 @@ class SensorGraph(QWidget):
             print(f"Name: {font.name}, File: {font.fname}")
 
     def update_graph(self):
-        if not self.timestamps:
+        if not self.backend_data:
             return
 
-        current_time = QDateTime.currentMSecsSinceEpoch() / 1000.0
-            
-        relative_times = [(ts - current_time) for ts in self.timestamps]
-        self.line.set_data(relative_times, self.values)
-        self.ax.set_xlim(-10, 0)
+        # Determine the step size needed to produce an evenly spaced array to render
+        step = self.render_seconds / self.render_maxlen
+
+        # Grab the current time in a float
+        now = QDateTime.currentMSecsSinceEpoch() / 1000.0
         
-        if self.values:
-            visible_indices = [i for i, rt in enumerate(relative_times) if rt >= -10]
-            if visible_indices:
-                visible_values = [self.values[i] for i in visible_indices]
-                y_min = min(visible_values)
-                y_max = max(visible_values)
-                padding = max(0.1 * (y_max - y_min), 0.1)
-                self.ax.set_ylim(y_min - padding, y_max + padding)
+        # Reload the render data
+        self.render_data = []
+        for val, ts in self.backend_data:
+            relative_ts = ts - now
+
+            # If this val is within the time range
+            if -self.render_seconds <= relative_ts <= 0:
+                # If ts is an appropiate step size away from the previous item
+                if not self.render_data or abs(relative_ts - self.render_data[-1][1]) > step:
+                    self.render_data.append([val, relative_ts])
+
+        # Quit if no data matched the profile
+        if not self.render_data:
+            return
+
+        # Set the line data
+        render_timestamps = [item[1] for item in self.render_data]
+        render_values = [item[0] for item in self.render_data]
+        self.line.set_data(render_timestamps, render_values)
         
+        # Determine x and y constraints
+        y_min = min(render_values)
+        y_max = max(render_values)
+        padding = max(0.1 * (y_max - y_min), 0.1)
+        self.ax.set_ylim(y_min - padding, y_max + padding)
+        self.ax.set_xlim(-self.render_seconds, 0)
+        
+        # Render
         self.canvas.draw()
     
-    def update_single(self, value: float, current_time: float):
-        self.timestamps.append(current_time)
-        self.values.append(value)
-
-        self.update_graph()
+    def update_single(self, value: float, timestamp: float):
+        # Add the data to the backend
+        self.backend_data.append([value, timestamp])
+        
+        # Re-render ONLY at regular time intervals
+        now = QDateTime.currentMSecsSinceEpoch()
+        if (now - self.last_render_time) > self.max_render_interval:
+            self.last_render_time = now
+            self.update_graph()
 
     def set_graph_styling(self):
         # Get the actual screen DPI
@@ -242,7 +275,7 @@ class SensorGridWindow(QWidget):
 
         for idx, name in enumerate(self.sensors):
             self.create_sensor_box(name, idx)
-            self.sensor_history[name] = deque(maxlen=100)
+            self.sensor_history[name] = deque(maxlen=10000)     # length will be much larger than the one used in rendering
 
     def create_sensor_box(self, name: str, idx: int):
         """Create a bordered box for each sensor with labels inside"""
@@ -309,19 +342,18 @@ class SensorGridWindow(QWidget):
         for graph in self.graphs.values():
             graph.sensor_graph.set_dark_mode(dark)
 
-    def update_sensor_value(self, sensor: str, value: float):
+    def update_sensor_value(self, sensor: str, value: float, timestamp: float):
         if sensor not in self.value_labels:
             return
             
         self.value_labels[sensor].setText(f"{value:.2f}")
-        current_time = QDateTime.currentMSecsSinceEpoch() / 1000.0
-        self.sensor_history[sensor].append((current_time, value))
+        self.sensor_history[sensor].append((timestamp, value))
         
         if sensor in self.graphs:
-            self.graphs[sensor].sensor_graph.update_single(value, current_time)
+            self.graphs[sensor].sensor_graph.update_single(value, timestamp)
         
         if sensor == self.main_graph.sensor_name:
-            self.main_graph.update_single(value, current_time)
+            self.main_graph.update_single(value, timestamp)
 
     def update_main_graph(self, sensor: str):
         # If we already have a main_graph update its data to maintain the link to the UI
