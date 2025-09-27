@@ -6,6 +6,7 @@ from ast import Dict
 from PyQt5.QtWidgets import QWidget, QLabel, QPushButton, QVBoxLayout, QSizePolicy, QDesktopWidget
 from PyQt5.QtGui import QPixmap, QColor, QImage
 from PyQt5.QtCore import Qt, QSize
+# from pyqtwaitingspinner import WaitingSpinner
 
 from GUI_CONTROLLER import GUIController
 
@@ -19,7 +20,7 @@ would not be too large or too small on different computers, so its size is set t
 the overall screen size.
 
 INPUT DEPENDENCIES:
-    GUIController.signals.valve_updated(str, bool)
+    GUIController.signals.valve_updated(str, str)
         When the GUIController updates a valve, this window must update the look of its buttons accordingly
 
 OUTPUT DEPENDENCIES:
@@ -79,10 +80,16 @@ class ValveDiagramWindow(QWidget):
             self.valve_symbols[name] = sym
             sym.show()
 
-    def set_valve_state(self, name, state):
+    def set_valve_state(self, name: str, state: str):
         sf = self.scalingFactor
-        color = "green" if state else "red"
-        self.valve_symbols[name].setStyleSheet(f"background-color: {color}; border-radius: {int(20 * sf)}px;")
+        
+        if state == "PENDING":
+            # self.valve_symbols[name] = WaitingSpinner(self.valve_symbols[name])
+            self.valve_symbols[name].setStyleSheet(f"background-color: gray; border-radius: {int(20 * sf)}px;")
+        elif state == "OPEN":
+            self.valve_symbols[name].setStyleSheet(f"background-color: green; border-radius: {int(20 * sf)}px;")
+        elif state == "CLOSED":
+            self.valve_symbols[name].setStyleSheet(f"background-color: red; border-radius: {int(20 * sf)}px;")
 
     def set_dark_image(self):
         self.pixmap = QPixmap("P&ID Dark.png")

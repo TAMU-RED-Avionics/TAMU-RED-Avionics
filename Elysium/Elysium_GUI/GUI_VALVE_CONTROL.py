@@ -61,11 +61,12 @@ class ValveControlWindow(QWidget):
             btn = QPushButton(op)
             btn.setEnabled(False)   # Disabled until a connection is established
             btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
+            
             # This is defined as a lambda function because it requires an argument, and simply writing
             # controller.apply_valve_state(op) would call that function upon creation, not upon press
             # The lambda closure is defining a new function where op can be passed into the controller's function
-            btn.clicked.connect(lambda  o=op: controller.apply_operation(o))
+            btn.clicked.connect(lambda checked, o=op: controller.apply_operation(o))
+            #                          ^ For some goofy reason the btn.clicked signal emits a bool, which is absorbed by this param
 
             current_column_layout.addWidget(btn)
 

@@ -163,14 +163,8 @@ class EthernetClient:
                     for line in lines[:-1]:
                         strip = line.strip()
                         if strip and self.receive_callback:
-                            if strip == "NOOP":
-                                now = QDateTime.currentMSecsSinceEpoch()
-                                if now - self.heartbeat_last_rx > 35:
-                                    print(f"NOOP RX - {now - self.heartbeat_last_rx}")
-                                # Reset the heartbeat stuff when one is received
-                                self.heartbeat_last_rx = QDateTime.currentMSecsSinceEpoch()
-                            else:
-                                self.receive_callback(strip)
+                            self.heartbeat_last_rx = QDateTime.currentMSecsSinceEpoch()
+                            self.receive_callback(strip)
                     buffer = lines[-1]
                     
                 except Exception as e:
@@ -190,8 +184,9 @@ class EthernetClient:
     def send_valve_command(self, valve_name, state):
         if self.connected:
             try:
-                message = f"VALVE:{valve_name}:{1 if state else 0}\n"
-                self.sock.sendall(message.encode())
+                # "Set this valve to this state"
+                message = f"VALVE_SET:{valve_name}:{1 if state else 0}\n"
+                self.sock.sendto(message.encode(), (self.remote_ip, self.remote_port))
                 if self.log_event_callback:
                     state_str = "OPEN" if state else "CLOSE"
                     self.log_event_callback(f"VALVE_CMD:{valve_name}:{state_str}")

@@ -28,7 +28,7 @@ class SensorGraph(QWidget):
         
         self.render_seconds: int = 10                               # render the last 10 seconds
         self.backend_maxlen: int = 1000                             # enough to store 10s of 100Hz data
-        self.render_maxlen: int = 500                               # cheaper to render
+        self.render_maxlen: int = 300                               # cheaper to render
         self.step = self.render_seconds / self.render_maxlen        # the gap between x points
 
         # self.last_backend_timestamp: float = None
@@ -96,7 +96,7 @@ class SensorGraph(QWidget):
             if not self.render_data:
                 self.render_data.append((relative_ts, val))
             else:
-                last_render_ts = self.render_data[-1][0]
+                last_render_ts, _ = self.render_data[-1]
 
                 # If this val is within the time range
                 if -self.render_seconds <= relative_ts <= 0 and abs(relative_ts - last_render_ts) > self.step:

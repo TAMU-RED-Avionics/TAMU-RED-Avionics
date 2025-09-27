@@ -3,6 +3,7 @@
 import csv, os
 from ast import Dict, Str
 from re import S
+from typing import Optional
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QDialog, QLabel, QDialogButtonBox, QCheckBox, QMessageBox, QGroupBox
 from PyQt5.QtCore import QDate, Qt, QTimer, QDateTime
 from PyQt5.QtGui import QFont
@@ -16,7 +17,7 @@ class Signals(QObject):
     connected = pyqtSignal()
     disconnected = pyqtSignal(str)
     
-    valve_updated = pyqtSignal(str, bool)
+    valve_updated = pyqtSignal(str, str)     # can be open, closed, or pending a response from the MCU
     sensor_updated = pyqtSignal(str, float, float)      # sensor_name, val, timestamp
     system_status = pyqtSignal(str)
 
@@ -56,6 +57,7 @@ class GUIController:
         # self.signals.connected.connect(self.handle_connect)
         self.signals.disconnected.connect(lambda reason: self.signals.abort_triggered.emit("DISCONNECTED", reason))
         self.signals.abort_triggered.connect(self.handle_abort)
+        self.signals.valve_updated.connect(self.update_valve_state)
 
         # For file recording
         self.csv_file = None
@@ -68,7 +70,7 @@ class GUIController:
         self.abort_modes: Dict[str, bool] = {}
         self.pre_abort_valve_states: Dict[str, bool]  = {}
         self.current_sensor_values: Dict[str, float] = {}
-        self.manual_valve_buttons: [QPushButton] = {}
+        self.manual_valve_buttons: Dict[str, QPushButton] = {}
         self.abort_check_interval = 10  # ms
         self.throttling_enabled = False
         self.gimbaling_enabled = False
@@ -311,6 +313,28 @@ class GUIController:
             if "ABORTED" in reading:
                 self.signals.abort_triggered.emit("engine_abort", "The engine MCU triggered a local abort")
 
+            # Valve command responses
+            elif "VALVE_SUCCESS" in reading:
+                
+                parts = reading.split(':')
+                if len(parts) == 3:
+                    valve_name: str = parts[1]
+                    new_state: str = "OPEN" if parts[2] == "1" else "CLOSED"
+
+                    self.signals.valve_updated.emit(valve_name, new_state)
+                
+
+            elif "VALVE_FAIL" in reading:
+                parts = reading.split(':')
+                if len(parts) >= 2:
+                    valve_name: str = parts[1]
+                    prev_state = self.valve_states[valve_name]
+
+                    print(f"valve_fail: {valve_name}")
+
+                    self.signals.valve_updated.emit(valve_name, "OPEN" if prev_state else "CLOSED")
+
+            # Sensor data
             elif ':' in reading:
                 try:
                     parts = reading.split(':', 1)
@@ -414,12 +438,10 @@ class GUIController:
         # Countdown label
         self.countdown_label = QLabel("Ignition in 10 seconds...")
         self.countdown_label.setAlignment(Qt.AlignCenter)
-        # self.countdown_label.setFont(QFont("Arial", 14, QFont.Bold))
         countdown_layout.addWidget(self.countdown_label)
         
         # Cancel button
         cancel_btn = QPushButton("CANCEL")
-        # cancel_btn.setFont(QFont("Arial", 12, QFont.Bold))
         cancel_btn.setStyleSheet("background-color: red; color: white;")
         countdown_layout.addWidget(cancel_btn)
         
@@ -452,6 +474,24 @@ class GUIController:
         # Show dialog and handle result
         if countdown_dialog.exec_() == QDialog.Accepted:
             self.apply_operation("Pressurization")
+
+    def update_valve_state(self, valve_name: str, new_val: str):
+        print(f"update_manual valve {valve_name} to {new_val}")
+        
+        # Only update the internal state if it was confirmed open or closed
+        if new_val == "OPEN":
+            self.valve_states[valve_name] = True
+        elif new_val == "CLOSED":
+            self.valve_states[valve_name] = False
+
+        # Update the manual valve buttons
+        if valve_name in self.manual_valve_buttons:
+            if new_val == "OPEN":
+                self.manual_valve_buttons[valve_name].setStyleSheet(f"background-color: green; color: white;")
+            elif new_val == "CLOSED":
+                self.manual_valve_buttons[valve_name].setStyleSheet(f"background-color: red; color: white;")
+            elif new_val == "PENDING":
+                self.manual_valve_buttons[valve_name].setStyleSheet(f"background-color: gray; color: white;")
 
     def show_manual_valve_control(self):
         if self.lockout:
@@ -488,7 +528,7 @@ class GUIController:
             
         dialog.show()
 
-    def toggle_valve(self, valve_name: str, state=None):
+    def toggle_valve(self, valve_name: str, state: bool=None):
         if self.lockout:
             return
 
@@ -497,16 +537,17 @@ class GUIController:
         else:
             new_state = state
 
-        self.valve_states[valve_name] = new_state
-        self.signals.valve_updated.emit(valve_name, new_state)
+        print(f"toggle_valve {valve_name}, to {new_state}")
+
+        # self.valve_states[valve_name] = new_state     # needs to update when we get a response
+        self.signals.valve_updated.emit(valve_name, "PENDING")
         
         # Update manual valve button if dialog is open
         # if valve_name in self.manual_valve_buttons:
-        if hasattr(self, 'manual_valve_buttons') and valve_name in self.manual_valve_buttons:
-            color = "green" if new_state else "red"
-            self.manual_valve_buttons[valve_name].setStyleSheet(
-                f"background-color: {color}; color: white;"
-            )
+        #     # color = "green" if new_state else "red"
+        #     self.manual_valve_buttons[valve_name].setStyleSheet(
+        #         f"background-color: gray; color: white;"
+        #     )
         
         try:
             # Send command
@@ -520,7 +561,7 @@ class GUIController:
     def apply_operation(self, operation: str):
         if self.lockout:
             return
-        
+
         active_valves = self.valve_operation_states.get(operation, [])
         for name in self.valve_states:
             state = name in active_valves
