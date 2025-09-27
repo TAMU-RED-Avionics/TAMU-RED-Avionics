@@ -65,12 +65,14 @@ double CUR_FAKE_VAL = 0;
 // An EthernetUDP instance to let us send and receive packets over UDP
 EthernetUDP udp;
 byte MAC_ADDRESS[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
-char packetBuffer[UDP_TX_PACKET_MAX_SIZE];                // buffer to hold incoming packet,
+char packetBuffer[UDP_TX_PACKET_MAX_SIZE];                // Buffer to hold incoming packet,
+
+const unsigned long PRECISION = 5;                        // Precision of float -> string conversion
+const size_t BUFFER_SIZE = 1024;                          // *slaps roof* yeah that'll do nicely (buffer for outgoing packet)
 
 // ----------------------------------------------------------------
 
-
-void tx_string(unsigned int port, const char *to_write) {
+void tx_data(unsigned int port, const char* to_write) {
   udp.beginPacket(REMOTE, port);
   udp.write(to_write);
   udp.endPacket();
@@ -78,11 +80,20 @@ void tx_string(unsigned int port, const char *to_write) {
 
 void tx_float(unsigned int port, float to_write) {
   char buf[100]; // *slaps roof* yeah that'll do nicely
-  constexpr unsigned long PRECISION = 5;
   dtostrf(to_write, 1, PRECISION, buf);
   udp.beginPacket(REMOTE, port);
   udp.write(buf);
   udp.endPacket();
+}
+
+void pkt_add_float(EthernetUDP& pkt, float to_write) {
+  char buf[100]; // *slaps roof* yeah that'll do nicely
+  dtostrf(to_write, 1, PRECISION, buf);
+  udp.write(buf);
+}
+
+void pkt_add_string(EthernetUDP& pkt, const char* to_write) {
+  udp.write(to_write);
 }
 
 String rx_until(char stop_character) {
@@ -137,7 +148,7 @@ LOOP
 void loop() {
   // Send the TX NOOP Heartbeat
   if ((micros() - LAST_NOOP_TX_TIME) > NOOP_TX_INTERVAL) {
-    tx_string(PORT, "NOOP\n");
+    tx_data(PORT, "NOOP\n");
     Serial.printf("NOOP TX - %d\n", ++HEARTBEAT_TX_COUNT);
     LAST_NOOP_TX_TIME = micros();
   }
@@ -170,7 +181,7 @@ void loop() {
     while(aborted) {
       // Spit out a packet saying ABORTED once every ABORT_TIME_INTERVAL number of seconds
       if ((micros() - LAST_ABORT_MSG_TX) > ABORTED_MSG_INTERVAL) {
-        tx_string(PORT, "ABORTED\n");
+        tx_data(PORT, "ABORTED\n");
         Serial.println("ABORTED");
         
         LAST_ABORT_MSG_TX = micros();
@@ -194,7 +205,6 @@ void loop() {
   } // if in abort state
 
   
-
   // Sensor readings
   if ((micros() - LAST_SENSOR_UPDATE) > SENSOR_UPDATE_INTERVAL) {
     LAST_SENSOR_UPDATE = micros();                               // update time
@@ -207,31 +217,24 @@ void loop() {
     Serial.print("\tcurrent_fake_val: ");
     Serial.println(CUR_FAKE_VAL);
     
-    // send data to serial monitor
-    tx_string(PORT, "t:");
-    tx_float(PORT, LAST_SENSOR_UPDATE);
-    tx_string(PORT, ",P1:");
-    tx_float(PORT, CUR_FAKE_VAL);
-    tx_string(PORT, ",P2:");
-    tx_float(PORT, CUR_FAKE_VAL);
-    tx_string(PORT, ",P3:");
-    tx_float(PORT, CUR_FAKE_VAL);
-    tx_string(PORT, ",P4:");
-    tx_float(PORT, CUR_FAKE_VAL);
-    tx_string(PORT, ",P5:");
-    tx_float(PORT, CUR_FAKE_VAL);
-    tx_string(PORT, ",P6:");
-    tx_float(PORT, CUR_FAKE_VAL);
-    tx_string(PORT, ",T1:");
-    tx_float(PORT, CUR_FAKE_VAL);
-    tx_string(PORT, ",L1:");
-    tx_float(PORT, CUR_FAKE_VAL);
-    tx_string(PORT, ",L2:");
-    tx_float(PORT, CUR_FAKE_VAL);
-    tx_string(PORT, ",L3:");
-    tx_float(PORT, CUR_FAKE_VAL);
-    tx_string(PORT, "\n");
-  }
+    // Send data to serial monitor
+    udp.beginPacket(REMOTE, PORT);
+    pkt_add_string(udp, "t:");
+    pkt_add_float(udp, LAST_SENSOR_UPDATE);
+    pkt_add_string(udp, ",P1:");
+    pkt_add_float(udp, CUR_FAKE_VAL);
+    pkt_add_string(udp, ",P2:");
+    pkt_add_float(udp, CUR_FAKE_VAL);
+    pkt_add_string(udp, ",P3:");
+    pkt_add_float(udp, CUR_FAKE_VAL);
+    pkt_add_string(udp, ",P4:");
+    pkt_add_float(udp, CUR_FAKE_VAL);
+    pkt_add_string(udp, ",P5:");
+    pkt_add_float(udp, CUR_FAKE_VAL);
+    pkt_add_string(udp, ",P6:");
+    pkt_add_float(udp, CUR_FAKE_VAL);
+    pkt_add_string(udp, "\n");
+    udp.endPacket();
 
-  delay(SYSTEM_LOOP_INTERVAL);
+  }
 }
