@@ -234,7 +234,7 @@ int pt2_analog = 0;                        // analog reading from PT output sign
 //
 double convert_PX2AF1XX500PAAAX_PT(int reading) {
   // 0 - 500 psia going into PT
-  // 0.5 - 4.9 V comes out from that range
+  // 0.5 - 4.5 V comes out from that range
   // 0.33 - 2.97 V after voltage divider on the board
   // 102(.3) - 920(.7) range from the digital reading based off Teensy's 0 - 3.3V digital pin
 
@@ -424,28 +424,6 @@ void setup() {
   
   Serial.println("Finished Setup");
 } // setup
-
-
-// void loop() {
-  
-//   // Read PTs
-//   Serial.print("\nPT1 ADC (psia): "); Serial.print(convert_PX2AF1XX500PAAAX_PT(analogRead(PT1_PIN)));
-//   Serial.print("\tPT2 ADC (psig): "); Serial.print(convert_6017N19_PT(analogRead(PT2_PIN)));
-
-//   // Read TCs
-//   Serial.print("\tTC1 H (°C): "); Serial.print(mcp1.readThermocouple());
-//   Serial.print("\tTC1 C (°C):"); Serial.print(mcp1.readAmbient());
-
-//   Serial.print("\tTC2 H (°C): "); Serial.print(mcp2.readThermocouple());
-//   Serial.print("\tTC2 C (°C): "); Serial.print(mcp2.readAmbient());
-
-//   // Read LCs
-//   Serial.print("\tLC1 ADC (kg): "); Serial.print(convert_DLY_103_500kg_LC(lc_read(LC1_ADDR)));
-//   Serial.print("\tLC2 ADC (kg): "); Serial.print(convert_DLY_103_500kg_LC(lc_read(LC2_ADDR)));
-
-//   delay(100);
-
-// } // loop
 
 
 /*
