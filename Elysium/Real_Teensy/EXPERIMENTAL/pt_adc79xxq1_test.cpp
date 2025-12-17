@@ -33,6 +33,39 @@ double nanoseconds(uint32_t elapsed_cycles) {
   return elapsed_cycles * T_CPU;
 }
 
+
+// For the 0-5V digital signal PTs - Honeywell PX2AF1... series
+// https://tinyurl.com/y9549dww
+//
+// parameter: a digital 0 - 4095 reading 
+// returns: a reading in psi
+//
+double convert_PX2AF1XX500PAAAX_PT(uint16_t reading) {
+  // 0 - 500 psia going into PT
+  // 0.5 - 4.5 V comes out from that range
+  // 0.33 - 2.25 V after voltage divider on the board
+  // 540(.5) - 3685(.5) range from the digital reading from the ADC
+
+  // So basically 102.3 - 920.7 range corresponds to 15 - 1000 psi range
+  // y = (y2-y1)/(x2-x1) * (x - x1) + y1
+  return (500.0 - 0.0) / (3685.5 - 540.5) * (reading - 540.5) + 0.0;
+}
+
+// For the 4-20mA signal coming out of a 0-1500psi PT
+// https://www.mcmaster.com/6017N19/
+
+double convert_6017N19_PT(uint16_t reading) {
+  // 0 - 1500 psia into PT
+  // 4 - 20 mA coming out of PT
+  // current goes through 125 Ohm resistor
+  // 0.5 - 2.5 V coming off of 125 Ohm resistor
+  // 819 - 4095 range from digital reading from the ADC
+
+  // So 819 - 4095 range corresponds to 0 - 1500 psi range
+  // y = (y2-y1)/(x2-x1) * (x - x1) + y1
+  return (1500.0 - 0.0) / (4095.0 - 819.0) * (reading - 819.0) + 0.0;
+}
+
 uint16_t read_adc(uint16_t channel) {
   uint16_t cmd = MANUAL_BASE_CMD + (channel << 7);
 
@@ -88,9 +121,12 @@ void setup() {
 
 void loop() {
   for(int i = 0; i < 16; i++) {
-    uint16_t reading = read_adc(i);
+    uint16_t reading = read_adc(0);
     Serial.print("Channel: "); Serial.print(i); Serial.print(", ADC Reading: "); Serial.println(reading);
   } 
+
+  // uint16_t reading = read_adc(0);
+  // Serial.print("Converted reading: "); Serial.print(convert_PX2AF1XX500PAAAX_PT(reading)); Serial.println("psi");
 
   delay(100); //milliseconds
 }
