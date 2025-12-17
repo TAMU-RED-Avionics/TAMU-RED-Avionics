@@ -1,8 +1,9 @@
 #include <SPI.h>
 
 const int BAUD = 115200;                                  // Serial BAUD rate (bits/second)
+const int F_SCLK = 20000000;
+const double T_CPU = 1000000000.d * 1/F_CPU;   // F_CPU is in Hz, which is converted to s, which is then converted to ns
 
-const int F_SCLK = 1000000;
 const int CS_PIN = 10;
 const int MOSI_PIN = 11;
 const int MISO_PIN = 12;
@@ -11,63 +12,60 @@ const int SCLK_PIN = 13;
 
 const SPISettings SPI_SETTINGS = SPISettings(F_SCLK, MSBFIRST, SPI_MODE0);
 
-// const unsigned int retarded_cmd = 0x8400; // 1000 0100 0000 0000
-const unsigned int TARD_CMD = 0x8800;
+// This command was used to do a basic poke of the ADC
+//                                            manual-mode-vvvv v-enable-programming  v-print-addr vvvv-GPIO-outputs
+const uint16_t POKE_CMD = 0B0001'1001'0000'0000;       // 0001 1 0001 0      0       0            0000
+//                                              channel-select-1-^^^^ ^-2.5V ^-no-power-down
 
-//                                                 manual-mode-vvvv v-enable-programming  v-print-addr vvvv-GPIO-outputs
-const unsigned int POKE_CMD     = 0B0001'1000'0000'0000;       // 0001 1 0000 0      0       0            0000
-//                                                   channel-select-0-^^^^ ^-2.5V ^-no-power-down
+// This command is the starting point for manual reads (where you tell it what channel to read every time)
+const uint16_t MANUAL_BASE_CMD = 0B0001'1000'0000'0000;
+//                      manual_mode^^^^ ^enable_programming
 
-const unsigned int REV_POKE_CMD = 0B0000'0000'0001'1000;   // 0000 0000 0001 1000
+// After we read from the adc we need to snip out only the actual analog reading
+const uint16_t ANALOG_FILTER = 0B0000'1111'1111'1111;
+//              ignore_channel_id^^^^
 
-const unsigned int CMD = POKE_CMD;
-
+// Inverse of ANALOG_FILTER, this can be used to filter out the channel index that the ADC has output
+const uint16_t CHANNEL_FILTER = 0B1111'0000'0000'0000;
+//                 channel_id_only^^^^
 
 double nanoseconds(uint32_t elapsed_cycles) {
-  double t_cpu = 1000000000.d * 1/F_CPU;   // F_CPU is in Hz, which is converted to s, which is then converted to ns
-  return elapsed_cycles * t_cpu;
+  return elapsed_cycles * T_CPU;
 }
 
-// This function will attempt to demonstrate a basic send and receive command
-// If working correctly, the adc will output a reading from channel 0
-uint16_t poke_adc() {
-  // uint32_t start_time = micros();
-  // Serial.println(micros() - start_time);
+uint16_t read_adc(uint16_t channel) {
+  uint16_t cmd = MANUAL_BASE_CMD + (channel << 7);
 
-  Serial.println(CMD, BIN);
-
-  uint32_t current_cycles = ARM_DWT_CYCCNT;
+  // First, we send an SPI frame to instruct the ADC what channel to use and put it into manual mode
   digitalWrite(CS_PIN, LOW);
-  Serial.println(nanoseconds(ARM_DWT_CYCCNT - current_cycles));
-  
-  current_cycles = ARM_DWT_CYCCNT;
-  SPI.transfer16(CMD);
-  Serial.println(nanoseconds(ARM_DWT_CYCCNT - current_cycles));
-  
-  delayMicroseconds(1);
-  
-  current_cycles = ARM_DWT_CYCCNT;
+  SPI.transfer16(cmd);
   digitalWrite(CS_PIN, HIGH);
-  Serial.println(nanoseconds(ARM_DWT_CYCCNT - current_cycles));
 
-  delayMicroseconds(1);
-
-  current_cycles = ARM_DWT_CYCCNT;
+  // Idk testing showed that we actually need to wait two frames for it to kick in, even though datasheet suggested one should be necessary
   digitalWrite(CS_PIN, LOW);
-  Serial.println(nanoseconds(ARM_DWT_CYCCNT - current_cycles));
-
-
-  // Read the following frame, where it would then sample real data.
-  current_cycles = ARM_DWT_CYCCNT;
-  uint16_t val = SPI.transfer16(CMD);
-  Serial.println(nanoseconds(ARM_DWT_CYCCNT - current_cycles));
-
-  current_cycles = ARM_DWT_CYCCNT;
+  SPI.transfer16(0);
   digitalWrite(CS_PIN, HIGH);
-  Serial.println(nanoseconds(ARM_DWT_CYCCNT - current_cycles));
 
-  return val;
+  // There is a little capacitor inside the ADC that has to discharge in between switches, best results when you let that drain
+  delayMicroseconds(10);
+
+  // Then, the second SPI frame it shits the ADC reading back to us. The output command does not matter
+  digitalWrite(CS_PIN, LOW);
+  uint32_t val = SPI.transfer16(0);
+  digitalWrite(CS_PIN, HIGH);
+
+  const uint16_t output_channel = (val & CHANNEL_FILTER) >> 12;
+
+  // Serial.print("Command: "); Serial.println(cmd, BIN);
+  // Serial.print("16-bit ADC frame: 0B"); Serial.println(val, BIN);
+  
+  if (output_channel != channel)
+    Serial.println("ERROR: ADC says it is reading from the wrong channel");
+
+  // Snip off the channel id from the response
+  return val & ANALOG_FILTER;
 }
+
 
 void setup() {
   Serial.begin(BAUD);
@@ -75,7 +73,6 @@ void setup() {
 
   // set the slaveSelectPin as an output:
   pinMode(CS_PIN, OUTPUT);
-  digitalWrite(CS_PIN, HIGH);
 
   // initialize SPI:
   SPI.begin(); 
@@ -85,12 +82,15 @@ void setup() {
   if (SPI.pinIsChipSelect(CS_PIN) && SPI.pinIsMISO(MISO_PIN) && SPI.pinIsMOSI(MOSI_PIN) && SPI.pinIsSCK(SCLK_PIN))
     Serial.println("Pins are configured correctly!");
   
+  // Assert the chip select (recommended to do this after beginTransaction according to Teensy SPI library docs)
+  digitalWrite(CS_PIN, HIGH);
 }
 
 void loop() {
-  uint16_t raw = poke_adc();
-  Serial.print("Raw 16-bit frame: 0B");
-  Serial.println(raw, BIN);
+  for(int i = 0; i < 16; i++) {
+    uint16_t reading = read_adc(i);
+    Serial.print("Channel: "); Serial.print(i); Serial.print(", ADC Reading: "); Serial.println(reading);
+  } 
 
-  delay(1000); // slow print
+  delay(100); //milliseconds
 }
