@@ -253,8 +253,6 @@ class GUIController:
         """Handle abort sequence (Req 11, 20-24)"""
         if self.lockout:
             return
-        
-        self.lockout = True
 
         self.pre_abort_valve_states = self.valve_states.copy()
 
@@ -268,6 +266,8 @@ class GUIController:
             "ABORT TRIGGERED", 
             f"Abort Type: {abort_type}\nReason: {reason}"
         )
+
+        self.lockout = True
 
         # Log abort event
         self.log_event("ABORT", f"{abort_type}:{reason}")

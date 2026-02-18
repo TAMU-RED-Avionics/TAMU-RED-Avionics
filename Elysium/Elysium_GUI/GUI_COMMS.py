@@ -53,10 +53,18 @@ class EthernetClient:
 
                 # Tells the socket to connect to the MCU's IP and port
                 # host = socket.get
-                self.sock.bind(("", port))     # bind to the hardcoded port (should be configurable live in the future
+                try:
+                    self.sock.bind(("", port))     # bind to the hardcoded port (should be configurable live in the future
+                except OSError:
+                    print(f"Port {port} in use, binding to ephemeral port")
+                    self.sock.bind(("", 0))
+                
                 # self.sock.connect((ip, port))
+                
+                # Send START first to announce presence and wake up/configure remote
+                self.sock.sendto("START\n".encode(), (self.remote_ip, self.remote_port))
 
-                # Listen for a packet to come in
+                # Listen for a packet to come in - this confirms the connection is alive
                 data = self.sock.recv(1024)
                 if not data:
                     ConnectionError("No data received in packet")
@@ -65,8 +73,6 @@ class EthernetClient:
 
                 self.connected = True
                 self.connecting = False
-
-                self.sock.sendto("START\n".encode(), (self.remote_ip, self.remote_port))
 
                 # Start NOOP heartbeat (Req 25)
                 self.start_heartbeat()

@@ -85,10 +85,10 @@ class ValveDiagramWindow(QWidget):
                 container,
                 roundness = 0,
                 fade = 73.0,
-                radius = 0.2 * scale,
+                radius = int(0.2 * scale),
                 lines = 10,
-                line_length = 0.2 * scale,
-                line_width = 0.1 * scale,
+                line_length = int(0.2 * scale),
+                line_width = int(0.1 * scale),
                 speed = 0.83,
                 color = QColor(0, 0, 0)
             )
