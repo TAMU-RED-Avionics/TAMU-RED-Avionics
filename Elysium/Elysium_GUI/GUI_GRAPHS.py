@@ -347,6 +347,16 @@ class SensorGridWindow(QWidget):
         if sensor not in self.value_labels:
             return
             
+        status = self.controller.get_sensor_status(sensor, value)
+        if status == "RED":
+            self.value_labels[sensor].setStyleSheet("color: #b00020; font-weight: bold;")
+        elif status == "ORANGE":
+            self.value_labels[sensor].setStyleSheet("color: #ff8c00; font-weight: bold;")
+        elif status == "BLUE":
+            self.value_labels[sensor].setStyleSheet("color: #0000ff; font-weight: bold;")
+        else:
+            self.value_labels[sensor].setStyleSheet("")
+            
         self.value_labels[sensor].setText(f"{value:.2f}")
         self.sensor_history[sensor].append((timestamp, value))
         

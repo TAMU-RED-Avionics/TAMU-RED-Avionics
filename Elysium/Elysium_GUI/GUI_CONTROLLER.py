@@ -9,6 +9,7 @@ from PyQt5.QtCore import QDate, Qt, QTimer, QDateTime
 from PyQt5.QtGui import QFont
 from PyQt5.QtCore import QObject, pyqtSignal
 from GUI_COMMS import EthernetClient
+from GUI_WARNING_VALUES import WarningValueConfigWindow
 
 # This may be necessary for ongoing refactors but currently has no use
 class Signals(QObject):
@@ -79,6 +80,9 @@ class GUIController:
         self.p3_p5_violation_start = None
         self.p4_p6_violation_start = None
 
+        self.warning_ranges: Dict[str, dict] = {}
+        self.load_warning_ranges()
+
         # Initial valve states: False = closed (red), True = open (green)
         self.valve_states: Dict[str, bool] = {
             "NCS1": False,
@@ -142,8 +146,49 @@ class GUIController:
             "high_upstream_pressure": True,
             "reverse_flow": True,
             "high_chamber_pressure": True,
-            "high_p2": True
+            "high_p2": True,
         }
+
+    def load_warning_ranges(self):
+        """Load warning ranges from CSV"""
+        csv_path = "warning_ranges.csv"
+        if not os.path.exists(csv_path):
+            return
+        
+        try:
+            with open(csv_path, newline="") as file:
+                reader = csv.DictReader(file)
+                for row in reader:
+                    name = row["Name"].strip().upper()
+                    self.warning_ranges[name] = {
+                        "warn_low": float(row["WarnLow"]),
+                        "warn_high": float(row["WarnHigh"]),
+                        "cold": float(row["Cold"]),
+                        "hot": float(row["Hot"])
+                    }
+        except Exception as e:
+            print(f"Error loading warning ranges: {e}")
+
+    def get_sensor_status(self, name: str, value: float) -> str:
+        """Check if a sensor value is in warning, hot, or cold range"""
+        if name not in self.warning_ranges:
+            return "DEFAULT"
+        
+        ranges = self.warning_ranges[name]
+        
+        # Red: Outside Warning Range
+        if value < ranges["warn_low"] or value > ranges["warn_high"]:
+            return "RED"
+        
+        # Orange: Above Hot
+        if value > ranges["hot"]:
+            return "ORANGE"
+        
+        # Blue: Below Cold
+        if value < ranges["cold"]:
+            return "BLUE"
+            
+        return "DEFAULT"
     
     def check_abort_conditions(self):
         if self.lockout:
@@ -227,7 +272,7 @@ class GUIController:
             ("high_upstream_pressure", "High Upstream Pressure"),
             ("reverse_flow", "Reverse Flow Risk"),
             ("high_chamber_pressure", "High Chamber Pressure"),
-            ("high_p2", "High P2 Pressure")
+            ("high_p2", "High P2 Pressure"),
         ]
         
         for mode_id, mode_name in modes:
@@ -238,8 +283,18 @@ class GUIController:
         
         mode_group.setLayout(mode_layout)
         layout.addWidget(mode_group)
+
+        # Button to open safe config window
+        self.custom_abort_btn = QPushButton("Warning Value Configuration")
+        self.custom_abort_btn.clicked.connect(self.open_warning_value_config)
+        layout.addWidget(self.custom_abort_btn)
         
         dialog.exec_()
+
+
+    def open_warning_value_config(self):
+        self.warning_valve_config = WarningValueConfigWindow(self, self.parent)
+        self.warning_valve_config.exec_()
 
 
     def toggle_abort_mode(self, mode, state):
