@@ -83,6 +83,14 @@ class GUIController:
         self.warning_ranges: Dict[str, dict] = {}
         self.load_warning_ranges()
 
+        # Valve Command Reliability
+        self.pending_valve_commands = {} # valve_name -> {"state": bool, "last_sent": timestamp, "retries": int}
+        self.valve_retry_timeout = 200 # ms
+        self.valve_max_retries = 5
+        self.retry_timer = QTimer()
+        self.retry_timer.timeout.connect(self.check_valve_command_timeouts)
+        self.retry_timer.start(100) # Check every 100ms
+
         # Initial valve states: False = closed (red), True = open (green)
         self.valve_states: Dict[str, bool] = {
             "NCS1": False,
@@ -376,6 +384,12 @@ class GUIController:
                     valve_name: str = parts[1]
                     new_state: str = "OPEN" if parts[2] == "1" else "CLOSED"
 
+                    print(f"ACK received for {valve_name}: {reading}")
+
+                    # Clear pending command if it exists
+                    if valve_name in self.pending_valve_commands:
+                        del self.pending_valve_commands[valve_name]
+
                     self.signals.valve_updated.emit(valve_name, new_state)
                 
 
@@ -383,8 +397,14 @@ class GUIController:
                 parts = reading.split(':')
                 if len(parts) >= 2:
                     valve_name: str = parts[1]
-                    prev_state = self.valve_states[valve_name]
+                    
+                    print(f"NAK received for {valve_name}: {reading}")
 
+                    # Clear pending command if it exists
+                    if valve_name in self.pending_valve_commands:
+                        del self.pending_valve_commands[valve_name]
+
+                    prev_state = self.valve_states[valve_name]
                     self.signals.valve_updated.emit(valve_name, "OPEN" if prev_state else "CLOSED")
 
             # Sensor data
@@ -605,6 +625,39 @@ class GUIController:
             pass
 
         self.log_event("VALVE_CHANGED", f"{valve_name}:{new_state}")
+
+        # Add to pending commands for retry logic
+        self.pending_valve_commands[valve_name] = {
+            "state": new_state,
+            "last_sent": QDateTime.currentMSecsSinceEpoch(),
+            "retries": 0
+        }
+
+    def check_valve_command_timeouts(self):
+        """Check for valve commands that haven't been acknowledged and retry if necessary"""
+        current_time = QDateTime.currentMSecsSinceEpoch()
+        valves_to_delete = []
+
+        for valve_name, info in self.pending_valve_commands.items():
+            if current_time - info["last_sent"] > self.valve_retry_timeout:
+                if info["retries"] < self.valve_max_retries:
+                    # Retry
+                    info["retries"] += 1
+                    info["last_sent"] = current_time
+                    try:
+                        self.ethernet_client.send_valve_command(valve_name, info["state"])
+                        self.log_event("VALVE_RETRY", f"{valve_name}:{info['state']} (Attempt {info['retries']})")
+                    except Exception:
+                        pass
+                else:
+                    # Max retries reached
+                    print(f"Timeout: Max retries reached for valve {valve_name}")
+                    self.log_event("VALVE_TIMEOUT", f"{valve_name}:{info['state']}")
+                    valves_to_delete.append(valve_name)
+                    # Optionally notify user or update UI to show failure
+
+        for valve_name in valves_to_delete:
+            del self.pending_valve_commands[valve_name]
 
 
     def apply_operation(self, operation: str):

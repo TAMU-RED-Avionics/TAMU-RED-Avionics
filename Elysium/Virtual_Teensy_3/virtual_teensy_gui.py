@@ -97,6 +97,12 @@ class VirtualTeensy(QMainWindow):
             
             v_layout.addWidget(lbl)
             v_layout.addWidget(indicator)
+
+            v_ack_check = QCheckBox("Send ACK")
+            v_ack_check.setChecked(True)
+            v_ack_check.stateChanged.connect(lambda state, n=name: self.comms.set_ack_enabled(n, state == Qt.Checked))
+            v_layout.addWidget(v_ack_check)
+
             valves_layout.addLayout(v_layout)
             self.valve_indicators[name] = indicator
 

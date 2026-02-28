@@ -20,6 +20,7 @@ class VTComms(QObject):
         self.auto_reply = True  # If true, reply to whoever sent the last packet
         self.last_addr = None
         self.heartbeat_enabled = True
+        self.ack_enabled = {} # component_name -> bool
 
         self.sensor_data = {
             "P1": 0.0, "P2": 0.0, "P3": 0.0, "P4": 0.0, "P5": 0.0, "P6": 0.0, "P7": 0.0, "P8": 0.0,
@@ -86,7 +87,8 @@ class VTComms(QObject):
                         valve = parts[1]
                         state = parts[2] == '1'
                         self.valve_update_signal.emit(valve, state)
-                        self.send_valve_response(valve, state)
+                        if self.ack_enabled.get(valve, True):
+                            self.send_valve_response(valve, state)
                         self.log_signal.emit(f"Command: {valve} -> {'OPEN' if state else 'CLOSED'}")
                 else:
                     print(f"Received: {message}")
@@ -100,6 +102,10 @@ class VTComms(QObject):
     def set_heartbeat_enabled(self, enabled):
         self.heartbeat_enabled = enabled
         self.log_signal.emit(f"Heartbeat {'enabled' if enabled else 'disabled'}")
+
+    def set_ack_enabled(self, name, enabled):
+        self.ack_enabled[name] = enabled
+        self.log_signal.emit(f"ACK for {name} {'enabled' if enabled else 'disabled'}")
 
     def heartbeat_loop(self):
         last_sensor_time = 0
