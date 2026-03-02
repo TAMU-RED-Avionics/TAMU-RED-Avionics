@@ -128,6 +128,7 @@ class GUIController:
     
     def handle_connect(self, success: bool):
         if success:
+            self.ethernet_client.set_system_state("CONNECTED")
             self.signals.connected.emit()
         else:
             self.signals.disconnected.emit("Connection failed")
@@ -254,6 +255,8 @@ class GUIController:
         if self.lockout:
             return
 
+        self.ethernet_client.set_system_state("ABORT")
+
         self.pre_abort_valve_states = self.valve_states.copy()
 
         # Disable all valves
@@ -275,6 +278,8 @@ class GUIController:
     def confirm_safe_state(self):
         """Confirm system is safe after abort without any dialog"""
         if self.ethernet_client.connected:
+            self.ethernet_client.cancel_auto_abort_countdown()
+            self.ethernet_client.set_system_state("SAFE")
             self.lockout = False
             # self.abort_state = False
             self.signals.safe_state.emit()
@@ -555,6 +560,8 @@ class GUIController:
     def apply_operation(self, operation: str):
         if self.lockout:
             return
+
+        self.ethernet_client.set_system_state(operation)
 
         active_valves = self.valve_operation_states.get(operation, [])
         for name in self.valve_states:

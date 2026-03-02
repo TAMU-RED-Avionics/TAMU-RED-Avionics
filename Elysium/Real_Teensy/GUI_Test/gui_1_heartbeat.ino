@@ -2,6 +2,7 @@
 #include <NativeEthernet.h>
 #include <NativeEthernetUdp.h>
 #include <IPAddress.h>
+#include "../Elysium_teensy/EGCP.h"
 
 /*
 -------------------------------------------------------------------
@@ -29,8 +30,8 @@ unsigned int PORT = 8888;                                 // The port to bind to
 
 const int unsigned SYSTEM_LOOP_INTERVAL = 1;              // The loop delay of the overall system - configures the NOOP TX Rate (millisec)
 
-const long unsigned NOOP_TX_INTERVAL = 10 * 1000;         // Minimum time to wait in between sending NOOP heartbeats (microsec)
-const long unsigned NOOP_RX_TIMEOUT =  30 * 1000;         // Timeout to consider a lack of a NOOP packet coming in as a miss (microsec)
+const long unsigned NOOP_TX_INTERVAL = 20 * 1000;         // Minimum time to wait in between sending heartbeats (microsec) - 20ms
+const long unsigned NOOP_RX_TIMEOUT =  20 * 1000;         // Timeout to consider a lack of a heartbeat as a miss (microsec) - 20ms
 const int unsigned MAX_NOOP_RX_MISSES = 3;                // The maximum number of missed heartbeats in order to trigger an abort state
 
 const long unsigned ABORTED_MSG_INTERVAL = 500 * 1000;    // Interval for printing "aborted" when in an abort state (microsec)
@@ -52,38 +53,30 @@ int unsigned MISSED_NOOP_RX_COUNT = 0;                    // The current number 
 int unsigned HEARTBEAT_RX_COUNT = 0;                      // [DEBUG] The total number of heartbeat signals received
 int unsigned HEARTBEAT_TX_COUNT = 0;                      // [DEBUG] The total number of heartbeat signals sent to the master
 
+// Packet tracking
+uint32_t PACKET_ID_COUNTER = 0;
 
 // An EthernetUDP instance to let us send and receive packets over UDP
 EthernetUDP udp;
 byte MAC_ADDRESS[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
-char packetBuffer[UDP_TX_PACKET_MAX_SIZE];                // buffer to hold incoming packet,
 
 // ----------------------------------------------------------------
 
-
-void tx_string(unsigned int port, const char *to_write) {
-  udp.beginPacket(REMOTE, port);
-  udp.write(to_write);
+// Send EGCP packet
+void tx_egcp_packet(const EGCPPacket& packet) {
+  uint8_t buffer[20];
+  uint8_t packet_size = packet.encode(buffer, sizeof(buffer));
+  
+  udp.beginPacket(REMOTE, PORT);
+  udp.write(buffer, packet_size);
   udp.endPacket();
 }
 
-void tx_float(unsigned int port, float to_write) {
-  char buf[100]; // *slaps roof* yeah that'll do nicely
-  constexpr unsigned long PRECISION = 5;
-  dtostrf(to_write, 1, PRECISION, buf);
-  udp.beginPacket(REMOTE, port);
-  udp.write(buf);
-  udp.endPacket();
-}
-
-String rx_until(char stop_character) {
-  String ret = "";
-  char c = udp.read();
-  while (c != stop_character) {
-    ret += c;
-    c = udp.read();
-  }
-  return ret;
+// Send heartbeat
+void tx_heartbeat() {
+  EGCPPacket hrt_pkt(PACKET_ID_COUNTER++, EGCPPacket::PKT_HRT);
+  tx_egcp_packet(hrt_pkt);
+  HEARTBEAT_TX_COUNT++;
 }
 
 bool init_comms(byte* mac, unsigned int port) {
@@ -133,55 +126,62 @@ void loop() {
   }
 
   // Check for the RX NOOP Heartbeat
-  udp.parsePacket();
-  if (udp.available() > 0) {
-    // read communication
-    String input = rx_until('\n');
+  udp.parsePacketHeartbeat
+  if ((micros() - LAST_NOOP_TX_TIME) > NOOP_TX_INTERVAL) {
+    tx_heartbeat();
+    Serial.printf("HRT TX - %d\n", HEARTBEAT_TX_COUNT);
+    LAST_NOOP_TX_TIME = micros();
+  }
 
-    if (input == "NOOP") {
-      Serial.printf("NOOP RX - %d\n", ++HEARTBEAT_RX_COUNT);
-      LAST_NOOP_RX_TIME = micros();
-      MISSED_NOOP_RX_COUNT = 0;
+  // Check for incoming packets
+  int packet_size = udp.parsePacket();
+  if (packet_size > 0) {
+    uint8_t buffer[UDP_TX_PACKET_MAX_SIZE];
+    int bytes_read = udp.read(buffer, sizeof(buffer));
+    
+    EGCPPacket rx_pkt;
+    if (EGCPPacket::decode(buffer, bytes_read, rx_pkt)) {
+      if (rx_pkt.packet_type == EGCPPacket::PKT_HRT) {
+        Serial.printf("HRT RX - %d\n", ++HEARTBEAT_RX_COUNT);
+        LAST_NOOP_RX_TIME = micros();
+        MISSED_NOOP_RX_COUNT = 0;
+      }
     }
   }
 
   // If there hasn't been a received heartbeat in too long
   if ((micros() - LAST_NOOP_RX_TIME) > NOOP_RX_TIMEOUT) {
-    // Update the time so that it must wait an additional full timeout to trigger another one
     LAST_NOOP_RX_TIME = micros();
     Serial.printf("Missed Heartbeat RX - %d\n", ++MISSED_NOOP_RX_COUNT);
   }
 
-  // If there have been too many missed hearbeats, enter abort state
+  // If there have been too many missed heartbeats, enter abort state
   if (MISSED_NOOP_RX_COUNT >= MAX_NOOP_RX_MISSES) {
-    
-    // While system is aborted, print "aborted" until a start command is received
     bool aborted = true;
     while(aborted) {
-      // Spit out a packet saying ABORTED once every ABORT_TIME_INTERVAL number of seconds
+      // Send abort packet (SFE) once every interval
       if ((micros() - LAST_ABORT_MSG_TX) > ABORTED_MSG_INTERVAL) {
-        tx_string(PORT, "ABORTED\n");
+        EGCPPacket abort_pkt(PACKET_ID_COUNTER++, EGCPPacket::PKT_SFE);
+        tx_egcp_packet(abort_pkt);
         Serial.println("ABORTED");
-        
         LAST_ABORT_MSG_TX = micros();
       }
       
-      // Check for a packet coming in that says START
-      udp.parsePacket();
-      if (udp.available() > 0) {
-        String input = rx_until('\n');
-
-        if (input == "START") {
-          // Exit the abort state if you receive a START packet
-          aborted = false;
-          MISSED_NOOP_RX_COUNT = 0;
-          LAST_NOOP_RX_TIME = micros();
-          Serial.println("LEAVING ABORT STATE");
+      // Check for START packet (STA)
+      int pkt_size = udp.parsePacket();
+      if (pkt_size > 0) {
+        uint8_t buffer[UDP_TX_PACKET_MAX_SIZE];
+        udp.read(buffer, sizeof(buffer));
+        
+        EGCPPacket start_pkt;
+        if (EGCPPacket::decode(buffer, pkt_size, start_pkt)) {
+          if (start_pkt.packet_type == EGCPPacket::PKT_STA) {
+            aborted = false;
+            MISSED_NOOP_RX_COUNT = 0;
+            LAST_NOOP_RX_TIME = micros();
+            Serial.println("LEAVING ABORT STATE");
+          }
         }
       }
-
     }
-  } // if in abort state
-
-  delay(SYSTEM_LOOP_INTERVAL);
-}
+  }

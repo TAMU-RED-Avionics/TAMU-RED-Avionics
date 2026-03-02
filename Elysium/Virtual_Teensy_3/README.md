@@ -29,7 +29,7 @@ No additional installation is required if you already have the `Elysium_GUI` dep
 3.  **Connect**
     -   In the Main GUI connection panel:
         -   **IP**: `127.0.0.1`
-        -   **Port**: `8889`
+        -   **Port**: `8888`
     -   Click **Connect**.
     -   If successful, the Virtual Teensy log will show "New client connected" and the GUI will show "Connected Successfully".
 

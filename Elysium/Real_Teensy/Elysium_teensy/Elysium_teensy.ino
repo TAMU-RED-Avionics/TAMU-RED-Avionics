@@ -5,6 +5,7 @@ VARIABLES & USER INPUT
 */
 
 #include <Arduino.h>
+#include "EGCP.h"  // Elysium Ground Communications Protocol
 
 // time variables
 long unsigned LAST_SENSOR_UPDATE = 0;                     // Timestamp of last sensor reading (microsec)
@@ -70,6 +71,40 @@ int get_pin(String id) {
   return -1;
 }
 
+// Function to get pin number from EGCP valve ID
+int get_pin_from_valve_id(uint8_t valve_id) {
+  switch (valve_id) {
+    case EGCPPacket::VALVE_NCS1: return NCS1_PIN;
+    case EGCPPacket::VALVE_NCS2: return NCS2_PIN;
+    case EGCPPacket::VALVE_NCS3: return NCS4_PIN;  // Note: NCS3 maps to NCS4_PIN
+    case EGCPPacket::VALVE_NCS4: return NCS4_PIN;
+    case EGCPPacket::VALVE_NCS5: return NCS4_PIN;  // Note: NCS5 maps to NCS4_PIN (pin doesn't exist)
+    case EGCPPacket::VALVE_NCS6: return NCS4_PIN;  // Note: NCS6 maps to NCS4_PIN (pin doesn't exist)
+    case EGCPPacket::VALVE_LA_BV1: return LABV1_PIN;
+    case EGCPPacket::VALVE_LA_BV2: return LABV2_PIN;
+    case EGCPPacket::VALVE_IG1: return IGN1_PIN;
+    case EGCPPacket::VALVE_IG2: return IGN2_PIN;
+    default: return -1;
+  }
+}
+
+// Get valve name from ID (for logging)
+const char* get_valve_name(uint8_t valve_id) {
+  switch (valve_id) {
+    case EGCPPacket::VALVE_NCS1: return "NCS1";
+    case EGCPPacket::VALVE_NCS2: return "NCS2";
+    case EGCPPacket::VALVE_NCS3: return "NCS3";
+    case EGCPPacket::VALVE_NCS4: return "NCS4";
+    case EGCPPacket::VALVE_NCS5: return "NCS5";
+    case EGCPPacket::VALVE_NCS6: return "NCS6";
+    case EGCPPacket::VALVE_LA_BV1: return "LA-BV1";
+    case EGCPPacket::VALVE_LA_BV2: return "LA-BV2";
+    case EGCPPacket::VALVE_IG1: return "IG1";
+    case EGCPPacket::VALVE_IG2: return "IG2";
+    default: return "UNKNOWN";
+  }
+}
+
 #include <NativeEthernet.h>
 #include <NativeEthernetUdp.h>
 #include <IPAddress.h>
@@ -81,6 +116,41 @@ EthernetUDP udp;
 byte MAC_ADDRESS[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
 IPAddress REMOTE(192, 168, 1, 175);
 IPAddress LOCAL(192, 168, 1, 174);
+
+// EGCP packet tracking
+uint32_t tx_packet_id = 0;                  // Transmit packet ID counter
+uint8_t egcp_binary_buffer[256];            // Buffer for assembling binary packets
+uint16_t egcp_buffer_pos = 0;               // Current position in binary buffer
+
+// Helper to get next TX packet ID (24-bit wraparound)
+uint32_t getNextTxId() {
+    uint32_t id = tx_packet_id;
+    tx_packet_id = (tx_packet_id + 1) & 0xFFFFFF;
+    return id;
+}
+
+// Send an EGCP binary packet
+void sendEGCPPacket(const EGCPPacket& pkt) {
+    uint8_t buffer[20];
+    uint8_t size = pkt.encode(buffer, sizeof(buffer));
+    if (size > 0) {
+        udp.beginPacket(REMOTE, PORT);
+        udp.write(buffer, size);
+        udp.endPacket();
+    }
+}
+
+// Send ACK for received packet
+void sendACK(uint32_t packet_id_to_ack) {
+    // ACK body is 3 bytes: the packet ID being acknowledged (take low 3 bytes)
+    uint8_t body[3] = {
+        (uint8_t)((packet_id_to_ack >> 16) & 0xFF),
+        (uint8_t)((packet_id_to_ack >> 8) & 0xFF),
+        (uint8_t)(packet_id_to_ack & 0xFF)
+    };
+    EGCPPacket ack(getNextTxId(), EGCPPacket::PKT_ACK, body, 3);
+    sendEGCPPacket(ack);
+}
 
 void output_string(unsigned int port, const char *to_write) {
   udp.beginPacket(REMOTE, port);
@@ -302,185 +372,248 @@ void setup() {
   // enableIMU();
 }
 
+// Shutdown procedure - triggered by timeout or emergency abort
+void trigger_shutdown() {
+  // Open NCS2
+  digitalWrite(NCS2_PIN, HIGH);
+
+  // Close ball valves & NCS1
+  digitalWrite(NCS1_PIN, LOW);
+  digitalWrite(NCS4_PIN, LOW);
+  digitalWrite(LABV1_PIN, LOW);
+  digitalWrite(LABV2_PIN, LOW);
+
+  // Unpower igniters
+  digitalWrite(IGN1_PIN, LOW);
+  digitalWrite(IGN2_PIN, LOW);
+
+  // If LABV1 is open, system purges with nitrogen
+  if (is_LABV1_open) {
+    // Open NCS4 for 3 seconds
+    digitalWrite(NCS4_PIN, HIGH);
+    delay(SHUTDOWN_PURGE_TIME);
+    digitalWrite(NCS4_PIN, LOW);
+  }
+
+  // Send emergency abort packet to GUI
+  EGCPPacket abort_pkt(getNextTxId(), EGCPPacket::PKT_SFE);
+  sendEGCPPacket(abort_pkt);
+
+  // While system is aborted, wait for restart command
+  bool aborted = true;
+  while(aborted) {
+    if ((micros() - ABORT_TIME_TRACKING) > ABORTED_TIME_INTERVAL) {
+      ABORT_TIME_TRACKING = micros();
+      // Send abort status ping (using a heartbeat)
+      EGCPPacket alive_pkt(getNextTxId(), EGCPPacket::PKT_HRT);
+      sendEGCPPacket(alive_pkt);
+    }
+
+    int packet_size = udp.parsePacket();
+    if (packet_size >= 4) {
+      uint8_t header_buffer[4];
+      for (int i = 0; i < 4 && udp.available() > 0; i++) {
+        header_buffer[i] = udp.read();
+      }
+      
+      // Parse packet type from header
+      uint8_t packet_type = (header_buffer[2] >> 4) & 0xF;
+      
+      if (packet_type == EGCPPacket::PKT_STA) {
+        // START packet received - exit abort state
+        aborted = false;
+        LAST_COMMUNICATION_TIME = micros();
+        LAST_HUMAN_UPDATE = micros();
+        digitalWrite(NCS2_PIN, LOW);
+        
+        // Clear buffer
+        egcp_buffer_pos = 0;
+      }
+    }
+  }
+}
+
 /*
 -------------------------------------------------------------------
 LOOP
 -------------------------------------------------------------------
 */
 void loop() {
-  // checks if user input is available to read
-  udp.parsePacket();
-  if (udp.available() > 0) {
-    // read communication
-    String input = input_until('\n');
+  // Read incoming packets
+  int packet_size = udp.parsePacket();
+  if (packet_size > 0) {
+    // Read bytes into buffer
+    int bytes_read = 0;
+    while (udp.available() > 0 && bytes_read < (int)sizeof(egcp_binary_buffer) - egcp_buffer_pos) {
+      egcp_binary_buffer[egcp_buffer_pos + bytes_read] = udp.read();
+      bytes_read++;
+    }
+    egcp_buffer_pos += bytes_read;
     LAST_COMMUNICATION_TIME = micros();
 
-    // no operation command to confirm connection
-    if (input != "nop\r") {
-      LAST_HUMAN_UPDATE = micros();
-    } else {
-      return;
-    }
+    // Process complete packets from buffer
+    while (egcp_buffer_pos >= 4) {
+      // Peek at packet length from header (low 4 bits)
+      uint8_t packet_length = egcp_binary_buffer[3] & 0xF;
+      uint16_t total_packet_size = 4 + packet_length;
 
-    // break string into identifier and control state
-    int delimiterIndex = input.indexOf(':');
-    if (delimiterIndex != -1) {
-      IDENTIFIER = input.substring(0, delimiterIndex);
-      CONTROL_STATE = input.substring(delimiterIndex + 1).toInt();
-    }
-    else { return; }
+      if (egcp_buffer_pos < total_packet_size) {
+        break; // Wait for complete packet
+      }
 
-    int pin = get_pin(IDENTIFIER);
-    if (pin == -1) {
-      return;
-    }
-    switch (CONTROL_STATE) {
-      case 0:
-        digitalWrite(pin, LOW);   // Close Valve
-        if (IDENTIFIER == "LA-BV1") {
-          if (is_LABV1_open) {
-            digitalWrite(NCS2_PIN, HIGH);
+      // Decode packet
+      EGCPPacket rxPacket;
+      if (EGCPPacket::decode(egcp_binary_buffer, total_packet_size, rxPacket)) {
+        
+        // Handle different packet types
+        if (rxPacket.packet_type == EGCPPacket::PKT_STA) {
+          // Connection START handshake
+          sendACK(rxPacket.packet_id);
+        }
+        
+        else if (rxPacket.packet_type == EGCPPacket::PKT_HRT) {
+          // Heartbeat - just send ACK back
+          sendACK(rxPacket.packet_id);
+        }
+        
+        else if (rxPacket.packet_type == EGCPPacket::PKT_VSO) {
+          // Valve open command
+          if (rxPacket.body_length >= 1) {
+            uint8_t valve_id = rxPacket.body[0];
+            int pin = get_pin_from_valve_id(valve_id);
+            if (pin >= 0) {
+              digitalWrite(pin, HIGH);  // Open valve
+              
+              // Special handling for LA-BV1
+              if (valve_id == EGCPPacket::VALVE_LA_BV1) {
+                is_LABV1_open = true;
+              }
+              
+              LAST_HUMAN_UPDATE = micros();
+            }
+            sendACK(rxPacket.packet_id);
           }
-          is_LABV1_open = false;
         }
-        break;
-      case 1:
-        digitalWrite(pin, HIGH);  // Open Valve
-        if (IDENTIFIER == "LA-BV1") {
-          is_LABV1_open = true;
+        
+        else if (rxPacket.packet_type == EGCPPacket::PKT_VSC) {
+          // Valve close command
+          if (rxPacket.body_length >= 1) {
+            uint8_t valve_id = rxPacket.body[0];
+            int pin = get_pin_from_valve_id(valve_id);
+            if (pin >= 0) {
+              digitalWrite(pin, LOW);  // Close valve
+              
+              // Special handling for LA-BV1
+              if (valve_id == EGCPPacket::VALVE_LA_BV1) {
+                if (is_LABV1_open) {
+                  digitalWrite(NCS2_PIN, HIGH);  // Vent to NCS2
+                }
+                is_LABV1_open = false;
+              }
+              
+              LAST_HUMAN_UPDATE = micros();
+            }
+            sendACK(rxPacket.packet_id);
+          }
         }
-        break;
+        
+        else if (rxPacket.packet_type == EGCPPacket::PKT_SFE) {
+          // Emergency abort / safe mode
+          sendACK(rxPacket.packet_id);
+          trigger_shutdown();
+        }
+      }
+
+      // Remove processed packet from buffer
+      memmove(egcp_binary_buffer, egcp_binary_buffer + total_packet_size, 
+              egcp_buffer_pos - total_packet_size);
+      egcp_buffer_pos -= total_packet_size;
     }
   }
 
-  // check for last reading update
+  // Sensor reading and transmission
   if ((micros() - LAST_SENSOR_UPDATE) > SENSOR_UPDATE_INTERVAL) {
-    LAST_SENSOR_UPDATE = micros();                               // update time
+    LAST_SENSOR_UPDATE = micros();
 
-    // read pressure data
-    pt1_analog = analogRead(PT1_PIN);                          // reads value from input pin and assigns to variable
-    pt2_analog = analogRead(PT2_PIN);                          // reads value from input pin and assigns to variable.
+    // Read pressure data
+    pt1_analog = analogRead(PT1_PIN);
+    pt2_analog = analogRead(PT2_PIN);
     pt3_analog = analogRead(PT3_PIN);
     pt4_analog = analogRead(PT4_PIN);
     pt5_analog = analogRead(PT5_PIN);
     pt6_analog = analogRead(PT6_PIN);
 
-    // read acceleration
-    // readACC(buff);
-    // accRaw[0] = (int16_t)(buff[0] | (buff[1] << 8)); 
-    // accRaw[1] = (int16_t)(buff[2] | (buff[3] << 8));
-    // accRaw[2] = (int16_t)(buff[4] | (buff[5] << 8));
-    // accx = accRaw[0]/accoffset;
-    // accy = accRaw[1]/accoffset;
-    // accz = accRaw[2]/accoffset;
-
-    // measure force from load cells, only update at slower interval
+    // Measure force from load cells (slower update rate)
     if ((LAST_SENSOR_UPDATE - LAST_LC_UPDATE) > LC_UPDATE_INTERVAL) {
       LAST_LC_UPDATE = LAST_SENSOR_UPDATE;
-      weight1 = scale.get_units(1);  // Get the weight in lbs
-      weight2 = scale2.get_units(1); // Get the weight in lbs
-      weight3 = scale3.get_units(1); // Get the weight in lbs
+      weight1 = scale.get_units(1);
+      weight2 = scale2.get_units(1);
+      weight3 = scale3.get_units(1);
     }
 
-    // measure temp from thermocouples in °C
+    // Measure temperature from thermocouple
     float t1 = mcp.readThermocouple();
-    
-    // send data to serial monitor
-    output_string(PORT, "t:");
-    output_float(PORT, LAST_SENSOR_UPDATE);
-    output_string(PORT, ",P1:");
-    output_float(PORT, pressureCalculation(pt1_analog, 1));
-    output_string(PORT, ",P2:");
-    output_float(PORT, pressureCalculation(pt2_analog, 2));
-    output_string(PORT, ",P3:");
-    output_float(PORT, pressureCalculation(pt3_analog, 3));
-    output_string(PORT, ",P4:");
-    output_float(PORT, pressureCalculation(pt4_analog, 4));
-    output_string(PORT, ",P5:");
-    output_float(PORT, pressureCalculation(pt5_analog, 5));
-    output_string(PORT, ",P6:");
-    output_float(PORT, pressureCalculation(pt6_analog, 6));
-    output_string(PORT, ",T1:");
-    output_float(PORT, t1);
-    output_string(PORT, ",L1:");
-    output_float(PORT, weight1);
-    output_string(PORT, ",L2:");
-    output_float(PORT, weight2);
-    output_string(PORT, ",L3:");
-    output_float(PORT, weight3);
-    output_string(PORT, ",t_loc:");
-    float t_loc = (HUMAN_CONNECTION_TIMEOUT - (LAST_SENSOR_UPDATE -LAST_HUMAN_UPDATE)) / 1000000.0;
-    output_float(PORT, t_loc);
-    output_string(PORT, "\n");
-    delay(10);
-    // Serial.print("t:"); Serial.print(LAST_SENSOR_UPDATE);                             // print time reading in microseconds
-    // Serial.print(",P1:"); Serial.print(pressureCalculation(pt1_analog, 1));           // print pressure calculation in psi
-    // Serial.print(",P2:"); Serial.print(pressureCalculation(pt2_analog, 2));           // print pressure calculation in psi
-    // Serial.print(",P3:"); Serial.print(pressureCalculation(pt3_analog, 3));           // print pressure calculation in psi
-    // Serial.print(",P4:"); Serial.print(pressureCalculation(pt4_analog, 4));           // print pressure calculation in psi
-    // Serial.print(",P5:"); Serial.print(pressureCalculation(pt5_analog, 5));           // print pressure calculation in psi
-    // Serial.print(",P6:"); Serial.print(pressureCalculation(pt6_analog, 6));           // print pressure calculation in psi
 
-    // Serial.print(",T1:"); Serial.print(t1);                                           // print thermocouple temperature in C
-    // // Serial.print(",T2:"); Serial.print(mcp2.readThermocouple());                   // print thermocouple temperature in C
-    // Serial.print(",L1:"); Serial.print(weight1);                                      // print load cell 1 in lbs
-    // Serial.print(",L2:"); Serial.print(weight2);                                      // print load cell 2 in lbs
-    // Serial.print(",L3:"); Serial.print(weight3);                                      // print load cell 3 in lbs
-    // // Serial.print(",Ax:"); Serial.print(accx);                                      // print acceleration in x direction  <-- determine what direction x is in relation to engine
-    // // Serial.print(",Ay:"); Serial.print(accy);                                      // print acceleration in y direction  <-- determine what direction y is in relation to engine
-    // // Serial.print(",Az:"); Serial.print(accz);                                      // print acceleration in z direction  <-- determine what direction z is in relation to engine
-    // float t_loc = (HUMAN_CONNECTION_TIMEOUT - (LAST_SENSOR_UPDATE -LAST_HUMAN_UPDATE)) / 1000000.0;
-    // Serial.print(",t_loc:"); Serial.println(t_loc);                                     // print time until loss of communications occurs, in seconds (only due to human inaction)
-    //Serial.println();
-    //delay(10);
+    // Send each sensor as individual ADC binary packet
+    // Format: 1 byte sensor ID + 4 bytes IEEE 754 float
+    
+    // Pressure sensors (P1-P6)
+    float p_values[] = {
+      pressureCalculation(pt1_analog, 1),
+      pressureCalculation(pt2_analog, 2),
+      pressureCalculation(pt3_analog, 3),
+      pressureCalculation(pt4_analog, 4),
+      pressureCalculation(pt5_analog, 5),
+      pressureCalculation(pt6_analog, 6)
+    };
+    uint8_t p_ids[] = {
+      EGCPPacket::SENSOR_P1,
+      EGCPPacket::SENSOR_P2,
+      EGCPPacket::SENSOR_P3,
+      EGCPPacket::SENSOR_P4,
+      EGCPPacket::SENSOR_P5,
+      EGCPPacket::SENSOR_P6
+    };
+
+    for (int i = 0; i < 6; i++) {
+      uint8_t body[5];
+      body[0] = p_ids[i];
+      memcpy(&body[1], &p_values[i], 4);  // Copy float as bytes (big-endian)
+      EGCPPacket adc(getNextTxId(), EGCPPacket::PKT_ADC, body, 5);
+      sendEGCPPacket(adc);
+    }
+
+    // Temperature (T1)
+    {
+      uint8_t body[5];
+      body[0] = EGCPPacket::SENSOR_T1;
+      memcpy(&body[1], &t1, 4);
+      EGCPPacket adc(getNextTxId(), EGCPPacket::PKT_ADC, body, 5);
+      sendEGCPPacket(adc);
+    }
+
+    // Load cells (L1-L3)
+    float l_values[] = {weight1, weight2, weight3};
+    uint8_t l_ids[] = {
+      EGCPPacket::SENSOR_L1,
+      EGCPPacket::SENSOR_L2,
+      EGCPPacket::SENSOR_L3
+    };
+
+    for (int i = 0; i < 3; i++) {
+      uint8_t body[5];
+      body[0] = l_ids[i];
+      memcpy(&body[1], &l_values[i], 4);
+      EGCPPacket adc(getNextTxId(), EGCPPacket::PKT_ADC, body, 5);
+      sendEGCPPacket(adc);
+    }
+
+    delay(10);
   }
 
   // Lost communication shutdown
-  if (((micros() - LAST_COMMUNICATION_TIME) > CONNECTION_TIMEOUT) || ((micros() - LAST_HUMAN_UPDATE) > HUMAN_CONNECTION_TIMEOUT)) {
-    // Open NCS2
-    digitalWrite(NCS2_PIN, HIGH);
-
-    // Close ball valves & NCS1
-    digitalWrite(NCS1_PIN, LOW);
-    digitalWrite(NCS4_PIN, LOW);
-    digitalWrite(LABV1_PIN, LOW);
-    digitalWrite(LABV2_PIN, LOW);
-
-    // Unpower igniters
-    digitalWrite(IGN1_PIN, LOW);
-    digitalWrite(IGN2_PIN, LOW);
-
-    // If LABV1 is open, system purges with nitrogen
-    if (is_LABV1_open) {
-      // Open NCS4 for 3 seconds
-      digitalWrite(NCS4_PIN, HIGH);
-      delay(SHUTDOWN_PURGE_TIME);
-      digitalWrite(NCS4_PIN, LOW);
-    }
-
-    // While system is aborted, print "aborted" until a start command is received
-    bool aborted = true;
-    while(aborted) {
-      if ((micros() - ABORT_TIME_TRACKING) > ABORTED_TIME_INTERVAL) {
-        ABORT_TIME_TRACKING = micros();
-        output_string(PORT, "Aborted\n");
-        // Serial.println("Aborted");
-      }
-
-      udp.parsePacket();
-      if (udp.available() > 0) {
-        // String input = Serial.readStringUntil('\n');
-        String input = input_until('\n');
-        output_string(PORT, ("New Input= " + input + '\n').c_str());
-        // Serial.println("New Input= " + input);
-
-        if ((input == "start\r") || (input == "Start\r")){
-          aborted = false;
-          LAST_COMMUNICATION_TIME = micros();
-          LAST_HUMAN_UPDATE = micros();
-          digitalWrite(NCS2_PIN, LOW);
-        }
-      }
-    }
+  if (((micros() - LAST_COMMUNICATION_TIME) > CONNECTION_TIMEOUT) || 
+      ((micros() - LAST_HUMAN_UPDATE) > HUMAN_CONNECTION_TIMEOUT)) {
+    trigger_shutdown();
   }
 }
