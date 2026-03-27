@@ -32,8 +32,8 @@ const int unsigned SYSTEM_LOOP_INTERVAL = 1;              // The loop delay of t
 const long unsigned ABORTED_MSG_INTERVAL = 500 * 1000;    // Interval for printing "aborted" when in an abort state (microsec)
 const long unsigned SENSOR_UPDATE_INTERVAL = 100 * 1000;  // Interval for sending sensor data (microsec)
 
-const long unsigned NOOP_TX_INTERVAL = 20 * 1000;          // Minimum time to wait in between sending heartbeats (microsec) - 20ms
-const long unsigned NOOP_RX_TIMEOUT =  60 * 1000;          // Timeout to consider a lack of a heartbeat as a miss (microsec) - 60ms (3x20ms)
+const long unsigned NOOP_TX_INTERVAL = 10 * 1000;          // Minimum time to wait in between sending heartbeats (microsec) - 10ms
+const long unsigned NOOP_RX_TIMEOUT =  60 * 1000;          // Timeout to consider a lack of a heartbeat as a miss (microsec) - 60ms (6x10ms)
 
 
 // Valves

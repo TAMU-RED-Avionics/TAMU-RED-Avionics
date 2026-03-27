@@ -38,6 +38,7 @@ class VirtualTeensy(QMainWindow):
         hb_layout.addWidget(self.hb_checkbox)
         sensors_layout.addLayout(hb_layout)
 
+
         self.sensor_inputs = {}
         sensor_names = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", 
                        "TC1", "TC2", "TC3", 
@@ -81,24 +82,39 @@ class VirtualTeensy(QMainWindow):
         right_layout = QVBoxLayout()
         main_layout.addLayout(right_layout)
 
-        # Valves
+        # Valves (with failure checkboxes)
+        valves_label = QLabel("Valve Status & Failure Simulation")
+        valves_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        right_layout.addWidget(valves_label)
+        
         valves_layout = QHBoxLayout()
         right_layout.addLayout(valves_layout)
         
         self.valve_indicators = {}
-        valve_names = ["NCS1", "NCS2", "NCS3", "NCS5", "NCS6", "LA-BV1", "GV-1", "GV-2", "GIMBAL"]
+        self.valve_failure_checkboxes = {}
+        valve_names = ["NCS1", "NCS2", "NCS3", "NCS4", "NCS5", "NCS6", "LA-BV1", "LA-BV2", "GV-1", "GV-2", "IG1", "IG2"]
+        valve_ids = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x10, 0x11, 0x20, 0x21, 0x30, 0x31]
         
-        for name in valve_names:
+        for name, valve_id in zip(valve_names, valve_ids):
             v_layout = QVBoxLayout()
             lbl = QLabel(name)
+            lbl.setStyleSheet("font-weight: bold;")
+            
             indicator = QLabel()
             indicator.setFixedSize(20, 20)
             indicator.setStyleSheet("background-color: red; border-radius: 10px;")
             
+            fail_check = QCheckBox("FAIL")
+            fail_check.setStyleSheet("color: red; font-size: 10px;")
+            fail_check.stateChanged.connect(lambda state, vid=valve_id: self.toggle_valve_failure(vid, state))
+            
             v_layout.addWidget(lbl)
             v_layout.addWidget(indicator)
+            v_layout.addWidget(fail_check)
             valves_layout.addLayout(v_layout)
+            
             self.valve_indicators[name] = indicator
+            self.valve_failure_checkboxes[name] = fail_check
 
         # Log
         self.log_area = QTextEdit()
@@ -107,6 +123,9 @@ class VirtualTeensy(QMainWindow):
 
     def toggle_heartbeat(self, state):
         self.comms.set_heartbeat_enabled(state == Qt.Checked)
+    
+    def toggle_valve_failure(self, valve_id, state):
+        self.comms.set_valve_failure(valve_id, state == Qt.Checked)
 
     def update_sensor(self, name, value, slider, null_check):
         # Update slider but clamp to 0 (don't let it go negative)

@@ -114,8 +114,8 @@ class EthernetClient:
         self.listening_active = False
 
         self.timeout: float = 3                             # seconds
-        self.heartbeat_tx_cadence: int = 20                 # ms
-        self.heartbeat_rx_miss_interval: int = 60           # ms (3x missed heartbeats at 20ms cadence)
+        self.heartbeat_tx_cadence: int = 10                 # ms
+        self.heartbeat_rx_miss_interval: int = 20          # ms (6x missed heartbeats at 10ms cadence)
 
         self.heartbeat_last_tx: int = 0                     # ms since Jan 1 1970
         self.heartbeat_last_rx: int = 0                     # ms since Jan 1 1970
@@ -129,7 +129,7 @@ class EthernetClient:
 
         # System state and auto-abort countdown behavior
         self.system_state: str = "NONE"
-        self.auto_abort_countdown_ms: int = 5000
+        self.auto_abort_countdown_ms: int = 10000            # 10 seconds
         self.auto_abort_deadline_ms: int = 0
         self.auto_abort_reason: str = ""
         self.auto_abort_countdown_active: bool = False
@@ -193,20 +193,35 @@ class EthernetClient:
             self.log_event_callback(f"COMMS_AUTO_ABORT:{reason}")
 
         if self.receive_callback:
-            self.receive_callback("ABORTED")
+            # Pass the reason through so the GUI can display it
+            self.receive_callback(f"ABORTED:COMMS:{reason}")
 
     def _handle_command_failure(self, packet: EGCPPacket, pkt_id: int):
         """Handle repeated failure for command packets."""
-        if packet.packet_type != EGCPPacket.PKT_VSO:
+        # Only handle valve commands (open or close)
+        if packet.packet_type not in [EGCPPacket.PKT_VSO, EGCPPacket.PKT_VSC]:
             return
 
-        reason = f"valve_open_ack_timeout:packet_id={pkt_id}"
+        # Extract valve ID from packet body and get valve name
+        valve_name = "UNKNOWN"
+        if len(packet.body) >= 1:
+            valve_id = packet.body[0]
+            # Reverse lookup valve name from ID
+            for name, vid in self.VALVE_MAP.items():
+                if vid == valve_id:
+                    valve_name = name
+                    break
+
+        cmd_type = "OPEN" if packet.packet_type == EGCPPacket.PKT_VSO else "CLOSE"
+        reason = f"{cmd_type}_{valve_name}_timeout:packet_id={pkt_id}"
 
         if self._is_fire_state():
+            if self.log_event_callback:
+                self.log_event_callback(f"CRITICAL:FIRE_STATE_FAILURE:Immediate abort triggered")
             self._trigger_comms_auto_abort(reason)
             return
 
-        # Non-fire: start 5 second operator-cancellable countdown
+        # Non-fire: start operator-cancellable countdown
         now = QDateTime.currentMSecsSinceEpoch()
         if not self.auto_abort_countdown_active:
             self.auto_abort_countdown_active = True
@@ -214,7 +229,9 @@ class EthernetClient:
             self.auto_abort_reason = reason
             self.auto_abort_last_announce_second = -1
             if self.log_event_callback:
-                self.log_event_callback("AUTO_ABORT_COUNTDOWN:START:5")
+                countdown_seconds = (self.auto_abort_countdown_ms + 999) // 1000
+                self.log_event_callback(f"AUTO_ABORT_COUNTDOWN:START:{countdown_seconds}:{valve_name}:{cmd_type}")
+                self.log_event_callback(f"WARNING:Click CONFIRM_SAFE_STATE to cancel abort countdown")
 
     def _tick_auto_abort_countdown(self, now_ms: int):
         """Update auto-abort countdown and trigger abort if timer expires."""
@@ -266,7 +283,7 @@ class EthernetClient:
                 
                 # Send START packet to announce presence and initiate connection
                 start_packet = EGCPPacket(self._get_next_tx_id(), EGCPPacket.PKT_STA)
-                self._send_packet(start_packet, track_ack=True)
+                self._send_packet(start_packet, track_ack=False)  # Don't track retransmissions of handshake
 
                 # Listen for a packet to come in - this confirms the connection is alive
                 data = self.sock.recv(1024)
@@ -376,7 +393,7 @@ class EthernetClient:
         # NOTE - Although this is a separate high priority thread, applying a stylesheet or doing other
         #        basic things on the GUI can cause 40-50ms pauses in this thread's execution.
         #        As a result the timing loop is constrained to a precision of that amount to not get an abort
-        #        Currently to see an abort, you need to miss 3x 20ms heartbeats (60ms total timeout),
+        #        Currently to see an abort, you need to miss 6x 10ms heartbeats (60ms total timeout),
         #        which provides tolerance for brief GUI hiccups while still detecting connection loss quickly.
         self.heartbeat_thread = QThread()
         self.heartbeat_thread.run = heartbeat_loop
@@ -436,6 +453,10 @@ class EthernetClient:
                                 if len(packet.body) >= 3:
                                     acked_id = struct.unpack('>I', b'\x00' + packet.body[:3])[0]
                                     self.pending_acks.pop(acked_id, None)
+                                else:
+                                    # Legacy compatibility: some peers send ACK with no body
+                                    # and place the acked packet id in the ACK header packet_id.
+                                    self.pending_acks.pop(packet.packet_id, None)
                             
                             elif packet.packet_type == EGCPPacket.PKT_NCK:
                                 # NCK received - log error
@@ -464,8 +485,10 @@ class EthernetClient:
                             elif packet.packet_type == EGCPPacket.PKT_SFE:
                                 # Safe mode entered - ACK and notify
                                 self._send_ack(packet.packet_id)
+                                if self.log_event_callback:
+                                    self.log_event_callback(f"RX_SFE:packet_id={packet.packet_id}")
                                 if self.receive_callback:
-                                    self.receive_callback("ABORTED")
+                                    self.receive_callback(f"ABORTED:REMOTE_SFE:packet_id={packet.packet_id}")
                         
                         except (ValueError, struct.error) as e:
                             # Bad packet, skip one byte and try again
