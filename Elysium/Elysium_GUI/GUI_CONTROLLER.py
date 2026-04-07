@@ -21,6 +21,11 @@ class Signals(QObject):
     valve_updated = pyqtSignal(str, str)     # can be open, closed, or pending a response from the MCU
     sensor_updated = pyqtSignal(str, float, float)      # sensor_name, val, timestamp
     system_status = pyqtSignal(str)
+    
+    # Auto-abort countdown signals (for thread-safe dialog creation)
+    countdown_start = pyqtSignal(int, str, str)  # initial_seconds, valve_name, cmd_type
+    countdown_update = pyqtSignal(int)  # remaining_seconds
+    countdown_close = pyqtSignal()
 
 
 """
@@ -42,6 +47,9 @@ class GUIController:
     def __init__(self, parent: QWidget):
         self.parent = parent
 
+        # Create signals FIRST before EthernetClient (which references them in callbacks)
+        self.signals = Signals()
+        
         # The EthernetClient will connect to the "flight" MCU and listen for packets in a backend thread
         self.ethernet_client = EthernetClient(
             receive_callback = self.handle_new_data,
@@ -54,11 +62,15 @@ class GUIController:
         # Explaining the disconnect loop - the ethernet client calls the disconnect_callback
         # in a separate thread, therefore we must use a signal that pops out of it and back in here
         # to safely change things in the main thread as a result
-        self.signals = Signals()
         # self.signals.connected.connect(self.handle_connect)
         self.signals.disconnected.connect(lambda reason: self.signals.abort_triggered.emit("DISCONNECTED", reason))
         self.signals.abort_triggered.connect(self.handle_abort)
         self.signals.valve_updated.connect(self.update_valve_state)
+        
+        # Connect countdown signals for thread-safe dialog creation
+        self.signals.countdown_start.connect(self.show_abort_countdown_dialog)
+        self.signals.countdown_update.connect(self.update_abort_countdown_dialog)
+        self.signals.countdown_close.connect(self.close_abort_countdown_dialog)
 
         # For file recording
         self.csv_file = None
@@ -76,6 +88,10 @@ class GUIController:
         self.throttling_enabled = False
         self.gimbaling_enabled = False
         self.manual_valve_dialog: QDialog = None
+
+        # Abort countdown dialog tracking
+        self.abort_countdown_dialog: Optional[QDialog] = None
+        self.abort_countdown_label: Optional[QLabel] = None
 
         self.p3_p5_violation_start = None
         self.p4_p6_violation_start = None
@@ -140,6 +156,7 @@ class GUIController:
     
     def handle_connect(self, success: bool):
         if success:
+            self.ethernet_client.set_system_state("CONNECTED")
             self.signals.connected.emit()
         else:
             self.signals.disconnected.emit("Connection failed")
@@ -317,6 +334,8 @@ class GUIController:
         if self.lockout:
             return
 
+        self.ethernet_client.set_system_state("ABORT")
+
         self.pre_abort_valve_states = self.valve_states.copy()
 
         # Disable all valves
@@ -338,6 +357,8 @@ class GUIController:
     def confirm_safe_state(self):
         """Confirm system is safe after abort without any dialog"""
         if self.ethernet_client.connected:
+            self.ethernet_client.cancel_auto_abort_countdown()
+            self.ethernet_client.set_system_state("SAFE")
             self.lockout = False
             # self.abort_state = False
             self.signals.safe_state.emit()
@@ -350,6 +371,29 @@ class GUIController:
 
     def log_event(self, event_type, event_details=""):
         """Log an event to CSV (Req 15)"""
+        # Handle auto-abort countdown events - use signals for thread safety
+        if event_type.startswith("AUTO_ABORT_COUNTDOWN:"):
+            parts = event_type.split(":")
+            if len(parts) >= 2:
+                action = parts[1]
+                if action == "START" and len(parts) >= 3:
+                    # Parse: AUTO_ABORT_COUNTDOWN:START:seconds:valve_name:cmd_type
+                    initial_seconds = int(parts[2])
+                    valve_name = parts[3] if len(parts) >= 4 else "UNKNOWN"
+                    cmd_type = parts[4] if len(parts) >= 5 else "COMMAND"
+                    self.signals.countdown_start.emit(initial_seconds, valve_name, cmd_type)
+                elif action == "REMAINING" and len(parts) >= 3:
+                    # Update the countdown display via signal
+                    remaining_seconds = int(parts[2])
+                    self.signals.countdown_update.emit(remaining_seconds)
+                elif action == "CANCELED":
+                    # Close the dialog via signal
+                    self.signals.countdown_close.emit()
+        
+        # Close countdown dialog when abort actually triggers
+        if event_type.startswith("COMMS_AUTO_ABORT:"):
+            self.signals.countdown_close.emit()
+        
         if not self.csv_writer:
             return
             
@@ -374,7 +418,34 @@ class GUIController:
         readings = sensor_data.strip().split(sep=",")
         for reading in readings:
             if "ABORTED" in reading:
-                self.signals.abort_triggered.emit("engine_abort", "The engine MCU triggered a local abort")
+                # Parse abort reason if available
+                if "ABORTED:COMMS:" in reading:
+                    # Extract reason after ABORTED:COMMS:
+                    reason_part = reading.split("ABORTED:COMMS:", 1)[1] if len(reading.split("ABORTED:COMMS:")) > 1 else "Unknown reason"
+                    
+                    # Strip countdown_expired: prefix if present
+                    if reason_part.startswith("countdown_expired:"):
+                        reason_part = reason_part.replace("countdown_expired:", "", 1)
+                    
+                    # Format the reason for display
+                    if "OPEN_" in reason_part or "CLOSE_" in reason_part:
+                        # Parse: OPEN_NCS1_timeout:packet_id=123 or CLOSE_LA-BV1_timeout:packet_id=456
+                        parts = reason_part.split("_")
+                        if len(parts) >= 2:
+                            cmd = parts[0]  # OPEN or CLOSE
+                            valve = parts[1].split(":")[0]  # NCS1 or LA-BV1
+                            display_reason = f"Valve {valve} {cmd} command failed (timeout)"
+                        else:
+                            display_reason = reason_part
+                    else:
+                        display_reason = reason_part
+                    self.signals.abort_triggered.emit("comms_auto_abort", display_reason)
+                elif "ABORTED:REMOTE_SFE:" in reading:
+                    sfe_reason = reading.split("ABORTED:REMOTE_SFE:", 1)[1] if len(reading.split("ABORTED:REMOTE_SFE:")) > 1 else "unknown packet"
+                    self.signals.abort_triggered.emit("remote_safe_mode", f"Received SFE from MCU ({sfe_reason})")
+                else:
+                    # Engine MCU triggered abort
+                    self.signals.abort_triggered.emit("engine_abort", "The engine MCU triggered a local abort")
 
             # Valve command responses
             elif "VALVE_SUCCESS" in reading:
@@ -548,6 +619,59 @@ class GUIController:
         if countdown_dialog.exec_() == QDialog.Accepted:
             self.apply_operation("Pressurization")
 
+    def show_abort_countdown_dialog(self, initial_seconds: int, valve_name: str = "UNKNOWN", cmd_type: str = "COMMAND"):
+        """Show a non-modal dialog displaying the auto-abort countdown"""
+        # Close any existing countdown dialog
+        if self.abort_countdown_dialog is not None:
+            self.abort_countdown_dialog.close()
+            self.abort_countdown_dialog = None
+        
+        # Create countdown dialog
+        self.abort_countdown_dialog = QDialog(self.parent)
+        self.abort_countdown_dialog.setWindowTitle("AUTO-ABORT WARNING")
+        self.abort_countdown_dialog.setMinimumSize(400, 180)
+        countdown_layout = QVBoxLayout(self.abort_countdown_dialog)
+        
+        # Countdown label
+        self.abort_countdown_label = QLabel(f"ABORT IN {initial_seconds} SECONDS")
+        self.abort_countdown_label.setAlignment(Qt.AlignCenter)
+        font = self.abort_countdown_label.font()
+        font.setPointSize(16)
+        font.setBold(True)
+        self.abort_countdown_label.setFont(font)
+        countdown_layout.addWidget(self.abort_countdown_label)
+        
+        # Warning message with valve details
+        warning_label = QLabel(f"Valve {valve_name} {cmd_type} command failed!\nClick button below to cancel abort.")
+        warning_label.setAlignment(Qt.AlignCenter)
+        countdown_layout.addWidget(warning_label)
+        
+        # Cancel button
+        cancel_btn = QPushButton("CONFIRM SAFE STATE\n(Cancel Abort)")
+        cancel_btn.setStyleSheet("background-color: green; color: white; font-size: 14px; padding: 10px;")
+        cancel_btn.clicked.connect(self._cancel_abort_countdown)
+        countdown_layout.addWidget(cancel_btn)
+        
+        # Show dialog non-modally
+        self.abort_countdown_dialog.show()
+    
+    def update_abort_countdown_dialog(self, remaining_seconds: int):
+        """Update the countdown display"""
+        if self.abort_countdown_dialog is not None and self.abort_countdown_label is not None:
+            self.abort_countdown_label.setText(f"ABORT IN {remaining_seconds} SECONDS")
+    
+    def close_abort_countdown_dialog(self):
+        """Close the abort countdown dialog"""
+        if self.abort_countdown_dialog is not None:
+            self.abort_countdown_dialog.close()
+            self.abort_countdown_dialog = None
+            self.abort_countdown_label = None
+    
+    def _cancel_abort_countdown(self):
+        """Called when user clicks the cancel button in the countdown dialog"""
+        self.confirm_safe_state()
+        self.close_abort_countdown_dialog()
+
     def update_valve_state(self, valve_name: str, new_val: str):        
         # Only update the internal state if it was confirmed open or closed
         if new_val == "OPEN":
@@ -608,6 +732,11 @@ class GUIController:
         else:
             new_state = state
 
+        # Only send command if valve state is actually changing
+        if valve_name in self.valve_states and self.valve_states[valve_name] == new_state:
+            # Valve already in desired state, no need to send command
+            return
+
         # self.valve_states[valve_name] = new_state     # needs to update when we get a response
         self.signals.valve_updated.emit(valve_name, "PENDING")
         
@@ -663,6 +792,8 @@ class GUIController:
     def apply_operation(self, operation: str):
         if self.lockout:
             return
+
+        self.ethernet_client.set_system_state(operation)
 
         active_valves = self.valve_operation_states.get(operation, [])
         for name in self.valve_states:

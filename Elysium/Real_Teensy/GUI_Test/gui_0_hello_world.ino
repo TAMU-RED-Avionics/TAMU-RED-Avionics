@@ -2,6 +2,7 @@
 #include <NativeEthernet.h>
 #include <NativeEthernetUdp.h>
 #include <IPAddress.h>
+#include "EGCP.h"
 
 /*
 -------------------------------------------------------------------
@@ -15,9 +16,11 @@ To test this with your laptop: (mac example)
 */
 
 // BAUD rate 
-const int BAUD = 115200;                   // serial com in bits per second     <-- USER INPUT
+const int BAUD = 115200;
 unsigned int PORT = 8888;
-char packetBuffer[UDP_TX_PACKET_MAX_SIZE];  // buffer to hold incoming packet,
+
+// Packet tracking
+uint32_t PACKET_ID_COUNTER = 0;
 
 // An EthernetUDP instance to let us send and receive packets over UDP
 EthernetUDP udp;
@@ -25,29 +28,12 @@ byte MAC_ADDRESS[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
 IPAddress REMOTE(192, 168, 1, 175);
 IPAddress LOCAL(192, 168, 1, 174);
 
-void output_string(unsigned int port, const char *to_write) {
-  udp.beginPacket(REMOTE, port);
-  udp.write(to_write);
+void tx_egcp_packet(const EGCPPacket& packet) {
+  uint8_t buffer[20];
+  uint8_t packet_size = packet.encode(buffer, sizeof(buffer));
+  udp.beginPacket(REMOTE, PORT);
+  udp.write(buffer, packet_size);
   udp.endPacket();
-}
-
-void output_float(unsigned int port, float to_write) {
-  char buf[100]; // *slaps roof* yeah that'll do nicely
-  constexpr unsigned long PRECISION = 5;
-  dtostrf(to_write, 1, PRECISION, buf);
-  udp.beginPacket(REMOTE, port);
-  udp.write(buf);
-  udp.endPacket();
-}
-
-String input_until(char stop_character) {
-  String ret = "";
-  char c = udp.read();
-  while (c != stop_character) {
-    ret += c;
-    c = udp.read();
-  }
-  return ret;
 }
 
 bool init_comms(byte* mac, unsigned int port) {
@@ -95,4 +81,9 @@ void loop() {
   // sudo ifconfig enX inet 192.168.1.175 netmask 255.255.255.0 up
   // nc -u -l 192.168.1.175
   output_string(PORT, "skill issue\n");
-}
+}  
+  // Send heartbeat packet
+  EGCPPacket hrt_pkt(PACKET_ID_COUNTER++, EGCPPacket::PKT_HRT);
+  tx_egcp_packet(hrt_pkt);
+  
+  delay(1000
