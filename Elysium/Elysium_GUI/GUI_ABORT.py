@@ -97,10 +97,10 @@ class AbortWindow(QWidget):
     def connect_action(self):
         self.safe_state_btn.setEnabled(True)
 
-    def disconnect_action(self):
+    def disconnect_action(self, reason=""):
         self.safe_state_btn.setEnabled(False)
 
-    def abort_action(self):
+    def abort_action(self, abort_type, reason):
         self.manual_abort_btn.setVisible(False)
         self.safe_state_btn.setVisible(True)
 

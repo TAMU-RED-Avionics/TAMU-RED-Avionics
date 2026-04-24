@@ -88,16 +88,22 @@ class ConnectionWindow(QWidget):
         self.conn_status_label.setText("Connected Successfully")
         self.connect_btn.setEnabled(False)
 
-    def disconnect_action(self):
+    def disconnect_action(self, reason=""):
         self.spinner.stop()
         self.spinner_container.setVisible(False)
 
         self.connect_btn.setEnabled(True)
 
         if self.conn_status_label.text() == "Connecting...":
-            self.conn_status_label.setText("Connection Failed")
+            message = "Connection Failed"
+            if reason:
+                message += f": {reason}"
+            self.conn_status_label.setText(message)
         else:
-            self.conn_status_label.setText("Disconnected")
+            message = "Disconnected"
+            if reason:
+                message += f": {reason}"
+            self.conn_status_label.setText(message)
 
     def connect_ethernet(self):
         # Get the IP and port from the input fields

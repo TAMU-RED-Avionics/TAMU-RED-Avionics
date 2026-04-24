@@ -153,13 +153,30 @@ class GUIController:
         self.setup_abort_monitor()
     
     # ABORT CONTROL ------------------------------------------------------------------------------------------------
+
+    def _summarize_connection_error(self, reason: str) -> str:
+        """Map verbose socket diagnostics to concise UI status text."""
+        msg = (reason or "").lower()
+        if "timed out" in msg:
+            return "Connection Timeout"
+        if "already in use" in msg:
+            return "Port In Use"
+        if "network unreachable" in msg:
+            return "Network Unreachable"
+        if "host" in msg and "unreachable" in msg:
+            return "Host Unreachable"
+        if "permission denied" in msg:
+            return "Permission Denied"
+        return "Connection Failed"
     
     def handle_connect(self, success: bool):
         if success:
             self.ethernet_client.set_system_state("CONNECTED")
             self.signals.connected.emit()
         else:
-            self.signals.disconnected.emit("Connection failed")
+            detailed_reason = self.ethernet_client.last_connection_error or "Connection failed"
+            concise_reason = self._summarize_connection_error(detailed_reason)
+            self.signals.disconnected.emit(concise_reason)
     
     def setup_abort_monitor(self):
         self.abort_timer = QTimer()

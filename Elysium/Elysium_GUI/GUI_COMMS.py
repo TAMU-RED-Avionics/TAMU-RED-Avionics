@@ -1,5 +1,6 @@
 from re import I
-from socket import socket, SocketKind, AddressFamily
+import errno
+from socket import socket, SocketKind, AddressFamily, timeout as SocketTimeout
 from threading import Thread
 import time
 import struct
@@ -107,6 +108,8 @@ class EthernetClient:
         self.remote_ip: str = None
         self.remote_port: int = None
         self.sock: socket = None
+        self.last_connection_error: str = ""
+        self.local_source_ip: str = ""
         
         # Declaration of the three threads in this controller
         self.connection_thread: QThread = None
@@ -121,10 +124,15 @@ class EthernetClient:
 
         self.timeout: float = 3                             # seconds
         self.heartbeat_tx_cadence: int = 10                 # ms
-        self.heartbeat_rx_miss_interval: int = 100          # ms (10x missed heartbeats at 10ms cadence)
+        self.heartbeat_rx_miss_interval: int = 100          # ms (11x missed heartbeats at 10ms cadence; occasionally missing at 101ms)
 
         self.heartbeat_last_tx: int = 0                     # ms since Jan 1 1970
         self.heartbeat_last_rx: int = 0                     # ms since Jan 1 1970
+        self.heartbeat_tx_count: int = 0
+        self.heartbeat_miss_abort_active: bool = False
+        self.heartbeat_miss_last_rx_ms: int = 0
+        self.heartbeat_miss_triggered_ms: int = 0
+        self.heartbeat_miss_recovery_logged: bool = False
         
         # EGCP packet tracking
         self.tx_packet_id: int = 0                          # Transmit packet ID counter
@@ -146,6 +154,46 @@ class EthernetClient:
         packet_id = self.tx_packet_id
         self.tx_packet_id = (self.tx_packet_id + 1) & 0xFFFFFF  # Keep in 24-bit range
         return packet_id
+
+    def _describe_connection_error(self, err: Exception, ip: str, port: int) -> str:
+        """Build a user-friendly connection failure reason for logs/UI."""
+        if isinstance(err, SocketTimeout):
+            e2_hint = ""
+            if self.local_source_ip:
+                e2_hint = (
+                    f" For E2_Teensy, confirm REMOTE is {self.local_source_ip}, "
+                    f"LOCAL is {ip}, and PORT is {port}."
+                )
+            return (
+                f"Timed out waiting {self.timeout:.1f}s for response from {ip}:{port}. "
+                "Verify host/port, target firmware is running, and UDP traffic is allowed."
+                f"{e2_hint}"
+            )
+
+        if isinstance(err, OSError):
+            if err.errno == errno.EADDRINUSE:
+                return (
+                    f"Local UDP port {port} is already in use. "
+                    "Close conflicting process or choose a different local/remote port."
+                )
+            if err.errno == errno.ENETUNREACH:
+                return (
+                    f"Network unreachable for {ip}:{port}. "
+                    "Check Ethernet/Wi-Fi route and subnet configuration."
+                )
+            if err.errno == errno.EHOSTUNREACH:
+                return (
+                    f"Host {ip} is unreachable on UDP {port}. "
+                    "Check cable, switch, and destination IP settings."
+                )
+            if err.errno == errno.EACCES:
+                return (
+                    f"Permission denied opening UDP socket for {ip}:{port}. "
+                    "Try a non-privileged port (>1024) and check local firewall rules."
+                )
+
+        raw = str(err).strip() or type(err).__name__
+        return f"Connection setup failed for {ip}:{port}: {raw}"
     
     def _send_packet(self, packet: EGCPPacket, track_ack: bool = False):
         """Send an EGCP packet over the socket"""
@@ -264,6 +312,7 @@ class EthernetClient:
     def connect(self, ip: str, port: int):
         self.remote_ip = ip     # In the future we can probably automatically determine remote_ip when we sniff the first heartbeat packets
         self.remote_port = port
+        self.last_connection_error = ""
 
         if self.connecting or self.connected:     # If it is already connecting, just bounce because the command is redundant
             return
@@ -272,6 +321,7 @@ class EthernetClient:
 
         # The connection worker is a separate thread that handles the connection attempt
         def connection_worker():
+            print(f"[EthernetClient] Starting UDP connect attempt to {ip}:{port} (timeout={self.timeout:.1f}s)")
             try:
                 # Create the socket
                 self.sock = socket(AddressFamily.AF_INET, SocketKind.SOCK_DGRAM)
@@ -282,24 +332,64 @@ class EthernetClient:
                 try:
                     self.sock.bind(("", port))     # bind to the hardcoded port (should be configurable live in the future
                 except OSError:
-                    print(f"Port {port} in use, binding to ephemeral port")
+                    print(f"[EthernetClient] Local UDP port {port} in use, binding to ephemeral port")
                     self.sock.bind(("", 0))
+
+                local_host, local_port = self.sock.getsockname()
+                print(f"[EthernetClient] Local socket bound on {local_host}:{local_port}")
+
+                # Determine which local source IP the OS will use for this destination.
+                self.local_source_ip = ""
+                probe_sock = None
+                try:
+                    probe_sock = socket(AddressFamily.AF_INET, SocketKind.SOCK_DGRAM)
+                    probe_sock.connect((ip, port))
+                    self.local_source_ip = probe_sock.getsockname()[0]
+                    print(f"[EthernetClient] Routed source IP toward {ip}:{port} is {self.local_source_ip}")
+                except Exception:
+                    pass
+                finally:
+                    if probe_sock:
+                        probe_sock.close()
                 
                 # self.sock.connect((ip, port))
                 
                 # Send START packet to announce presence and initiate connection
-                start_packet = EGCPPacket(self._get_next_tx_id(), EGCPPacket.PKT_STA)
-                self._send_packet(start_packet, track_ack=False)  # Don't track retransmissions of handshake
+                # Retry handshake packets until timeout expires. This avoids false failures
+                # when the first UDP packet is dropped during ARP resolution.
+                handshake_deadline = time.monotonic() + self.timeout
+                handshake_rx = b""
+                handshake_attempts = 0
 
-                # Listen for a packet to come in - this confirms the connection is alive
-                data = self.sock.recv(1024)
-                if not data:
-                    ConnectionError("No data received in packet")
+                self.sock.settimeout(0.25)
+                while time.monotonic() < handshake_deadline:
+                    handshake_attempts += 1
+                    start_packet = EGCPPacket(self._get_next_tx_id(), EGCPPacket.PKT_STA)
+                    self._send_packet(start_packet, track_ack=False)
+                    if handshake_attempts <= 3 or handshake_attempts % 5 == 0:
+                        print(f"[EthernetClient] Handshake attempt {handshake_attempts}: sent PKT_STA to {ip}:{port}")
+
+                    try:
+                        data = self.sock.recv(1024)
+                        if data:
+                            handshake_rx = data
+                            break
+                    except SocketTimeout:
+                        continue
+
+                self.sock.settimeout(self.timeout)
+                if not handshake_rx:
+                    raise TimeoutError(
+                        f"No UDP response received after {handshake_attempts} handshake attempts"
+                    )
+
+                print(f"[EthernetClient] Handshake response received ({len(handshake_rx)} bytes) from {ip}:{port}")
 
                 # If we reach past this point in execution, it means that we have NOT timed out or encountered some other issue
 
                 self.connected = True
                 self.connecting = False
+                self.last_connection_error = ""
 
                 # Start NOOP heartbeat (Req 25)
                 self.start_heartbeat()
@@ -312,8 +402,14 @@ class EthernetClient:
             
             # Handle errors, notably timeouts which will be common
             except Exception as e:
+                detailed_error = self._describe_connection_error(e, ip, port)
+                self.last_connection_error = detailed_error
                 if self.log_event_callback:
-                    self.log_event_callback(f"CONNECTION_ERROR:{str(e)}")
+                    self.log_event_callback(f"CONNECTION_ERROR:{detailed_error}")
+
+                print(f"[EthernetClient] Connection attempt failed: {detailed_error}")
+                if isinstance(e, SocketTimeout):
+                    print("[EthernetClient] Diagnostic: no UDP response packet received after START handshake")
                 
                 self.connecting = False
                 self.connected = False
@@ -321,7 +417,7 @@ class EthernetClient:
                 if self.connect_callback:
                     self.connect_callback(False)  # Failure
 
-                print("Connect ran into exception: ", e)
+                print("[EthernetClient] Raw exception:", repr(e))
         
         # Start connection in the separate thread
         self.connection_thread = QThread()
@@ -350,6 +446,7 @@ class EthernetClient:
                             hrt_packet = EGCPPacket(self._get_next_tx_id(), EGCPPacket.PKT_HRT)
                             self._send_packet(hrt_packet)
                             self.heartbeat_last_tx = now
+                            self.heartbeat_tx_count += 1
 
                         if self.log_event_callback:
                             self.log_event_callback("HEARTBEAT:HRT")
@@ -386,12 +483,6 @@ class EthernetClient:
                 # Update non-fire auto-abort countdown (if active)
                 now = QDateTime.currentMSecsSinceEpoch()
                 self._tick_auto_abort_countdown(now)
-
-                # Check on the RX heartbeat
-                now = QDateTime.currentMSecsSinceEpoch()
-                if (now - self.heartbeat_last_rx) > self.heartbeat_rx_miss_interval:
-                    self.heartbeat_active = False
-                    self.disconnect("Heartbeat missed")
 
                 time.sleep(0.001)    # Control the pace of this thread to 1ms to prevent it from burning too much CPU
         
@@ -441,16 +532,29 @@ class EthernetClient:
                             buffer = buffer[total_packet_size:]
                             
                             packet = EGCPPacket.decode(packet_data)
+                            # Any valid packet proves link liveness.
+                            self.heartbeat_last_rx = QDateTime.currentMSecsSinceEpoch()
+
+                            if self.heartbeat_miss_abort_active and not self.heartbeat_miss_recovery_logged:
+                                now_ms = QDateTime.currentMSecsSinceEpoch()
+                                elapsed_since_abort = now_ms - self.heartbeat_miss_triggered_ms
+                                elapsed_since_last_rx = now_ms - self.heartbeat_miss_last_rx_ms
+                                packet_kind = "heartbeat packet" if packet.packet_type == EGCPPacket.PKT_HRT else f"packet type {packet.packet_type}"
+                                print(
+                                    f"[EthernetClient] Next {packet_kind} after miss: "
+                                    f"elapsed_since_last_rx={elapsed_since_last_rx} ms "
+                                    f"elapsed_since_abort={elapsed_since_abort} ms"
+                                )
+                                self.heartbeat_miss_recovery_logged = True
+                                self.heartbeat_miss_abort_active = False
                             
                             # Handle different packet types
                             if packet.packet_type == EGCPPacket.PKT_STA:
                                 # Connection START received - ACK it
                                 self._send_ack(packet.packet_id)
-                                self.heartbeat_last_rx = QDateTime.currentMSecsSinceEpoch()
                             
                             elif packet.packet_type == EGCPPacket.PKT_HRT:
                                 # Reset the heartbeat timer when HRT received
-                                self.heartbeat_last_rx = QDateTime.currentMSecsSinceEpoch()
                                 # Send ACK for heartbeat
                                 self._send_ack(packet.packet_id)
                             
