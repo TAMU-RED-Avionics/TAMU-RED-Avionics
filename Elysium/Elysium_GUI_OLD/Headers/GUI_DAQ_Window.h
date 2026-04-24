@@ -36,6 +36,12 @@ private:
     QString teensy_time;
     QHash<QString, double>* data;
 
+    QStringList pt_keys;
+    QStringList lc_keys;
+    QStringList tc_keys;
+    QStringList other_keys;
+    QString current_state = "Unknown";
+
     bool is_saving;
     QFile* data_file;
     QPushButton* start_save_btn;
@@ -52,6 +58,9 @@ private slots:
     void end_save();
     void save();
     void connection_failed();
+
+public slots:
+    void control_state_changed(QString state);
 
 signals:
     void new_data();

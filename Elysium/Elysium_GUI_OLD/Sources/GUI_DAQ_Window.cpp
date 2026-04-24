@@ -53,6 +53,18 @@ GUI_DAQ_Window::GUI_DAQ_Window(GUI_Main_Window* parent, QSerialPort* ser):
             QString ID = info.at(0);
             this->sensors[ID] = new Sensor(ID, info.at(1), info.at(2));
 
+            if (ID == "t_loc") {
+                // don't log time until gui lockout, kinda pointless
+            } else if (ID.startsWith("P")) {
+                this->pt_keys.append(ID);
+            } else if (ID.startsWith("L")) {
+                this->lc_keys.append(ID);
+            } else if (ID.startsWith("T") || ID.startsWith("TC")) {
+                this->tc_keys.append(ID);
+            } else {
+                this->other_keys.append(ID);
+            }
+
             // Read the second line which contains placement and type info
             // TODO: Implement groups
             info = in.readLine().split(',');
@@ -214,12 +226,29 @@ void GUI_DAQ_Window::start_save() {
 
     // Write the header for the .csv file
     QTextStream out(this->data_file);
-    out << "Global Time (ms from Epoch),Local Time (micro s from Teensy boot)";
-    QStringList keys = this->sensors.keys();
-    for (int i = 0; i < keys.size(); ++i) {
-        out << ',' << this->sensors[keys[i]]->get_full_name();
+    out << "System Time (HH:mm:ss),Local Time (micro s from Teensy boot),";
+    
+    out << ","; // Blank column
+    for (int i = 0; i < this->pt_keys.size(); ++i) {
+        out << this->sensors[this->pt_keys[i]]->get_full_name() << ",";
     }
-    out << endl;
+    
+    out << ","; // Blank column
+    for (int i = 0; i < this->lc_keys.size(); ++i) {
+        out << this->sensors[this->lc_keys[i]]->get_full_name() << ",";
+    }
+    
+    out << ","; // Blank column
+    for (int i = 0; i < this->tc_keys.size(); ++i) {
+        out << this->sensors[this->tc_keys[i]]->get_full_name() << ",";
+    }
+
+    out << ","; // Blank column
+    for (int i = 0; i < this->other_keys.size(); ++i) {
+        out << this->sensors[this->other_keys[i]]->get_full_name() << ",";
+    }
+
+    out << "Control State" << endl;
 }
 
 void GUI_DAQ_Window::end_save() {
@@ -241,20 +270,45 @@ void GUI_DAQ_Window::save() {
 
     // Handles outputs via a text stream for nicer syntax and control with QStrings
     QTextStream out(this->data_file);
-    out << QDateTime::currentMSecsSinceEpoch();
+    out << QDateTime::currentDateTime().toString("HH:mm:ss");
 
     // Records the local time from the Teensy
-    out << ',' << this->teensy_time;
+    out << ',' << this->teensy_time << ',';
 
-    QStringList keys = this->sensors.keys();
-    for (int i = 0; i < keys.size(); ++i) {
-        // TODO: Use locally stored sensor data (possibly, the averaged values)
-        // instead of reading from the sensor object (note that this is also locally stored, not a serial read)
-        out << ',' << this->sensors[keys[i]]->get_data();
+    out << ','; // Blank column
+    for (int i = 0; i < this->pt_keys.size(); ++i) {
+        out << this->sensors[this->pt_keys[i]]->get_data() << ",";
     }
-    out << endl;
+
+    out << ',';
+    for (int i = 0; i < this->lc_keys.size(); ++i) {
+        out << this->sensors[this->lc_keys[i]]->get_data() << ",";
+    }
+
+    out << ',';
+    for (int i = 0; i < this->tc_keys.size(); ++i) {
+        out << this->sensors[this->tc_keys[i]]->get_data() << ",";
+    }
+
+    out << ',';
+    for (int i = 0; i < this->other_keys.size(); ++i) {
+        out << this->sensors[this->other_keys[i]]->get_data() << ",";
+    }
+
+    out << this->current_state << endl;
 }
 
 void GUI_DAQ_Window::connection_failed() {
     cout << "Connection failed" << endl;
+}
+
+void GUI_DAQ_Window::control_state_changed(QString state) {
+    if (state == "Fully Closed" && this->is_saving) {
+        this->end_save();
+    }
+    
+    this->current_state = state;
+    if (state == "Terminal Count" && !this->is_saving) {
+        this->start_save();
+    }
 }

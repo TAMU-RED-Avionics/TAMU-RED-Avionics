@@ -484,6 +484,16 @@ class EthernetClient:
                 now = QDateTime.currentMSecsSinceEpoch()
                 self._tick_auto_abort_countdown(now)
 
+                # Check for missed heartbeat from Teensy
+                if self.heartbeat_last_rx > 0:
+                    if (now - self.heartbeat_last_rx) > self.heartbeat_rx_miss_interval:
+                        if not self.heartbeat_miss_abort_active:
+                            self.heartbeat_miss_abort_active = True
+                            self.heartbeat_miss_last_rx_ms = self.heartbeat_last_rx
+                            self.heartbeat_miss_triggered_ms = now
+                            self.heartbeat_miss_recovery_logged = False
+                            print(f"[EthernetClient] Heartbeat missed (>{self.heartbeat_rx_miss_interval}ms)! Waiting for next packet to measure gap...")
+
                 time.sleep(0.001)    # Control the pace of this thread to 1ms to prevent it from burning too much CPU
         
         # Start the thread
@@ -547,6 +557,9 @@ class EthernetClient:
                                 )
                                 self.heartbeat_miss_recovery_logged = True
                                 self.heartbeat_miss_abort_active = False
+                                
+                                # Abort now that we've received the next packet and measured the gap
+                                self._trigger_comms_auto_abort("heartbeat_timeout_measured")
                             
                             # Handle different packet types
                             if packet.packet_type == EGCPPacket.PKT_STA:

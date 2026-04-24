@@ -108,6 +108,8 @@ void GUI_COM_Window::update_config() {
         this->state_machine = new State_Machine(config_name, this->DAQ->get_data());
         QObject::connect(this->state_machine, SIGNAL(new_state(QString)),
                          this->CTRL, SLOT(new_state(QString)));
+        QObject::connect(this->CTRL, SIGNAL(new_state_signal(QString)),
+                         this->DAQ, SLOT(control_state_changed(QString)));
         QObject::connect(this->state_machine, SIGNAL(allowed_states(QStringList*)),
                          this->CTRL, SLOT(sm_allowed_states(QStringList*)));
         QObject::connect(this->CTRL, SIGNAL(auto_aborts_enabled(int)),
@@ -211,6 +213,8 @@ void GUI_COM_Window::connect_to_serial() {
         this->state_machine = new State_Machine(config_name, this->DAQ->get_data());
         QObject::connect(this->state_machine, SIGNAL(new_state(QString)),
                          this->CTRL, SLOT(new_state(QString)));
+        QObject::connect(this->CTRL, SIGNAL(new_state_signal(QString)),
+                         this->DAQ, SLOT(control_state_changed(QString)));
         QObject::connect(this->state_machine, SIGNAL(allowed_states(QStringList*)),
                          this->CTRL, SLOT(sm_allowed_states(QStringList*)));
         QObject::connect(this->CTRL, SIGNAL(auto_aborts_enabled(int)),
