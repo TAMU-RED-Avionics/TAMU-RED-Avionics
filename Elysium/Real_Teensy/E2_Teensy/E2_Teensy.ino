@@ -7,6 +7,16 @@ VARIABLES & USER INPUT
 #include <Arduino.h>
 #include "EGCP.h"  // Elysium Ground Communications Protocol
 
+#define SERIAL_DEBUG 1
+
+#if defined(ARDUINO) && SERIAL_DEBUG
+#define DBG_PRINTLN(x) Serial.println(x)
+#define DBG_PRINT(x) Serial.print(x)
+#else
+#define DBG_PRINTLN(x)
+#define DBG_PRINT(x)
+#endif
+
 // time variables
 long unsigned LAST_SENSOR_UPDATE = 0;                     // Timestamp of last sensor reading (microsec)
 const long unsigned SENSOR_UPDATE_INTERVAL = 1000;        // sensor update interval (microsec)              <-- USER INPUT
@@ -15,7 +25,7 @@ long unsigned LAST_LC_UPDATE = 0;                         // Timestamp of last L
 const long unsigned LC_UPDATE_INTERVAL = 100000;          // Load Cell update interval (microsec)           <-- USER INPUT
 
 long unsigned LAST_COMMUNICATION_TIME = 0;                // Timestamp of last communication of any type (microsec)
-const long unsigned CONNECTION_TIMEOUT = 150000;          // automated shutdown timeout for complete comms failure (microsec)           <-- USER INPUT
+const long unsigned CONNECTION_TIMEOUT = 5000000;         // automated shutdown timeout for complete comms failure (microsec)           <-- USER INPUT
 
 long unsigned LAST_HUMAN_UPDATE = 0;                      // Timestamp of last human communication(microsec)
 const long unsigned HUMAN_CONNECTION_TIMEOUT = 300000000; // automated shutdown timeout for human comms failure (microsec)              <-- USER INPUT
@@ -137,11 +147,43 @@ EthernetUDP udp;
 byte MAC_ADDRESS[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
 IPAddress REMOTE(192, 168, 1, 175);
 IPAddress LOCAL(192, 168, 1, 174);
+IPAddress ACTIVE_REMOTE(192, 168, 1, 175);
+unsigned int ACTIVE_REMOTE_PORT = 8888;
+bool active_remote_valid = false;
+const bool ENABLE_SETUP_UDP_TESTS = false;
 
 // EGCP packet tracking
 uint32_t tx_packet_id = 0;                  // Transmit packet ID counter
 uint8_t egcp_binary_buffer[256];            // Buffer for assembling binary packets
 uint16_t egcp_buffer_pos = 0;               // Current position in binary buffer
+uint32_t heartbeat_rx_count = 0;
+unsigned long last_loop_alive_log_ms = 0;
+
+const char* packet_type_name(uint8_t packet_type) {
+  switch (packet_type) {
+    case EGCPPacket::PKT_ACK: return "ACK";
+    case EGCPPacket::PKT_NCK: return "NCK";
+    case EGCPPacket::PKT_HRT: return "HRT";
+    case EGCPPacket::PKT_VSO: return "VSO";
+    case EGCPPacket::PKT_VSC: return "VSC";
+    case EGCPPacket::PKT_GVS: return "GVS";
+    case EGCPPacket::PKT_BGP: return "BGP";
+    case EGCPPacket::PKT_HGP: return "HGP";
+    case EGCPPacket::PKT_SFE: return "SFE";
+    case EGCPPacket::PKT_ADC: return "ADC";
+    case EGCPPacket::PKT_STA: return "STA";
+    default: return "UNK";
+  }
+}
+
+void pack_float_big_endian(float value, uint8_t* out) {
+  uint8_t raw[4];
+  memcpy(raw, &value, 4);
+  out[0] = raw[3];
+  out[1] = raw[2];
+  out[2] = raw[1];
+  out[3] = raw[0];
+}
 
 // Helper to get next TX packet ID (24-bit wraparound)
 uint32_t getNextTxId() {
@@ -155,7 +197,9 @@ void sendEGCPPacket(const EGCPPacket& pkt) {
     uint8_t buffer[20];
     uint8_t size = pkt.encode(buffer, sizeof(buffer));
     if (size > 0) {
-        udp.beginPacket(REMOTE, PORT);
+    IPAddress target_ip = active_remote_valid ? ACTIVE_REMOTE : REMOTE;
+    unsigned int target_port = active_remote_valid ? ACTIVE_REMOTE_PORT : PORT;
+    udp.beginPacket(target_ip, target_port);
         udp.write(buffer, size);
         udp.endPacket();
     }
@@ -174,8 +218,10 @@ void sendACK(uint32_t packet_id_to_ack) {
 }
 
 void output_string(unsigned int port, const char *to_write) {
-  udp.beginPacket(REMOTE, port);
-  udp.write(to_write);
+  IPAddress target_ip = active_remote_valid ? ACTIVE_REMOTE : REMOTE;
+  unsigned int target_port = active_remote_valid ? ACTIVE_REMOTE_PORT : port;
+  udp.beginPacket(target_ip, target_port);
+  udp.write((const uint8_t*)to_write, strlen(to_write));
   udp.endPacket();
 }
 
@@ -184,7 +230,7 @@ void output_float(unsigned int port, float to_write) {
   constexpr unsigned long PRECISION = 5;
   dtostrf(to_write, 1, PRECISION, buf);
   udp.beginPacket(REMOTE, port);
-  udp.write(buf);
+  udp.write((const uint8_t*)buf, strlen(buf));
   udp.endPacket();
 }
 
@@ -203,14 +249,17 @@ bool init_comms(byte* mac, unsigned int port) {
   IPAddress GATEWAY(192, 168, 1, 1);   // there is no router, so this is meaningless 
   IPAddress SUBNET(255, 255, 255, 0);  // could be almost anything else tbh
   Ethernet.begin(mac, LOCAL, GATEWAY, SUBNET);
+  DBG_PRINTLN("[E2] Ethernet.begin complete");
   if (Ethernet.hardwareStatus() == EthernetNoHardware) {
-    Serial.println("ERR: No Ethernet board detected");
+    DBG_PRINTLN("ERR: No Ethernet board detected");
     return false;
   } else if (Ethernet.linkStatus() == LinkOFF) {
-    Serial.println("ERR: Ethernet cable disconnected");
+    DBG_PRINTLN("ERR: Ethernet cable disconnected");
     return false;
   }
   udp.begin(port);
+  DBG_PRINT("[E2] UDP listening on port ");
+  DBG_PRINTLN(port);
   return true;
 }
 
@@ -254,7 +303,7 @@ THERMOCOUPLE SET UP
 //#define I2C_ADDRESS2 (0x66)
 
 // Thermocouple mcp identifier
-Adafruit_MCP9600 mcp;
+// Adafruit_MCP9600 mcp;
 //Adafruit_MCP9600 mcp2;
 
 
@@ -316,15 +365,34 @@ SETUP LOOP
 -------------------------------------------------------------------
 */
 void setup() {
-  // Serial.begin(BAUD);           // initializes serial communication at set baud rate
+#if defined(ARDUINO)
+  Serial.begin(BAUD);           // initializes serial communication at set baud rate
+  delay(50);
+#endif
+  DBG_PRINTLN("[E2] Booting E2_Teensy firmware");
+  DBG_PRINT("[E2] LOCAL IP: ");
+  DBG_PRINT(LOCAL[0]); DBG_PRINT('.'); DBG_PRINT(LOCAL[1]); DBG_PRINT('.'); DBG_PRINT(LOCAL[2]); DBG_PRINT('.'); DBG_PRINTLN(LOCAL[3]);
+  DBG_PRINT("[E2] REMOTE IP: ");
+  DBG_PRINT(REMOTE[0]); DBG_PRINT('.'); DBG_PRINT(REMOTE[1]); DBG_PRINT('.'); DBG_PRINT(REMOTE[2]); DBG_PRINT('.'); DBG_PRINTLN(REMOTE[3]);
+  DBG_PRINT("[E2] PORT: ");
+  DBG_PRINTLN(PORT);
+  DBG_PRINTLN("[E2] Dynamic peer mode: enabled");
+
   init_comms(MAC_ADDRESS, PORT);  // does what it says on the tin
+  LAST_COMMUNICATION_TIME = micros();
+  LAST_HUMAN_UPDATE = micros();
+#if defined(ARDUINO)
   Wire.begin();
+#endif
+  DBG_PRINTLN("[E2] Stage: Wire initialized");
 
   /*
   VALVE SET UP
   -----------------------
   */
-  output_string(PORT, "test1");
+  if (ENABLE_SETUP_UDP_TESTS) {
+    output_string(PORT, "test1");
+  }
   // Serial.println("test1");
 
   pinMode(NCS1_PIN, OUTPUT); 
@@ -340,16 +408,21 @@ void setup() {
   pinMode(IGN1_PIN, OUTPUT);
   pinMode(IGN2_PIN, OUTPUT);
   pinMode(GIMBAL_ENABLE_PIN, OUTPUT);
+  DBG_PRINTLN("[E2] Stage: Valve/igniter pins initialized");
+  DBG_PRINTLN("[E2] Stage: Before setup UDP test 2");
   
 
   // Serial.println("test2_Pins");
-  output_string(PORT, "test2_Pins");
+  if (ENABLE_SETUP_UDP_TESTS) {
+    output_string(PORT, "test2_Pins");
+  }
+  DBG_PRINTLN("[E2] Stage: After setup UDP test 2");
 
   /*
   THERMOCOUPLE SET UP
   -----------------------
   */
-
+/*
   // Initialize MCP9600 sensors
   mcp.begin(I2C_ADDRESS1);
   //mcp2.begin(I2C_ADDRESS2);
@@ -367,29 +440,55 @@ void setup() {
 
   // Serial.println("test3_TC");
   output_string(PORT, "test3_TC");
-
+*/
   /*
   LOAD CELL SET UP
   -----------------------
   */
 
+  DBG_PRINTLN("[E2] Stage: Starting load cell init");
   // load cell setup
   scale.begin(LC1_D_OUT_PIN, LC1_CLK_PIN);
   scale2.begin(LC2_D_OUT_PIN2, LC2_CLK_PIN2);
   scale3.begin(LC3_D_OUT_PIN3, LC3_CLK_PIN3);
+  DBG_PRINTLN("[E2] Stage: HX711 begin complete");
 
-  // scale and tare load cells
+  // Scale config
   scale.set_scale(-3980.f);  // Set the scale factor for conversion to pounds
-  scale.tare();             // Reset the scale to zero
-
   scale2.set_scale(-3880.f); // Set the scale factor for conversion to pounds
-  scale2.tare();            // Reset the scale to zero
-
   scale3.set_scale(-3780.f); // Set the scale factor for conversion to pounds
-  scale3.tare();            // Reset the scale to zero
+
+  // Avoid setup stalls: do readiness checks only in setup.
+  // Tare/get_units can block on some disconnected HX711 boards.
+  DBG_PRINTLN("[E2] Stage: LC1 readiness check");
+  if (scale.wait_ready_timeout(500)) {
+    DBG_PRINTLN("[E2] LC1 ready");
+  } else {
+    DBG_PRINTLN("[E2] WARN: LC1 not ready during setup");
+  }
+
+  DBG_PRINTLN("[E2] Stage: LC2 readiness check");
+  if (scale2.wait_ready_timeout(500)) {
+    DBG_PRINTLN("[E2] LC2 ready");
+  } else {
+    DBG_PRINTLN("[E2] WARN: LC2 not ready during setup");
+  }
+
+  DBG_PRINTLN("[E2] Stage: LC3 readiness check");
+  if (scale3.wait_ready_timeout(500)) {
+    DBG_PRINTLN("[E2] LC3 ready");
+  } else {
+    DBG_PRINTLN("[E2] WARN: LC3 not ready during setup");
+  }
+
+  DBG_PRINTLN("[E2] Stage: Skipping load-cell tare in setup to avoid blocking");
   
   // Serial.println("test4_LC");
-  output_string(PORT, "test4_LC");
+  if (ENABLE_SETUP_UDP_TESTS) {
+    output_string(PORT, "test4_LC");
+  }
+  DBG_PRINTLN("[E2] Setup complete");
+  DBG_PRINTLN("[E2] Entering main loop");
   /*
   ACCELEROMETER SET UP
   -----------------------
@@ -401,7 +500,10 @@ void setup() {
 }
 
 // Shutdown procedure - triggered by timeout or emergency abort
-void trigger_shutdown() {
+void trigger_shutdown(const char* reason) {
+  DBG_PRINT("[E2] trigger_shutdown reason=");
+  DBG_PRINTLN(reason ? reason : "UNKNOWN");
+
   // Open NCS2 (Vent)
   digitalWrite(NCS2_PIN, HIGH);
 
@@ -439,6 +541,7 @@ void trigger_shutdown() {
   while(aborted) {
     if ((micros() - ABORT_TIME_TRACKING) > ABORTED_TIME_INTERVAL) {
       ABORT_TIME_TRACKING = micros();
+      DBG_PRINTLN("[E2] Waiting for handshake packet");
       // Send abort status ping (using SFE to keep clients aware we are still aborted)
       EGCPPacket alive_pkt(getNextTxId(), EGCPPacket::PKT_SFE);
       sendEGCPPacket(alive_pkt);
@@ -469,6 +572,7 @@ void trigger_shutdown() {
         if (EGCPPacket::decode(egcp_binary_buffer, total_packet_size, rxPacket)) {
           if (rxPacket.packet_type == EGCPPacket::PKT_STA) {
             // START packet received - exit abort state
+            DBG_PRINTLN("[E2] STA received while aborted, exiting shutdown state");
             aborted = false;
             LAST_COMMUNICATION_TIME = micros();
             LAST_HUMAN_UPDATE = micros();
@@ -501,9 +605,34 @@ LOOP
 -------------------------------------------------------------------
 */
 void loop() {
+  unsigned long now_ms = millis();
+  if (now_ms - last_loop_alive_log_ms >= 1000) {
+    last_loop_alive_log_ms = now_ms;
+    DBG_PRINT("[E2] Loop alive; peer=");
+    if (active_remote_valid) {
+      DBG_PRINT(ACTIVE_REMOTE[0]); DBG_PRINT('.'); DBG_PRINT(ACTIVE_REMOTE[1]); DBG_PRINT('.'); DBG_PRINT(ACTIVE_REMOTE[2]); DBG_PRINT('.'); DBG_PRINT(ACTIVE_REMOTE[3]);
+      DBG_PRINT(":");
+      DBG_PRINT(ACTIVE_REMOTE_PORT);
+      DBG_PRINTLN("");
+    } else {
+      DBG_PRINTLN("none");
+    }
+  }
+
   // Read incoming packets
   int packet_size = udp.parsePacket();
   if (packet_size > 0) {
+    ACTIVE_REMOTE = udp.remoteIP();
+    ACTIVE_REMOTE_PORT = udp.remotePort();
+    active_remote_valid = true;
+
+    DBG_PRINT("[E2] UDP packet from ");
+    DBG_PRINT(ACTIVE_REMOTE[0]); DBG_PRINT('.'); DBG_PRINT(ACTIVE_REMOTE[1]); DBG_PRINT('.'); DBG_PRINT(ACTIVE_REMOTE[2]); DBG_PRINT('.'); DBG_PRINT(ACTIVE_REMOTE[3]);
+    DBG_PRINT(":");
+    DBG_PRINT(ACTIVE_REMOTE_PORT);
+    DBG_PRINT(" bytes=");
+    DBG_PRINTLN(packet_size);
+
     // Read bytes into buffer
     int bytes_read = 0;
     while (udp.available() > 0 && bytes_read < (int)sizeof(egcp_binary_buffer) - egcp_buffer_pos) {
@@ -526,15 +655,27 @@ void loop() {
       // Decode packet
       EGCPPacket rxPacket;
       if (EGCPPacket::decode(egcp_binary_buffer, total_packet_size, rxPacket)) {
+        DBG_PRINT("[E2] RX ");
+        DBG_PRINT(packet_type_name(rxPacket.packet_type));
+        DBG_PRINT(" id=");
+        DBG_PRINT(rxPacket.packet_id);
+        DBG_PRINT(" len=");
+        DBG_PRINTLN(rxPacket.body_length);
         
         // Handle different packet types
         if (rxPacket.packet_type == EGCPPacket::PKT_STA) {
           // Connection START handshake
+          DBG_PRINTLN("[E2] Handshake STA received -> sending ACK");
           sendACK(rxPacket.packet_id);
         }
         
         else if (rxPacket.packet_type == EGCPPacket::PKT_HRT) {
           // Heartbeat - just send ACK back
+          heartbeat_rx_count++;
+          if (heartbeat_rx_count == 1 || heartbeat_rx_count % 10 == 0) {
+            DBG_PRINT("[E2] Heartbeat RX count=");
+            DBG_PRINTLN(heartbeat_rx_count);
+          }
           sendACK(rxPacket.packet_id);
         }
         
@@ -545,6 +686,10 @@ void loop() {
             int pin = get_pin_from_valve_id(valve_id);
             if (pin >= 0) {
               digitalWrite(pin, HIGH);  // Open valve
+              DBG_PRINT("[E2] VSO valve=");
+              DBG_PRINT(get_valve_name(valve_id));
+              DBG_PRINT(" pin=");
+              DBG_PRINTLN(pin);
               
               // Special handling for LA-BV1
               if (valve_id == EGCPPacket::VALVE_LA_BV1) {
@@ -552,6 +697,9 @@ void loop() {
               }
               
               LAST_HUMAN_UPDATE = micros();
+            } else {
+              DBG_PRINT("[E2] VSO unknown valve id=");
+              DBG_PRINTLN(valve_id);
             }
             sendACK(rxPacket.packet_id);
           }
@@ -564,6 +712,10 @@ void loop() {
             int pin = get_pin_from_valve_id(valve_id);
             if (pin >= 0) {
               digitalWrite(pin, LOW);  // Close valve
+              DBG_PRINT("[E2] VSC valve=");
+              DBG_PRINT(get_valve_name(valve_id));
+              DBG_PRINT(" pin=");
+              DBG_PRINTLN(pin);
               
               // Special handling for LA-BV1
               if (valve_id == EGCPPacket::VALVE_LA_BV1) {
@@ -574,6 +726,9 @@ void loop() {
               }
               
               LAST_HUMAN_UPDATE = micros();
+            } else {
+              DBG_PRINT("[E2] VSC unknown valve id=");
+              DBG_PRINTLN(valve_id);
             }
             sendACK(rxPacket.packet_id);
           }
@@ -581,8 +736,9 @@ void loop() {
         
         else if (rxPacket.packet_type == EGCPPacket::PKT_SFE) {
           // Emergency abort / safe mode
+          DBG_PRINTLN("[E2] SFE received from GUI");
           sendACK(rxPacket.packet_id);
-          trigger_shutdown();
+          trigger_shutdown("RX_SFE");
         }
       }
 
@@ -608,13 +764,19 @@ void loop() {
     // Measure force from load cells (slower update rate)
     if ((LAST_SENSOR_UPDATE - LAST_LC_UPDATE) > LC_UPDATE_INTERVAL) {
       LAST_LC_UPDATE = LAST_SENSOR_UPDATE;
-      weight1 = scale.get_units(1);
-      weight2 = scale2.get_units(1);
-      weight3 = scale3.get_units(1);
+      if (scale.wait_ready_timeout(20)) {
+        weight1 = scale.get_units(1);
+      }
+      if (scale2.wait_ready_timeout(20)) {
+        weight2 = scale2.get_units(1);
+      }
+      if (scale3.wait_ready_timeout(20)) {
+        weight3 = scale3.get_units(1);
+      }
     }
 
     // Measure temperature from thermocouple
-    float t1 = mcp.readThermocouple();
+    float t1 = 1; // mcp.readThermocouple();
 
     // Send each sensor as individual ADC binary packet
     // Format: 1 byte sensor ID + 4 bytes IEEE 754 float
@@ -640,7 +802,7 @@ void loop() {
     for (int i = 0; i < 6; i++) {
       uint8_t body[5];
       body[0] = p_ids[i];
-      memcpy(&body[1], &p_values[i], 4);  // Copy float as bytes (big-endian)
+      pack_float_big_endian(p_values[i], &body[1]);
       EGCPPacket adc(getNextTxId(), EGCPPacket::PKT_ADC, body, 5);
       sendEGCPPacket(adc);
     }
@@ -649,7 +811,7 @@ void loop() {
     {
       uint8_t body[5];
       body[0] = EGCPPacket::SENSOR_T1;
-      memcpy(&body[1], &t1, 4);
+      pack_float_big_endian(t1, &body[1]);
       EGCPPacket adc(getNextTxId(), EGCPPacket::PKT_ADC, body, 5);
       sendEGCPPacket(adc);
     }
@@ -665,7 +827,7 @@ void loop() {
     for (int i = 0; i < 3; i++) {
       uint8_t body[5];
       body[0] = l_ids[i];
-      memcpy(&body[1], &l_values[i], 4);
+      pack_float_big_endian(l_values[i], &body[1]);
       EGCPPacket adc(getNextTxId(), EGCPPacket::PKT_ADC, body, 5);
       sendEGCPPacket(adc);
     }
@@ -674,8 +836,11 @@ void loop() {
   }
 
   // Lost communication shutdown
-  if (((micros() - LAST_COMMUNICATION_TIME) > CONNECTION_TIMEOUT) || 
-      ((micros() - LAST_HUMAN_UPDATE) > HUMAN_CONNECTION_TIMEOUT)) {
-    trigger_shutdown();
+  if ((micros() - LAST_COMMUNICATION_TIME) > CONNECTION_TIMEOUT) {
+    trigger_shutdown("CONNECTION_TIMEOUT");
+  }
+
+  if ((micros() - LAST_HUMAN_UPDATE) > HUMAN_CONNECTION_TIMEOUT) {
+    trigger_shutdown("HUMAN_CONNECTION_TIMEOUT");
   }
 }

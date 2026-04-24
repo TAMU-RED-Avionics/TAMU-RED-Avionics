@@ -37,8 +37,11 @@ public:
     static constexpr uint8_t VALVE_LA_BV2 = 0x11;
     static constexpr uint8_t VALVE_GV_1 = 0x20;
     static constexpr uint8_t VALVE_GV_2 = 0x21;
+    static constexpr uint8_t VALVE_GV1 = VALVE_GV_1; // Backward-compatible alias
+    static constexpr uint8_t VALVE_GV2 = VALVE_GV_2; // Backward-compatible alias
     static constexpr uint8_t VALVE_IG1 = 0x30;
     static constexpr uint8_t VALVE_IG2 = 0x31;
+    static constexpr uint8_t VALVE_GIMBAL = 0x40;
 
     // Sensor ID mapping (1-byte IDs)
     static constexpr uint8_t SENSOR_P1 = 0x01;
@@ -47,10 +50,15 @@ public:
     static constexpr uint8_t SENSOR_P4 = 0x04;
     static constexpr uint8_t SENSOR_P5 = 0x05;
     static constexpr uint8_t SENSOR_P6 = 0x06;
-    static constexpr uint8_t SENSOR_T1 = 0x07;
-    static constexpr uint8_t SENSOR_L1 = 0x08;
-    static constexpr uint8_t SENSOR_L2 = 0x09;
-    static constexpr uint8_t SENSOR_L3 = 0x0A;
+    static constexpr uint8_t SENSOR_P7 = 0x07;
+    static constexpr uint8_t SENSOR_P8 = 0x08;
+    static constexpr uint8_t SENSOR_TC1 = 0x09;
+    static constexpr uint8_t SENSOR_TC2 = 0x0A;
+    static constexpr uint8_t SENSOR_TC3 = 0x0B;
+    static constexpr uint8_t SENSOR_L1 = 0x0C;
+    static constexpr uint8_t SENSOR_L2 = 0x0D;
+    static constexpr uint8_t SENSOR_L3 = 0x0E;
+    static constexpr uint8_t SENSOR_T1 = SENSOR_TC1; // Backward-compatible alias
 
     uint32_t packet_id;     // 24-bit packet ID (wraparound at 2^24)
     uint8_t packet_type;    // 4-bit packet type
