@@ -1,15 +1,15 @@
-# GUI_CONTROLLER.py
-# This file will manage all UI related states, and stores functions that will manipulate them
-import csv, os
-from ast import Dict, Str
-from re import S
+import os
+from datetime import datetime
 from typing import Optional
+
+import openpyxl
+from openpyxl import Workbook
+from openpyxl.styles import Font, PatternFill, Alignment
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QDialog, QLabel, QDialogButtonBox, QCheckBox, QMessageBox, QGroupBox
 from PyQt5.QtCore import QDate, Qt, QTimer, QDateTime
 from PyQt5.QtGui import QFont
 from PyQt5.QtCore import QObject, pyqtSignal
 from GUI_COMMS import EthernetClient
-from GUI_WARNING_VALUES import WarningValueConfigWindow
 
 # This may be necessary for ongoing refactors but currently has no use
 class Signals(QObject):
@@ -72,26 +72,27 @@ class GUIController:
         self.signals.countdown_update.connect(self.update_abort_countdown_dialog)
         self.signals.countdown_close.connect(self.close_abort_countdown_dialog)
 
-        # For file recording
-        self.csv_file = None
-        self.csv_writer = None
-        
-        # Define sensor categories for file recording
-        self.pt_keys = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8"]
-        self.lc_keys = ["LC1", "LC2", "LC3"]
-        self.tc_keys = ["TC1", "TC2", "TC3"]
-        self.other_keys = ["B1", "B2"]
-        self.current_batch_sensors = set()
+        # For file recording (xlsx)
+        self._wb: Optional["Workbook"] = None       # openpyxl Workbook
+        self._ws = None                              # active Sheet
+        self._xlsx_path: str = ""                   # full path of open file
+
+        # Sensor columns — rebuilt from project on load_project(); fallback to empty lists
+        self.pt_keys:    list = []   # pressure transducers
+        self.tc_keys:    list = []   # thermocouples
+        self.lc_keys:    list = []   # load cells
+
+        self.current_batch_sensors: set = set()
         self.latest_teensy_ts = ""
 
         # These are constants and dictionaries that the UI needs to be tracked
         self.lockout = True                     # default to lockout until a connection starts
 
-        self.ncs3_opened_due_to_p2 = False
-        self.abort_modes: Dict[str, bool] = {}
-        self.pre_abort_valve_states: Dict[str, bool]  = {}
-        self.current_sensor_values: Dict[str, float] = {}
-        self.manual_valve_buttons: Dict[str, QPushButton] = {}
+        #self.ncs3_opened_due_to_p2 = False  # legacy compat
+        #self.abort_modes: dict = {}         # legacy compat
+        self.pre_abort_valve_states: dict = {}
+        self.current_sensor_values: dict = {}
+        self.manual_valve_buttons: dict = {}
         self.abort_check_interval = 10  # ms
         self.throttling_enabled = False
         self.gimbaling_enabled = False
@@ -102,11 +103,15 @@ class GUIController:
         self.abort_countdown_dialog: Optional[QDialog] = None
         self.abort_countdown_label: Optional[QLabel] = None
 
-        self.p3_p5_violation_start = None
-        self.p4_p6_violation_start = None
+        # Project / rule engine state
+        self.project = None       # PIDProject set by MainWindow via load_project()
+        self.project_path = None  # str path to .red file
 
-        self.warning_ranges: Dict[str, dict] = {}
-        self.load_warning_ranges()
+        # Rule engine runtime state
+        self._rule_violation_start: dict = {}  # rule_id -> ms timestamp when violation started
+        self._rule_valve_open: dict = {}       # rule_id -> bool, tracks auto-opened valves
+        self._sensor_rules: list = []          # compiled from component thresholds
+        self._logic_rules: list = []           # AbortRule expression type
 
         # Valve Command Reliability
         self.pending_valve_commands = {} # valve_name -> {"state": bool, "last_sent": timestamp, "retries": int}
@@ -128,40 +133,11 @@ class GUIController:
             "GV-2": False
         }
 
-        # This is a list of the different buttons and the valves that they manipulate
-        self.valve_operation_states: Dict[str, list[str]] = {
-            "Open Oxidizer": ["LA-BV1"],
-            "Oxidizer Fill": ["NCS3", "NCS2", "LA-BV1"],
-            "Oxidizer Leak Check": ["LA-BV1"],
-            "Oxidizer Leak Check Fill": ["NCS1", "LA-BV1"],
-            "Close Oxidizer": ["NCS3", "LA-BV1"],
-            "Oxidizer Vent": ["GV-1", "NCS2", "NCS3", "LA-BV1"],
-
-
-            "Open Pressure": ["LA-BV1"],
-            "Fuel Fill 1": ["NCS5", "NCS6", "LA-BV1"],
-            "Fuel Leak Check": ["LA-BV1"],
-            "Fuel Leak Check Fill": ["NCS1", "LA-BV1"],
-            "Close Pressure 1": ["LA-BV1"],
-            "Vent Pressure": ["NCS1", "NCS3", "LA-BV1"],
-            
-            
-            "Postfire Purge": ["NCS1", "GV-1", "LA-BV1"],
-            "Fuel Fill 2": ["NCS5", "LA-BV1"],
-            "Prefire Purge 1": ["GV-1", "LA-BV1"],
-            "Prefire Purge 2": ["GV-1", "LA-BV1"],
-            "Close Pressure 2": ["NCS3", "LA-BV1"],
-            "Power down": [],
-
-            "Fire": ["GV-1", "GV-2", "NCS1", "LA-BV1"],
-            "Kill and Vent": ["NCS3", "GV-1", "GV-2", "LA-BV1"],
-        }
+        # Sequence execution runtime state
+        self._sequence_timers: list[QTimer] = []   # kept alive during a fire sequence run
         
-        # Abort related configuration
-        self.init_abort_modes()
         self.setup_abort_monitor()
     
-    # ABORT CONTROL ------------------------------------------------------------------------------------------------
 
     def _summarize_connection_error(self, reason: str) -> str:
         """Map verbose socket diagnostics to concise UI status text."""
@@ -192,173 +168,297 @@ class GUIController:
         self.abort_timer.timeout.connect(self.check_abort_conditions)
         self.abort_timer.start(self.abort_check_interval)
 
-    def init_abort_modes(self):
-        self.abort_modes = {
-            "high_upstream_pressure": True,
-            "reverse_flow": True,
-            "high_chamber_pressure": True,
-            "high_p2": True,
-        }
+    def load_project(self, project, path: str = None):
+        self.project = project
+        if path:
+            self.project_path = path
+        self._rebuild_sensor_keys(project)
+        self._rebuild_valve_states(project)
+        self.reload_abort_rules(project)
+        self.ethernet_client.load_project_maps(project)
 
-    def load_warning_ranges(self):
-        """Load warning ranges from CSV"""
-        csv_path = "warning_ranges.csv"
-        if not os.path.exists(csv_path):
+    def _rebuild_valve_states(self, project):
+        """Rebuild valve_states from project valve components (hw_id -> bool).
+        Existing states are preserved for valves that carry over; new valves start closed."""
+        from PID_SCHEMA import COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE, COMP_GLOBE_VALVE, COMP_SOLENOID
+        VALVE_TYPES = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE, COMP_GLOBE_VALVE, COMP_SOLENOID)
+
+        if not project:
             return
-        
-        try:
-            with open(csv_path, newline="") as file:
-                reader = csv.DictReader(file)
-                for row in reader:
-                    name = row["Name"].strip().upper()
-                    self.warning_ranges[name] = {
-                        "warn_low": float(row["WarnLow"]),
-                        "warn_high": float(row["WarnHigh"]),
-                        "cold": float(row["Cold"]),
-                        "hot": float(row["Hot"])
-                    }
-        except Exception as e:
-            print(f"Error loading warning ranges: {e}")
 
-    def get_sensor_status(self, name: str, value: float) -> str:
-        """Check if a sensor value is in warning, hot, or cold range"""
-        if name not in self.warning_ranges:
-            return "DEFAULT"
-        
-        ranges = self.warning_ranges[name]
-        
-        # Red: Outside Warning Range
-        if value < ranges["warn_low"] or value > ranges["warn_high"]:
+        new_states: Dict[str, bool] = {}
+        for comp in project.components.values():
+            if comp.type not in VALVE_TYPES:
+                continue
+            hw_id = comp.extras.get("hw_id") or comp.label
+            if not hw_id:
+                continue
+            # Preserve state if valve was already known, default to closed
+            new_states[hw_id] = self.valve_states.get(hw_id, False)
+
+        self.valve_states = new_states
+
+    def _rebuild_sensor_keys(self, project):
+        from PID_SCHEMA import COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL
+        pt, tc, lc = [], [], []
+        if project:
+            for comp in project.components.values():
+                hw_id = comp.extras.get("hw_id", comp.label) or comp.label
+                if not hw_id:
+                    continue
+                if comp.type == COMP_PRESSURE:
+                    pt.append(hw_id)
+                elif comp.type == COMP_TEMPERATURE:
+                    tc.append(hw_id)
+                elif comp.type == COMP_LOAD_CELL:
+                    lc.append(hw_id)
+        self.pt_keys = sorted(set(pt), key=lambda x: (len(x), x))
+        self.tc_keys = sorted(set(tc), key=lambda x: (len(x), x))
+        self.lc_keys = sorted(set(lc), key=lambda x: (len(x), x))
+
+    def _generate_filename(self) -> str:
+        """
+        Auto-generate a filename following the convention:
+            {ProjectName}{Version}_{MMDDYYYY}_test{N}.xlsx
+        The test number increments so existing files are never overwritten.
+        If no project is loaded, falls back to 'DAQ_{date}_test{N}.xlsx'.
+        """
+        if self.project:
+            raw_version = getattr(self.project, "version", "") or ""
+            proj_part = f"{self.project.name}{raw_version}"
+        else:
+            proj_part = "DAQ"
+
+        date_part = datetime.now().strftime("%m%d%Y")
+        base = f"{proj_part}_{date_part}"
+
+        data_dir = "Data"
+        os.makedirs(data_dir, exist_ok=True)
+
+        n = 1
+        while True:
+            name = f"{base}_test{n}.xlsx"
+            if not os.path.exists(os.path.join(data_dir, name)):
+                return name
+            n += 1
+
+    def reload_abort_rules(self, project):
+        self._sensor_rules = []
+        self._logic_rules  = []
+        self._rule_violation_start.clear()
+        self._rule_valve_open.clear()
+
+        if project is None:
+            return
+
+        from PID_SCHEMA import (
+            COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL,
+            SensorThresholds,
+        )
+        SENSOR_TYPES = (COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL)
+
+        for cid, comp in project.components.items():
+            if comp.type not in SENSOR_TYPES:
+                continue
+
+            th_dict = comp.extras.get("thresholds")
+            if not th_dict:
+                continue
+
+            th = SensorThresholds.from_dict(th_dict)
+            hw_id = comp.extras.get("hw_id", comp.label) or cid
+
+            bands = [
+                ("mawp",    th.mawp,    th.mawp_action,   None,                                                          None),
+                ("meop",    th.meop,    th.meop_action,   th_dict.get("meop_target",   th.target_valve),                  th_dict.get("meop_close_below",   th.close_valve_below)),
+                ("relief",  th.relief,  th.relief_action, th_dict.get("relief_target", th.target_valve),                  th_dict.get("relief_close_below", th.close_valve_below)),
+            ]
+
+            for band, threshold, action, target, close_below in bands:
+                if threshold is None:
+                    continue
+                rule_id = f"{cid}__{band}"
+                self._sensor_rules.append({
+                    "id":           rule_id,
+                    "hw_id":        hw_id,
+                    "band":         band,
+                    "threshold":    threshold,
+                    "action":       action,
+                    "target_valve": target or "",
+                    "close_below":  close_below,
+                    "soak_ms":      th.soak_ms,
+                    "above":        True,
+                })
+
+        for rule in project.rules:
+            if rule.condition_type == "expression" and rule.enabled and rule.expression.strip():
+                self._logic_rules.append(rule)
+
+    def get_sensor_status(self, hw_name: str, value: float) -> str:
+        mawp_val   = None
+        meop_val   = None
+        relief_val = None
+        for sr in self._sensor_rules:
+            if sr["hw_id"].upper() != hw_name.upper():
+                continue
+            if sr["band"] == "mawp":
+                mawp_val = sr["threshold"]
+            elif sr["band"] == "meop":
+                meop_val = sr["threshold"]
+            elif sr["band"] == "relief":
+                relief_val = sr["threshold"]
+
+        if mawp_val   is not None and value >= mawp_val:
             return "RED"
-        
-        # Orange: Above Hot
-        if value > ranges["hot"]:
+        if meop_val   is not None and value >= meop_val:
             return "ORANGE"
-        
-        # Blue: Below Cold
-        if value < ranges["cold"]:
+        if relief_val is not None and value >= relief_val:
             return "BLUE"
-            
         return "DEFAULT"
-    
+
+
     def check_abort_conditions(self):
         if self.lockout:
             return
-
-        # Beyond this point we shouldn't check for abort conditions if there is no data
         if not self.current_sensor_values:
             return
 
         current_time = QDateTime.currentMSecsSinceEpoch()
-        p3 = self.current_sensor_values.get("P3", 0)
-        p4 = self.current_sensor_values.get("P4", 0)
-        p5 = self.current_sensor_values.get("P5", 0)
-        p6 = self.current_sensor_values.get("P6", 0)
-        pc = self.current_sensor_values.get("P8", 0)
-        pline = self.current_sensor_values.get("P7", 0)
-        p2 = self.current_sensor_values.get("P2", 0)
 
-        if p2 > 1375:
-            if not self.valve_states.get("NCS3", False):
-                self.toggle_valve("NCS3", True)
-                self.ncs3_opened_due_to_p2 = True
-        elif p2 < 1250 and self.ncs3_opened_due_to_p2:
-            self.toggle_valve("NCS3", False)
-            self.ncs3_opened_due_to_p2 = False
+        for sr in self._sensor_rules:
+            hw_id = sr["hw_id"].upper()
+            value = self.current_sensor_values.get(hw_id)
+            if value is None:
+                self._rule_violation_start.pop(sr["id"], None)
+                continue
 
-        if pc > 700 and self.abort_modes["high_chamber_pressure"]:
+            threshold = sr["threshold"]
+            violated  = (value >= threshold) if sr["above"] else (value <= threshold)
+
+            if not violated:
+                # Clear soak timer
+                self._rule_violation_start.pop(sr["id"], None)
+                # Close auto-opened valve if below hysteresis close threshold
+                if sr["action"] == "open_valve" and self._rule_valve_open.get(sr["id"]):
+                    close_below = sr["close_below"]
+                    if close_below is not None and value < close_below:
+                        if sr["target_valve"] and sr["target_valve"] in self.valve_states:
+                            self.toggle_valve(sr["target_valve"], False)
+                        self._rule_valve_open[sr["id"]] = False
+                continue
+
+            # Violation detected — handle soak time
+            soak = sr["soak_ms"]
+            if soak > 0:
+                if sr["id"] not in self._rule_violation_start:
+                    self._rule_violation_start[sr["id"]] = current_time
+                    continue
+                elif current_time - self._rule_violation_start[sr["id"]] < soak:
+                    continue
+
+            self._fire_sensor_rule(sr, hw_id, value)
+
+        for rule in self._logic_rules:
+            self._check_logic_rule(rule, current_time)
+
+    def _fire_sensor_rule(self, sr: dict, hw_id: str, value: float):
+        action  = sr["action"]
+        band    = sr["band"]
+        rule_id = sr["id"]
+
+        if action == "abort":
             self.signals.abort_triggered.emit(
-                "high_chamber_pressure",
-                f"Chamber pressure {pc} psi > 700 psi"
+                rule_id,
+                f"{hw_id} {band.upper()} threshold exceeded: {value:.2f}"
             )
 
-        if pc > pline and self.abort_modes["reverse_flow"]:
+        elif action == "warn":
+            # Log and emit a system_status warning; does NOT trigger abort
+            msg = f"{hw_id} {band.upper()} threshold exceeded: {value:.2f}"
+            self.log_event("WARN", msg)
+            self.signals.system_status.emit(f"WARNING: {msg}")
+
+        elif action == "open_valve":
+            target = sr["target_valve"]
+            if target and not self._rule_valve_open.get(rule_id):
+                if target in self.valve_states:
+                    self.toggle_valve(target, True)
+                self._rule_valve_open[rule_id] = True
+                self.log_event("AUTO_VALVE_OPEN",
+                               f"Rule {rule_id}: opened {target} ({hw_id}={value:.2f})")
+
+    def _check_logic_rule(self, rule, current_time: int):
+        try:
+            result = bool(eval(rule.expression, {"__builtins__": {}},
+                               self.current_sensor_values))
+        except Exception:
+            return
+
+        rule_id = rule.id
+        if not result:
+            self._rule_violation_start.pop(rule_id, None)
+            # Close valve if hysteresis met
+            if rule.action == "open_valve" and self._rule_valve_open.get(rule_id):
+                if rule.close_valve_below is not None:
+                    # Can't check a sensor value without knowing which one for generic expressions;
+                    # use the inverse of the expression result as the close condition instead.
+                    self._rule_valve_open[rule_id] = False
+                    if rule.target_valve and rule.target_valve in self.valve_states:
+                        self.toggle_valve(rule.target_valve, False)
+            return
+
+        soak = rule.soak_ms
+        if soak > 0:
+            if rule_id not in self._rule_violation_start:
+                self._rule_violation_start[rule_id] = current_time
+                return
+            elif current_time - self._rule_violation_start[rule_id] < soak:
+                return
+
+        if rule.action == "abort":
             self.signals.abort_triggered.emit(
-                "reverse_flow",
-                f"Chamber pressure {pc} psi > Line pressure {pline} psi"
+                rule_id,
+                rule.description or rule.expression
             )
-
-        if self.abort_modes["high_upstream_pressure"]:
-            if p5 - p3 >= 5:
-                if self.p3_p5_violation_start is None:
-                    self.p3_p5_violation_start = current_time
-                elif current_time - self.p3_p5_violation_start >= 150:
-                    self.signals.abort_triggered.emit(
-                        "high_upstream_pressure",
-                        f"P5 {p5} psi > P3 {p3} psi by 5+ psi for 150ms"
-                    )
-            else:
-                self.p3_p5_violation_start = None
-
-            if p6 - p4 >= 5:
-                if self.p4_p6_violation_start is None:
-                    self.p4_p6_violation_start = current_time
-                elif current_time - self.p4_p6_violation_start >= 150:
-                    self.signals.abort_triggered.emit(
-                        "high_upstream_pressure",
-                        f"P6 {p6} psi > P4 {p4} psi by 5+ psi for 150ms"
-                    )
-            else:
-                self.p4_p6_violation_start = None
+        elif rule.action == "open_valve":
+            if not self._rule_valve_open.get(rule_id):
+                if rule.target_valve and rule.target_valve in self.valve_states:
+                    self.toggle_valve(rule.target_valve, True)
+                self._rule_valve_open[rule_id] = True
+                self.log_event("AUTO_VALVE_OPEN",
+                               f"Rule {rule_id}: opened {rule.target_valve}")
+        elif rule.action == "warn":
+            self.log_event("WARN", f"Rule {rule_id}: {rule.description or rule.expression}")
 
     def trigger_manual_abort(self):
         """Manual abort button handler (Req 11)"""
         self.signals.abort_triggered.emit(
-            "manual_abort", 
+            "manual_abort",
             "Operator triggered manual abort"
         )
 
     def show_abort_control(self):
-        """Abort configuration dialog (Req 9)"""
-        dialog = QDialog(self.parent)
-        dialog.setWindowTitle("Abort Configuration")
-        layout = QVBoxLayout(dialog)
-        
-        # Abort mode configuration (Req 9)
-        mode_group = QGroupBox("Abort Modes")
-        mode_layout = QVBoxLayout()
-        
-        # Create checkboxes for each abort mode
-        modes = [
-            ("high_upstream_pressure", "High Upstream Pressure"),
-            ("reverse_flow", "Reverse Flow Risk"),
-            ("high_chamber_pressure", "High Chamber Pressure"),
-            ("high_p2", "High P2 Pressure"),
-        ]
-        
-        for mode_id, mode_name in modes:
-            check = QCheckBox(mode_name)
-            check.setChecked(self.abort_modes.get(mode_id, False))
-            check.stateChanged.connect(lambda state, m=mode_id: self.toggle_abort_mode(m, state))
-            mode_layout.addWidget(check)
-        
-        mode_group.setLayout(mode_layout)
-        layout.addWidget(mode_group)
-
-        # Button to open safe config window
-        self.custom_abort_btn = QPushButton("Warning Value Configuration")
-        self.custom_abort_btn.clicked.connect(self.open_warning_value_config)
-        layout.addWidget(self.custom_abort_btn)
-        
-        dialog.exec_()
-
-
-    def open_warning_value_config(self):
-        self.warning_valve_config = WarningValueConfigWindow(self, self.parent)
-        self.warning_valve_config.exec_()
-
+        """Redirects to the Abort Config tab in the main window if possible."""
+        # The AbortConfigPage is now a full tab, so just log / no-op.
+        # If called from a button in DAQWindow, we emit a signal or show a message.
+        QMessageBox.information(
+            self.parent,
+            "Abort Configuration",
+            "Use the 'Abort Config' tab to configure abort thresholds and rules."
+        )
 
     def toggle_abort_mode(self, mode, state):
-        """Enable/disable specific abort mode (Req 9)"""
-        self.abort_modes[mode] = state == 2
-        status = "ENABLED" if state == 2 else "DISABLED"
-        self.log_event("ABORT_MODE", f"{mode}:{status}")
+        """Legacy stub — abort modes are now stored in project rules."""
+        pass
 
 
     def handle_abort(self, abort_type, reason):
         """Handle abort sequence (Req 11, 20-24)"""
         if self.lockout:
             return
+
+        # Stop any running auto-fire sequence immediately
+        self._cancel_sequence()
 
         self.ethernet_client.set_system_state("ABORT")
 
@@ -396,7 +496,7 @@ class GUIController:
     # DAQ RECORDING ------------------------------------------------------------------------------------------------
 
     def log_event(self, event_type, event_details=""):
-        """Log an event to CSV (Req 15)"""
+        """Log an event to the xlsx file (Req 15)"""
         if "HEARTBEAT" in event_type:
             return
 
@@ -406,64 +506,132 @@ class GUIController:
             if len(parts) >= 2:
                 action = parts[1]
                 if action == "START" and len(parts) >= 3:
-                    # Parse: AUTO_ABORT_COUNTDOWN:START:seconds:valve_name:cmd_type
                     initial_seconds = int(parts[2])
                     valve_name = parts[3] if len(parts) >= 4 else "UNKNOWN"
                     cmd_type = parts[4] if len(parts) >= 5 else "COMMAND"
                     self.signals.countdown_start.emit(initial_seconds, valve_name, cmd_type)
                 elif action == "REMAINING" and len(parts) >= 3:
-                    # Update the countdown display via signal
                     remaining_seconds = int(parts[2])
                     self.signals.countdown_update.emit(remaining_seconds)
                 elif action == "CANCELED":
-                    # Close the dialog via signal
                     self.signals.countdown_close.emit()
-        
-        # Close countdown dialog when abort actually triggers
+
         if event_type.startswith("COMMS_AUTO_ABORT:"):
             self.signals.countdown_close.emit()
-        
-        if not self.csv_writer:
+
+        if not self._ws:
             return
-            
+
         self._write_daq_row(teensy_ts=self.latest_teensy_ts, event_type=event_type, event_details=event_details)
 
     def _write_daq_row(self, teensy_ts="", event_type="", event_details=""):
-        """Writes a fully formatted row matching the old GUI DAQ structure."""
-        if not self.csv_writer:
+        """Write one data row to the xlsx worksheet.
+
+        Column layout:
+            Local Time (24-hr + date) | Teensy Timestamp | [blank] |
+            <pressure sensors...>     | [blank]          |
+            <thermocouples...>        | [blank]          |
+            <load cells...>           | [blank]          |
+            Control State             | Event Type       | Event Details
+        """
+        if not self._ws:
             return
-            
-        row = [QDateTime.currentDateTime().toString("HH:mm:ss"), teensy_ts, ""]
-        
+
+        row = [
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),  # Local time, 24-hr + date
+            teensy_ts,
+            "",
+        ]
+
         for key in self.pt_keys:
-            val = self.current_sensor_values.get(key, "")
-            row.append(f"{val:.2f}" if isinstance(val, float) else val)
+            val = self.current_sensor_values.get(key.upper(), "")
+            row.append(round(val, 4) if isinstance(val, float) else val)
         row.append("")
-        
-        for key in self.lc_keys:
-            val = self.current_sensor_values.get(key, "")
-            row.append(f"{val:.2f}" if isinstance(val, float) else val)
-        row.append("")
-        
+
         for key in self.tc_keys:
-            val = self.current_sensor_values.get(key, "")
-            row.append(f"{val:.2f}" if isinstance(val, float) else val)
+            val = self.current_sensor_values.get(key.upper(), "")
+            row.append(round(val, 4) if isinstance(val, float) else val)
         row.append("")
 
-        
-        for key in self.other_keys:
-            val = self.current_sensor_values.get(key, "")
-            row.append(f"{val:.2f}" if isinstance(val, float) else val)
+        for key in self.lc_keys:
+            val = self.current_sensor_values.get(key.upper(), "")
+            row.append(round(val, 4) if isinstance(val, float) else val)
         row.append("")
-            
-        # Append Control State and Events
-        current_state = getattr(self.ethernet_client, 'system_state', "UNKNOWN")
+
+        current_state = getattr(self.ethernet_client, "system_state", "UNKNOWN")
         row.extend([current_state, event_type, event_details])
-        
-        self.csv_writer.writerow(row)
 
+        self._ws.append(row)
 
-    # WILL BE RUN INSIDE A BACKGROUND THREAD
+    def get_next_filename(self) -> str:
+        return self._generate_filename()
+
+    def start_recording(self) -> bool:
+        if not self.project:
+            QMessageBox.warning(self.parent, "No Project",
+                "Please select a project from the dropdown before recording."
+                "The project defines which sensors to log.")
+            return False
+
+        filename = self._generate_filename()
+        data_dir = "Data"
+        os.makedirs(data_dir, exist_ok=True)
+        file_path = os.path.join(data_dir, filename)
+
+        try:
+            wb = Workbook()
+            ws = wb.active
+            ws.title = "DAQ"
+
+            # ---- Header row ----
+            header = [
+                "Local Time (YYYY-MM-DD HH:mm:ss)",
+                "Teensy Timestamp (µs from boot)",
+                "",
+            ]
+            header += self.pt_keys + [""]
+            header += self.tc_keys + [""]
+            header += self.lc_keys + [""]
+            header += ["Control State", "Event Type", "Event Details"]
+
+            ws.append(header)
+
+            # Style: bold + light-grey fill on header row
+            header_fill = PatternFill("solid", fgColor="D9D9D9")
+            header_font = Font(bold=True)
+            for cell in ws[1]:
+                cell.font = header_font
+                cell.fill = header_fill
+                cell.alignment = Alignment(horizontal="center")
+
+            self._wb = wb
+            self._ws = ws
+            self._xlsx_path = file_path
+
+            # Clear batch tracker
+            self.current_batch_sensors.clear()
+
+            self.log_event("RECORDING:START")
+            self.recording = True
+
+            return True
+
+        except Exception as e:
+            QMessageBox.critical(self.parent, "Error", f"Failed to create file: {str(e)}")
+            return False
+
+    def stop_recording(self):
+        if self._wb:
+            self.log_event("RECORDING:STOP")
+            try:
+                self._wb.save(self._xlsx_path)
+            except Exception as e:
+                QMessageBox.warning(self.parent, "Save Warning", f"Could not save file:\n{str(e)}")
+            self._wb = None
+            self._ws = None
+            self._xlsx_path = ""
+            self.recording = False
+
     def handle_new_data(self, data_str: str):
         """ Parse teensy timestamp (first token) (Req 4) """
         timestamp = QDateTime.currentMSecsSinceEpoch() / 1000.0     # seconds, but at a precision of 1 ms
@@ -475,22 +643,17 @@ class GUIController:
         readings = sensor_data.strip().split(sep=",")
         for reading in readings:
             if "ABORTED" in reading:
-                # Parse abort reason if available
                 if "ABORTED:COMMS:" in reading:
-                    # Extract reason after ABORTED:COMMS:
                     reason_part = reading.split("ABORTED:COMMS:", 1)[1] if len(reading.split("ABORTED:COMMS:")) > 1 else "Unknown reason"
                     
-                    # Strip countdown_expired: prefix if present
                     if reason_part.startswith("countdown_expired:"):
                         reason_part = reason_part.replace("countdown_expired:", "", 1)
                     
-                    # Format the reason for display
                     if "OPEN_" in reason_part or "CLOSE_" in reason_part:
-                        # Parse: OPEN_NCS1_timeout:packet_id=123 or CLOSE_LA-BV1_timeout:packet_id=456
                         parts = reason_part.split("_")
                         if len(parts) >= 2:
-                            cmd = parts[0]  # OPEN or CLOSE
-                            valve = parts[1].split(":")[0]  # NCS1 or LA-BV1
+                            cmd = parts[0]
+                            valve = parts[1].split(":")[0]
                             display_reason = f"Valve {valve} {cmd} command failed (timeout)"
                         else:
                             display_reason = reason_part
@@ -547,7 +710,7 @@ class GUIController:
                     # Batch sensor updates
                     if sensor_name in self.current_batch_sensors:
                         # We've seen this sensor in the current batch -> flush the row
-                        if self.csv_writer:
+                        if self._ws:
                             self._write_daq_row(teensy_ts=self.latest_teensy_ts)
                         self.current_batch_sensors.clear()
                     
@@ -559,74 +722,6 @@ class GUIController:
         if teensy_ts:
             self.latest_teensy_ts = teensy_ts
 
-    # Start recording, returns whether the conditions were fit for recording to start, otherwise returns false
-    def start_recording(self, filename: str) -> bool:
-        if not filename:
-            QMessageBox.warning(self.parent, "Invalid Filename", "Please enter a filename")
-            return False
-            
-        if not filename.endswith(".csv"):
-            filename += ".csv"
-
-        data_dir = "Data"
-        os.makedirs(data_dir, exist_ok=True)
-
-        file_path = os.path.join(data_dir, filename)
-
-        # Check if file exists (Req 12)
-        if os.path.exists(file_path):
-            reply = QMessageBox.question(
-                self.parent,
-                "File Exists",
-                f"{filename} already exists. Overwrite?",
-                QMessageBox.Yes | QMessageBox.No
-            )
-            if reply != QMessageBox.Yes:
-                return False
-        
-        try:
-            self.csv_file = open(file_path, "w", newline="")
-            self.csv_writer = csv.writer(self.csv_file)
-            
-            header_row = ["System Time (HH:mm:ss)", "Local Time (micro s from Teensy boot)", ""]
-            
-            header_row.extend(self.pt_keys)
-            header_row.append("")
-            
-            header_row.extend(self.lc_keys)
-            header_row.append("")
-            
-            header_row.extend(self.tc_keys)
-            header_row.append("")
-            
-            header_row.extend(self.other_keys)
-                
-            header_row.extend(["Control State", "Event Type", "Event Details"])
-            
-            self.csv_writer.writerow(header_row)
-
-            # Clear tracking variables on new recording
-            self.current_batch_sensors.clear()
-
-            self.log_event("RECORDING:START")
-            self.recording = True
-
-            return True
-
-        except Exception as e:
-            QMessageBox.critical(self.parent, "Error", f"Failed to create file: {str(e)}")
-            return False
-
-    def stop_recording(self):
-        if self.csv_file:
-            self.log_event("RECORDING:STOP")
-
-            self.csv_file.close()
-            self.csv_file = None
-            self.csv_writer = None
-            self.recording = False
-
-    # VALVE CONTROL ------------------------------------------------------------------------------------------------
     def toggle_throttling(self):
         self.throttling_enabled = not self.throttling_enabled
 
@@ -643,68 +738,114 @@ class GUIController:
         if self.lockout:
             QMessageBox.warning(self.parent, "Abort Active", "Auto fire sequence cannot be activated during an abort")
             return
-            
-        # First confirmation dialog
+
+        if not self.project or not getattr(self.project, "sequence", None):
+            QMessageBox.warning(
+                self.parent, "No Sequence",
+                "The loaded project has no auto-fire sequence defined.\n"
+                "Use the Sequencing tab to build one first."
+            )
+            return
+
+        steps = self.project.sequence
+
+        # ── Confirmation dialog ──────────────────────────────────────────────
         confirm_dialog = QDialog(self.parent)
-        confirm_dialog.setWindowTitle("Confirm Ignition")
-        layout = QVBoxLayout()
-        label = QLabel("Start ignition sequence?")
-        layout.addWidget(label)
+        confirm_dialog.setWindowTitle("Confirm Auto-Fire Sequence")
+        c_layout = QVBoxLayout(confirm_dialog)
+        c_layout.addWidget(QLabel(f"Execute auto-fire sequence?\n\n"
+                                  f"Steps: {len(steps)}\n"
+                                  f"Total duration: {steps[-1].time_offset:.1f} s"))
         buttons = QDialogButtonBox(QDialogButtonBox.Yes | QDialogButtonBox.Cancel)
         buttons.accepted.connect(confirm_dialog.accept)
         buttons.rejected.connect(confirm_dialog.reject)
-        layout.addWidget(buttons)
-        confirm_dialog.setLayout(layout)
-        
-        # Only proceed if user confirms
+        c_layout.addWidget(buttons)
         if confirm_dialog.exec_() != QDialog.Accepted:
             return
 
-        # Create countdown dialog
+        # ── Pre-ignition countdown (10 s) ────────────────────────────────────
         countdown_dialog = QDialog(self.parent)
-        countdown_dialog.setWindowTitle("Ignition Sequence")
+        countdown_dialog.setWindowTitle("Auto-Fire Sequence")
         countdown_dialog.setMinimumSize(300, 150)
-        countdown_layout = QVBoxLayout(countdown_dialog)
-        
-        # Countdown label
-        self.countdown_label = QLabel("Ignition in 10 seconds...")
+        cd_layout = QVBoxLayout(countdown_dialog)
+
+        self.countdown_label = QLabel("Sequence starts in 10 seconds…")
         self.countdown_label.setAlignment(Qt.AlignCenter)
-        countdown_layout.addWidget(self.countdown_label)
-        
-        # Cancel button
+        cd_layout.addWidget(self.countdown_label)
+
         cancel_btn = QPushButton("CANCEL")
         cancel_btn.setStyleSheet("background-color: red; color: white;")
-        countdown_layout.addWidget(cancel_btn)
-        
-        # Initialize countdown
+        cd_layout.addWidget(cancel_btn)
+
         self.countdown_value = 10
         self.countdown_timer = QTimer()
-        self.countdown_timer.setInterval(1000)  # 1 second interval
-        
-        # Update countdown display
+        self.countdown_timer.setInterval(1000)
+
         def update_countdown():
             self.countdown_value -= 1
             if self.countdown_value > 0:
-                self.countdown_label.setText(f"Ignition in {self.countdown_value} seconds...")
+                self.countdown_label.setText(f"Sequence starts in {self.countdown_value} seconds…")
             else:
                 self.countdown_timer.stop()
-                countdown_dialog.accept()  # Close dialog and proceed
-        
-        # Cancel sequence
+                countdown_dialog.accept()
+
         def cancel_sequence():
             self.countdown_timer.stop()
             countdown_dialog.reject()
-        
-        # Connect signals
+
         self.countdown_timer.timeout.connect(update_countdown)
         cancel_btn.clicked.connect(cancel_sequence)
-        
-        # Start countdown
         self.countdown_timer.start()
+
+        if countdown_dialog.exec_() != QDialog.Accepted:
+            return
+
+        # ── Schedule each sequence step as a QTimer shot ────────────────────
+        # Cancel any previously running sequence first
+        self._cancel_sequence()
+
+        for step in steps:
+            delay_ms = int(step.time_offset * 1000)
+            t = QTimer()
+            t.setSingleShot(True)
+            t.timeout.connect(lambda s=step: self._execute_sequence_step(s))
+            t.start(delay_ms)
+            self._sequence_timers.append(t)
+
+        self.log_event("SEQUENCE:START", f"{len(steps)} steps")
+
+    def _execute_sequence_step(self, step):
+        """Apply one sequence step: set every known valve to its desired state.
         
-        # Show dialog and handle result
-        if countdown_dialog.exec_() == QDialog.Accepted:
-            self.apply_operation("Pressurization")
+        step.open_valves contains component IDs (cid). These must be translated
+        to hardware IDs (hw_id) before calling toggle_valve, which works in hw space.
+        """
+        if self.lockout:
+            return
+
+        # Build a set of hw_ids that should be OPEN for this step
+        open_hw_ids: set[str] = set()
+        if self.project:
+            for cid in step.open_valves:
+                comp = self.project.components.get(cid)
+                if comp:
+                    hw_id = comp.extras.get("hw_id") or comp.label
+                    if hw_id:
+                        open_hw_ids.add(hw_id)
+
+        # Set every valve in hw space to its desired state
+        for hw_id in list(self.valve_states.keys()):
+            self.toggle_valve(hw_id, hw_id in open_hw_ids)
+
+        self.ethernet_client.set_system_state(step.name)
+        self.signals.system_status.emit(step.name)
+        self.log_event("SEQUENCE:STEP", step.name)
+
+    def _cancel_sequence(self):
+        """Stop all pending sequence timers."""
+        for t in self._sequence_timers:
+            t.stop()
+        self._sequence_timers.clear()
 
     def show_abort_countdown_dialog(self, initial_seconds: int, valve_name: str = "UNKNOWN", cmd_type: str = "COMMAND"):
         """Show a non-modal dialog displaying the auto-abort countdown"""
@@ -835,14 +976,12 @@ class GUIController:
         #     )
         
         try:
-            # Send command
             self.ethernet_client.send_valve_command(valve_name, new_state)
         except Exception:
             pass
 
         self.log_event("VALVE_CHANGED", f"{valve_name}:{new_state}")
 
-        # Add to pending commands for retry logic
         self.pending_valve_commands[valve_name] = {
             "state": new_state,
             "last_sent": QDateTime.currentMSecsSinceEpoch(),
@@ -850,14 +989,13 @@ class GUIController:
         }
 
     def check_valve_command_timeouts(self):
-        """Check for valve commands that haven't been acknowledged and retry if necessary"""
         current_time = QDateTime.currentMSecsSinceEpoch()
         valves_to_delete = []
 
         for valve_name, info in self.pending_valve_commands.items():
             if current_time - info["last_sent"] > self.valve_retry_timeout:
                 if info["retries"] < self.valve_max_retries:
-                    # Retry
+
                     info["retries"] += 1
                     info["last_sent"] = current_time
                     try:
@@ -866,11 +1004,9 @@ class GUIController:
                     except Exception:
                         pass
                 else:
-                    # Max retries reached
                     print(f"Timeout: Max retries reached for valve {valve_name}")
                     self.log_event("VALVE_TIMEOUT", f"{valve_name}:{info['state']}")
                     valves_to_delete.append(valve_name)
-                    # Optionally notify user or update UI to show failure
 
         for valve_name in valves_to_delete:
             del self.pending_valve_commands[valve_name]
@@ -881,18 +1017,24 @@ class GUIController:
             return
 
         self.ethernet_client.set_system_state(operation)
-
-        active_valves = self.valve_operation_states.get(operation, [])
-        for name in self.valve_states:
-            state = name in active_valves
-            self.toggle_valve(name, state)
-
         self.signals.system_status.emit(operation)
+        self.log_event("OPERATION", operation)
 
-        # self.status_label.setText(f"Current State: {operation}")
+        if self.project and getattr(self.project, "sequence", None):
+            step = next(
+                (s for s in self.project.sequence if s.name == operation),
+                None
+            )
+            if step is not None:
+                open_hw_ids: set[str] = set()
+                for cid in step.open_valves:
+                    comp = self.project.components.get(cid)
+                    if comp:
+                        hw_id = comp.extras.get("hw_id") or comp.label
+                        if hw_id:
+                            open_hw_ids.add(hw_id)
+                for hw_id in list(self.valve_states.keys()):
+                    self.toggle_valve(hw_id, hw_id in open_hw_ids)
+                return
 
-        self.log_event("OPERATION", f"{operation}")
-
-        if operation == "Pressurization":
-            QTimer.singleShot(5000, lambda: self.apply_operation("Fire"))
-            QTimer.singleShot(20000, lambda: self.apply_operation("Kill and Vent"))
+        self.log_event("OPERATION:WARN", f"No sequence step named '{operation}' in project")

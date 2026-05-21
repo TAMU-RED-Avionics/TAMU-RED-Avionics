@@ -214,15 +214,8 @@ class VTComms(QObject):
         while self.running:
             try:
                 current_time = time.time()
-                
-                # Send HRT (heartbeat) every 10ms if enabled
-                if self.heartbeat_enabled and self.last_addr:
-                    pkt = EGCPPacket(self.packet_id_counter, EGCPPacket.PKT_HRT)
-                    self.packet_id_counter = (self.packet_id_counter + 1) & 0xFFFFFF
-                    self.sock.sendto(pkt.encode(), self.last_addr)
-                
-                # Send sensor data every 100ms
-                if current_time - last_sensor_time >= 0.1:
+                # Send sensor data every 10ms (matching E2_Teensy)
+                if current_time - last_sensor_time >= 0.01:
                     self.send_sensors()
                     last_sensor_time = current_time
                 

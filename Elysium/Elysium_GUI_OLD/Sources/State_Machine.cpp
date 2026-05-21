@@ -29,6 +29,16 @@ const int APG_ABORT_DURATION = 200;
 // Number of milliseconds that the before purge to allow for T-10 countdown
 const int SEQUENCE_DELAY = 10000 - (PURGE_DURATION + PURGE_DELAY + IGNITION_DELAY);
 
+// ============================================================
+// RAGNAROK TORCH IGNITER TEST — delete this block when done
+// Delay from T+0s to T+0.25s: EABV opens, spark fires; ethanol has not yet flowed
+const int RT_ETHANOL_DELAY  = 250;   // ms  (T+0 → T+0.25s: ethanol begins)
+// Delay from T+0.25s to T+1s: EABV closes, ethanol purges the torch
+const int RT_PURGE_START    = 750;   // ms  (T+0.25 → T+1s: EABV closes)
+// Duration of the ethanol purge: T+1s → T+2s
+const int RT_PURGE_DURATION = 1000;  // ms  (T+1s → T+2s: PABV closes)
+// ============================================================
+
 // Constructor
 State_Machine::State_Machine(QString name, QHash<QString, double>* data):
     config_name(name), cur_state("Fully Closed"), people_safe_dist(false),
@@ -48,6 +58,11 @@ void State_Machine::start() {
     // Set Initial State (cannot do in constructor because it needs external connections)
     if ("hotfire_1" == this->config_name) {
         emit new_state("Fully Closed");
+    } else if ("rag_torch" == this->config_name) {
+        // ============================================================
+        // RAGNAROK TORCH IGNITER TEST — initial state changed to RT Safe
+        emit new_state("RT Safe");
+        // ============================================================
     } else {
         cout << "State Machine: Unknown configuration: " << this->config_name.toStdString() << endl;
     }
@@ -319,6 +334,108 @@ void State_Machine::hotfire_1(bool new_state, bool abort) {
     }
 }
 
+// ============================================================
+// RAGNAROK TORCH IGNITER TEST — delete this entire method when done
+//
+// Ignition Sequence (Ragnarok Torch Igniter):
+//   T+0.00s  Spark fires continuously; EABV opens → GOx enters combustion chamber
+//            State: "RT Ignition Start"
+//   T+0.25s  Ethanol begins to flow; PABV opens
+//            State: "RT Ethanol Flow"    (auto, +250 ms)
+//   T+1.00s  Ethanol purges torch; EABV closes
+//            State: "RT Purge"           (auto, +750 ms)
+//   T+2.00s  PABV closes; sequence complete
+//            State: "RT Shutdown"        (auto, +1000 ms)
+// ============================================================
+void State_Machine::ragnarok_torch_igniter(bool new_state, bool abort) {
+    QStringList new_allowed_states = {};
+
+    // Abort: snap to RT Shutdown (all valves closed) and stop any running timers
+    if (abort) {
+        this->cur_state = "RT Shutdown";
+        emit this->new_state(this->cur_state);
+    }
+
+    if ("RT Safe" == this->cur_state) {
+        // Initial safe state — operator may begin the sequence
+        if (this->people_safe_dist) {
+            new_allowed_states << "RT Ignition Start";
+        }
+
+    } else if ("RT Ignition Start" == this->cur_state) {
+        // EABV open; spark firing; GOx flowing
+        // Abort always available
+        new_allowed_states << "RT Shutdown";
+
+        // After RT_ETHANOL_DELAY ms, automatically open PABV (ethanol flow)
+        if (new_state) {
+            QTimer* eth_timer = new QTimer(this);
+            eth_timer->setTimerType(Qt::PreciseTimer);
+            eth_timer->setSingleShot(true);
+            QObject::connect(eth_timer, &QTimer::timeout,
+                             this, [this]() { emit this->new_state("RT Ethanol Flow"); });
+            QObject::connect(this, SIGNAL(new_state(QString)), eth_timer, SLOT(stop()));
+            eth_timer->start(RT_ETHANOL_DELAY);
+        }
+
+    } else if ("RT Ethanol Flow" == this->cur_state) {
+        // EABV and PABV both open; GOx + ethanol flowing
+        new_allowed_states << "RT Shutdown";
+
+        // After RT_PURGE_START ms, automatically close EABV and begin ethanol purge
+        if (new_state) {
+            QTimer* purge_timer = new QTimer(this);
+            purge_timer->setTimerType(Qt::PreciseTimer);
+            purge_timer->setSingleShot(true);
+            QObject::connect(purge_timer, &QTimer::timeout,
+                             this, [this]() { emit this->new_state("RT Purge"); });
+            QObject::connect(this, SIGNAL(new_state(QString)), purge_timer, SLOT(stop()));
+            purge_timer->start(RT_PURGE_START);
+        }
+
+    } else if ("RT Purge" == this->cur_state) {
+        // EABV closed; PABV open; ethanol purging the torch
+        new_allowed_states << "RT Shutdown";
+
+        // After RT_PURGE_DURATION ms, automatically close PABV and complete sequence
+        if (new_state) {
+            QTimer* shutdown_timer = new QTimer(this);
+            shutdown_timer->setTimerType(Qt::PreciseTimer);
+            shutdown_timer->setSingleShot(true);
+            QObject::connect(shutdown_timer, &QTimer::timeout,
+                             this, [this]() { emit this->new_state("RT Shutdown"); });
+            QObject::connect(this, SIGNAL(new_state(QString)), shutdown_timer, SLOT(stop()));
+            shutdown_timer->start(RT_PURGE_DURATION);
+        }
+
+    } else if ("RT Shutdown" == this->cur_state) {
+        // All valves closed; sequence complete
+        // Operator may return to safe state or run another test
+        new_allowed_states << "RT Safe";
+
+    } else {
+        cout << "State Machine [RT]: Unknown state: " << this->cur_state.toStdString() << endl;
+    }
+
+    // Publish the updated allowed-state list if it has changed
+    bool are_equal = new_allowed_states.size() == this->cur_allowed_states->size();
+    if (are_equal) {
+        for (int i = 0; i < new_allowed_states.size(); ++i) {
+            if (new_allowed_states.at(i) != this->cur_allowed_states->at(i)) {
+                are_equal = false;
+                break;
+            }
+        }
+    }
+    if (!are_equal) {
+        *(this->cur_allowed_states) = new_allowed_states;
+        emit allowed_states(this->cur_allowed_states);
+    }
+}
+// ============================================================
+// END RAGNAROK TORCH IGNITER TEST
+// ============================================================
+
 void State_Machine::set_state(QString state) {
     if ("ABORT" == state) {
         this->update_signals(true, true);
@@ -440,6 +557,11 @@ void State_Machine::new_data() {
 void State_Machine::update_signals(bool new_state, bool abort) {
     if ("hotfire_1" == this->config_name) {
         this->hotfire_1(new_state, abort);
+    // ============================================================
+    // RAGNAROK TORCH IGNITER TEST — delete this else-if block when done
+    } else if ("rag_torch" == this->config_name) {
+        this->ragnarok_torch_igniter(new_state, abort);
+    // ============================================================
     } else {
         cout << "State Machine: Unknown configuration: " << this->config_name.toStdString() << endl;
     }

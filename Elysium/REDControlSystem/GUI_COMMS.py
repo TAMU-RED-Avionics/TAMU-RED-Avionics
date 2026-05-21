@@ -64,42 +64,13 @@ class EGCPPacket:
 
 
 class EthernetClient:
-    # valve to ID map (1-byte actuator IDs)
-    VALVE_MAP = {
-        'NCS1': 0x01,
-        'NCS2': 0x02,
-        'NCS3': 0x03,
-        'NCS4': 0x04,
-        'NCS5': 0x05,
-        'NCS6': 0x06,
-        'LA-BV1': 0x10,
-        'LA-BV2': 0x11,
-        'GV-1': 0x20,
-        'GV-2': 0x21,
-        'IG1': 0x30,
-        'IG2': 0x31,
-    }
-    # reverse mapping for ADC sensor IDs to names
-    SENSOR_MAP = {
-        0x01: 'P1',   # pressure sensors
-        0x02: 'P2',
-        0x03: 'P3',
-        0x04: 'P4',
-        0x05: 'P5',
-        0x06: 'P6',
-        0x07: 'P7',
-        0x08: 'P8',
-        0x09: 'TC1',  # thermocouples
-        0x0A: 'TC2',
-        0x0B: 'TC3',
-        0x0C: 'LC1',  # load cells
-        0x0D: 'LC2',
-        0x0E: 'LC3',
-        0x0F: 'B1',
-        0x10: 'B2',
-    }
-    
+
     def __init__(self, log_event_callback: (str)=None, receive_callback: (str)=None, connect_callback: (bool)=None, disconnect_callback: (str)=None):
+        # Maps are populated at runtime via load_project_maps(); they start empty so
+        # any attempt to control valves or decode sensors before a project is loaded
+        # fails loudly rather than silently using stale hardcoded data.
+        self.VALVE_MAP:  dict[str, int] = {}   # hw_id  -> relay index  (1-byte actuator ID)
+        self.SENSOR_MAP: dict[int, str] = {}   # adc ch -> hw_id name
         self.log_event_callback: (str) = log_event_callback
         self.receive_callback: (str) = receive_callback
         self.connect_callback: (bool) = connect_callback
@@ -149,6 +120,70 @@ class EthernetClient:
         self.auto_abort_countdown_active: bool = False
         self.auto_abort_last_announce_second: int = -1
     
+    def load_project_maps(self, project) -> None:
+        """Rebuild VALVE_MAP and SENSOR_MAP from the loaded PIDProject.
+
+        Valve components must have ``component.hardware.relay`` set to the
+        1-byte actuator ID used by the firmware.  The hw_id (or label as a
+        fallback) becomes the key used everywhere else in the GUI.
+
+        Sensor components must have ``component.hardware.adc`` set to the ADC
+        channel index sent in PKT_ADC packets.  Again hw_id / label is the
+        name the rest of the GUI works with.
+        """
+        from PID_SCHEMA import (
+            COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
+            COMP_GLOBE_VALVE, COMP_SOLENOID,
+            COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL,
+        )
+
+        VALVE_TYPES  = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
+                        COMP_GLOBE_VALVE, COMP_SOLENOID)
+        SENSOR_TYPES = (COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL)
+
+        new_valve_map:  dict[str, int] = {}
+        new_sensor_map: dict[int, str] = {}
+
+        if project is None:
+            self.VALVE_MAP  = new_valve_map
+            self.SENSOR_MAP = new_sensor_map
+            return
+
+        skipped_valves  = []
+        skipped_sensors = []
+
+        for cid, comp in project.components.items():
+            hw_id = comp.extras.get("hw_id") or comp.label or cid
+
+            if comp.type in VALVE_TYPES:
+                relay = comp.hardware.relay
+                if relay is None:
+                    skipped_valves.append(hw_id)
+                else:
+                    new_valve_map[hw_id] = int(relay)
+
+            elif comp.type in SENSOR_TYPES:
+                adc = comp.hardware.adc
+                if adc is None:
+                    skipped_sensors.append(hw_id)
+                else:
+                    ch = int(adc)
+                    if ch in new_sensor_map:
+                        print(f"[EthernetClient] WARNING: ADC ch {ch} collision — "
+                              f"'{new_sensor_map[ch]}' vs '{hw_id}'. Keeping first.")
+                    else:
+                        new_sensor_map[ch] = hw_id
+
+        self.VALVE_MAP  = new_valve_map
+        self.SENSOR_MAP = new_sensor_map
+
+        print(f"[EthernetClient] Maps loaded from project '{project.name}': "
+              f"{len(new_valve_map)} valves, {len(new_sensor_map)} sensors.")
+        if skipped_valves:
+            print(f"[EthernetClient]   Valves with no relay binding (skipped): {skipped_valves}")
+        if skipped_sensors:
+            print(f"[EthernetClient]   Sensors with no ADC binding (skipped): {skipped_sensors}")
+
     def _get_next_tx_id(self) -> int:
         """Get next transmit packet ID and increment counter"""
         packet_id = self.tx_packet_id

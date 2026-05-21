@@ -16,6 +16,14 @@ extern const int PURGE_DURATION;
 extern const int FIRE_DURATION;
 extern const int APG_ABORT_DURATION;
 
+// ============================================================
+// RAGNAROK TORCH IGNITER TEST — delete this block when done
+// Timing constants for the Ragnarok Torch Igniter sequence
+extern const int RT_ETHANOL_DELAY;   // ms from T+0 to ethanol flow (T+0.25s)
+extern const int RT_PURGE_START;     // ms from T+0 to EABV close / purge start (T+1s)
+extern const int RT_PURGE_DURATION;  // ms purge lasts before PABV closes (T+2s)
+// ============================================================
+
 // TODO: Consider using derived classes for each configuration. Make update_signals() a pure virtual function.
 // This class must derive from QObject to use signals/slots
 class State_Machine : public QObject {
@@ -38,6 +46,11 @@ private:
     QList<int>* apg_times;
 
     void hotfire_1(bool new_state, bool abort);
+
+    // ============================================================
+    // RAGNAROK TORCH IGNITER TEST — delete this line when done
+    void ragnarok_torch_igniter(bool new_state, bool abort);
+    // ============================================================
 private slots:
     void set_state(QString state);
     void set_people_safe_dist(int safe);
