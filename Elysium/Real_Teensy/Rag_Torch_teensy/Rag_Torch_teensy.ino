@@ -1,31 +1,8 @@
 /*
 ====================================================================
-  RAG_TORCH_TEENSY
-  Ragnarok Torch Igniter Test — Teensy firmware
-  Derived from Elysium_teensy; keep both files.
-====================================================================
-
-CIRCUIT NOTE — SPARK (MOSFET pull-up driver)
----------------------------------------------
-  Teensy pin (SPARK_PIN)
-      → 1kΩ resistor → 2N3904 base
-  2N3904 emitter → GND
-  2N3904 collector → IPW60R045CPA gate
-  12 V → 1kΩ resistor → IPW60R045CPA gate   (pull-up)
-  IPW60R045CPA source → GND
-  IPW60R045CPA drain → ignition coil (−) terminal
-
-  Logic:
-    Teensy LOW  → transistor OFF → 12 V on gate → MOSFET ON  → coil grounded → SPARK
-    Teensy HIGH → transistor ON  → gate pulled to GND via transistor → MOSFET OFF → no spark
-
-  Therefore: to SPARK write LOW; to STOP write HIGH.
-  The get_pin() / command handler inverts the level for SPARK automatically.
-
-MOSFET: IPW60R045CPAFKSA1 (Infineon CoolMOS, 600 V / 60 A, TO-247-3)
-  Vgs(th) max = 3.5 V @ 3 mA  |  Drive Vgs = 10 V  |  Qg = 190 nC @ 10 V
-  The 12 V pull-up drives the gate well above Vgs(th); the 1 kΩ resistor
-  limits in-rush and damps oscillation on the gate trace.
+  Only use for rag torch testing!
+  This is almost the same as the Elysium Teensy, but with some modifications
+  loadcell and thermocouple code are NOT in this.
 ====================================================================
 */
 
@@ -37,54 +14,38 @@ MOSFET: IPW60R045CPAFKSA1 (Infineon CoolMOS, 600 V / 60 A, TO-247-3)
 -------------------------------------------------------------------
 */
 long unsigned LAST_SENSOR_UPDATE      = 0;
-const long unsigned SENSOR_UPDATE_INTERVAL   = 1000;      // µs  <-- USER INPUT
+const long unsigned SENSOR_UPDATE_INTERVAL   = 1000;      // µs
 
-long unsigned LAST_LC_UPDATE          = 0;
-const long unsigned LC_UPDATE_INTERVAL       = 100000;    // µs  <-- USER INPUT
 
 long unsigned LAST_COMMUNICATION_TIME = 0;
-const long unsigned CONNECTION_TIMEOUT       = 200000;    // µs  <-- USER INPUT
+const long unsigned CONNECTION_TIMEOUT       = 200000;    // µs
 
 long unsigned LAST_HUMAN_UPDATE       = 0;
-const long unsigned HUMAN_CONNECTION_TIMEOUT = 300000000; // µs  <-- USER INPUT
+const long unsigned HUMAN_CONNECTION_TIMEOUT = 300000000; // µs
 
 long unsigned ABORT_TIME_TRACKING     = 0;
 const long unsigned ABORTED_TIME_INTERVAL    = 500000;    // µs between "Aborted" prints
 
-// Baud rate (used only for debug Serial; primary comms are UDP)
-const int BAUD = 115200;                                  // <-- USER INPUT
-
-/*
--------------------------------------------------------------------
-  VALVE / ACTUATOR PIN ASSIGNMENTS
-  All pins set to 0 or -1 (TBD) — update when hardware is wired.
-  -1  = not connected / not yet assigned
-   0  = assigned to pin 0 (update to real pin when known)
--------------------------------------------------------------------
-*/
+const int BAUD = 115200;
 
 // ============================================================
-// RAGNAROK TORCH IGNITER TEST — delete/update pin values when hardware is ready
-const int NCS1_PIN = 0;   // <-- USER INPUT
-const int NCS2_PIN = 0;   // <-- USER INPUT
-const int NCS3_PIN = 0;  // <-- USER INPUT
-const int NCS4_PIN = 0;  // <-- USER INPUT
-const int NCS5_PIN = 0;  // <-- USER INPUT
+// delete/update pin values when hardware is ready
+const int NCS1_PIN = -1;   // <-- USER INPUT
+const int NCS2_PIN = -1;   // <-- USER INPUT
+const int NCS3_PIN = -1;   // <-- USER INPUT
+const int NCS4_PIN = -1;   // <-- USER INPUT
+const int NCS5_PIN = -1;   // <-- USER INPUT
 
-const int EABV_PIN = 0;   // <-- USER INPUT
-
-const int PABV_PIN = 0;   // <-- USER INPUT
-
-// Spark plug driver — ACTIVE LOW (see circuit note at top of file)
-//   Write LOW  → MOSFET ON  → coil grounded → spark fires
-//   Write HIGH → MOSFET OFF → coil open     → spark stops
-const int SPARK_PIN = 0;  // <-- USER INPUT
+const int EABV_PIN = -1;   // <-- USER INPUT
+const int PABV_PIN = -1;   // <-- USER INPUT
+const int SPARK_PIN = -1;  // <-- USER INPUT
 
 // Spark continuous firing variables
 bool is_sparking = false;
-unsigned long last_spark_toggle = 0;
-const unsigned long SPARK_TOGGLE_INTERVAL = 10000; // µs (10ms interval = 50Hz square wave)
-bool current_spark_state = false;
+const unsigned int dwellTime = 3000; // us
+const unsigned int sparkTime = 2000; // us
+const unsigned int timeBetweenSparks = 50; // ms
+unsigned long lastSparkMillis = 0;
 // ============================================================
 
 /*
@@ -143,13 +104,7 @@ bool init_comms(byte* mac, unsigned int port) {
   return true;
 }
 
-/*
--------------------------------------------------------------------
-  PIN LOOKUP
-  Returns the Teensy pin for a given valve/actuator ID string.
-  Returns -1 if the ID is unknown or not connected.
--------------------------------------------------------------------
-*/
+
 // Serial input parsing variables
 String IDENTIFIER  = "";
 int    CONTROL_STATE = 0;
@@ -166,19 +121,6 @@ int get_pin(String id) {
   // h_nop is handled before get_pin() is called; ignore here
   return -1;
 }
-
-/*
--------------------------------------------------------------------
-  THERMOCOUPLE SET UP
--------------------------------------------------------------------
-*/
-#include <Wire.h>
-#include <Adafruit_I2CDevice.h>
-#include <Adafruit_I2CRegister.h>
-#include <Adafruit_MCP9600.h>
-
-#define I2C_ADDRESS1 (0x67)
-Adafruit_MCP9600 mcp;
 
 /*
 -------------------------------------------------------------------
@@ -209,13 +151,8 @@ float pressureCalculation(float analog, size_t id) {
 */
 void setup() {
   init_comms(MAC_ADDRESS, PORT);
-  Wire.begin();
+  Serial.begin(BAUD);
 
-  // ============================================================
-  // RAGNAROK TORCH IGNITER TEST — valve pin setup
-  // Update pin values above before running hardware.
-  // Skip any pin == -1 (not connected).
-  // ============================================================
   auto safe_pinMode = [](int pin, int mode) {
     if (pin >= 0) pinMode(pin, mode);
   };
@@ -232,7 +169,7 @@ void setup() {
   safe_pinMode(PABV_PIN,  OUTPUT);
   safe_pinMode(SPARK_PIN, OUTPUT);
 
-  // Default all valves closed, spark driver idle (HIGH = MOSFET off)
+  // Default all valves closed, spark driver idle
   safe_digitalWrite(NCS1_PIN,  LOW);
   safe_digitalWrite(NCS2_PIN,  LOW);
   safe_digitalWrite(NCS3_PIN,  LOW);
@@ -240,22 +177,13 @@ void setup() {
   safe_digitalWrite(NCS5_PIN,  LOW);
   safe_digitalWrite(EABV_PIN,  LOW);
   safe_digitalWrite(PABV_PIN,  LOW);
-  safe_digitalWrite(SPARK_PIN, HIGH); // MOSFET OFF, no spark at startup
+  safe_digitalWrite(SPARK_PIN, HIGH); // Safe startup state
 
   output_string(PORT, "RT: pins initialised\n");
 
-  // Thermocouple
-  mcp.begin(I2C_ADDRESS1);
-  mcp.setADCresolution(MCP9600_ADCRESOLUTION_18);
-  mcp.setThermocoupleType(MCP9600_TYPE_K);
-  mcp.setFilterCoefficient(3);
-  mcp.enable(true);
-  output_string(PORT, "RT: TC ready\n");
 }
 
-/*
-Emergency Shutdown
-*/
+
 void emergency_close_all() {
   // All solenoids / actuators off
   if (NCS1_PIN >= 0) digitalWrite(NCS1_PIN, LOW);
@@ -266,22 +194,12 @@ void emergency_close_all() {
   if (EABV_PIN >= 0) digitalWrite(EABV_PIN, LOW);
   if (PABV_PIN >= 0) digitalWrite(PABV_PIN, LOW);
 
-  // SPARK: HIGH = transistor on = gate pulled low = MOSFET OFF = no spark
   is_sparking = false;
-  current_spark_state = false;
   if (SPARK_PIN >= 0) digitalWrite(SPARK_PIN, HIGH);
 }
 
-/*
-===================================================================
-  MAIN LOOP
-===================================================================
-*/
 void loop() {
 
-  // ---------------------------------------------------------------
-  //  COMMAND RECEIVE
-  // ---------------------------------------------------------------
   udp.parsePacket();
   if (udp.available() > 0) {
     String input = input_until('\n');
@@ -307,50 +225,66 @@ void loop() {
     //  VALVE / SPARK COMMAND DISPATCH
     // -------------------------------------------------------
     if (IDENTIFIER == "SPARK") {
-      // ============================================================
-      // RAGNAROK TORCH IGNITER TEST — active-low spark driver
-      //   GUI sends SPARK:1 to start firing, SPARK:0 to stop.
-      //   The main loop handles toggling the pin continuously.
-      // ============================================================
+
       switch (CONTROL_STATE) {
+
         case 1:
+          // Enable continuous spark mode
           is_sparking = true;
+
+          // Ensure safe initial state
+          digitalWrite(SPARK_PIN, HIGH);
+
           break;
+
         case 0:
+          // Disable ignition
           is_sparking = false;
-          current_spark_state = false;
-          // GUI: spark OFF → pull pin HIGH → transistor ON → gate to GND → MOSFET OFF → no spark
-          if (SPARK_PIN >= 0) digitalWrite(SPARK_PIN, HIGH);
+
+          // Ensure MOSFET OFF
+          digitalWrite(SPARK_PIN, HIGH);
+
           break;
       }
+
     } else {
-      // All other valves: standard active-high (0 = closed, 1 = open)
+
+      // Standard active-high valves
       switch (CONTROL_STATE) {
+
         case 0:
-          if (pin >= 0) digitalWrite(pin, LOW);   // Close
+          if (pin >= 0) digitalWrite(pin, LOW);
           break;
+
         case 1:
-          if (pin >= 0) digitalWrite(pin, HIGH);  // Open
+          if (pin >= 0) digitalWrite(pin, HIGH);
           break;
       }
     }
   }
 
-  // ---------------------------------------------------------------
-  //  CONTINUOUS SPARK TOGGLE
-  // ---------------------------------------------------------------
+
   if (is_sparking) {
-    if ((micros() - last_spark_toggle) > SPARK_TOGGLE_INTERVAL) {
-      last_spark_toggle = micros();
-      current_spark_state = !current_spark_state;
-      
-      if (SPARK_PIN >= 0) {
-        if (current_spark_state) {
-          digitalWrite(SPARK_PIN, LOW); // ON (coil grounded, spark fires)
-        } else {
-          digitalWrite(SPARK_PIN, HIGH); // OFF (MOSFET off)
-        }
-      }
+    if ((millis() - lastSparkMillis) >= timeBetweenSparks) {
+
+      lastSparkMillis = millis();
+
+      // -------------------------------------------
+      // 1. CHARGE COIL
+      // LOW -> MOSFET ON
+      // -------------------------------------------
+      digitalWrite(SPARK_PIN, LOW);
+
+      delayMicroseconds(dwellTime);
+
+      // -------------------------------------------
+      // 2. FIRE SPARK
+      // HIGH -> MOSFET OFF
+      // Spark generated here
+      // -------------------------------------------
+      digitalWrite(SPARK_PIN, HIGH);
+
+      delayMicroseconds(sparkTime);
     }
   }
 
@@ -363,15 +297,6 @@ void loop() {
     pt4_analog = analogRead(PT4_PIN);
     pt5_analog = analogRead(PT5_PIN);
     pt6_analog = analogRead(PT6_PIN);
-
-    if ((LAST_SENSOR_UPDATE - LAST_LC_UPDATE) > LC_UPDATE_INTERVAL) {
-      LAST_LC_UPDATE = LAST_SENSOR_UPDATE;
-      weight1 = scale.get_units(1);
-      weight2 = scale2.get_units(1);
-      weight3 = scale3.get_units(1);
-    }
-
-    float t1 = mcp.readThermocouple();
 
     output_string(PORT, "t:");
     output_float(PORT, LAST_SENSOR_UPDATE);
@@ -387,8 +312,6 @@ void loop() {
     output_float(PORT, pressureCalculation(pt5_analog, 5));
     output_string(PORT, ",P6:");
     output_float(PORT, pressureCalculation(pt6_analog, 6));
-    output_string(PORT, ",T1:");
-    output_float(PORT, t1);
     output_string(PORT, ",t_loc:");
     float t_loc = (HUMAN_CONNECTION_TIMEOUT - (LAST_SENSOR_UPDATE - LAST_HUMAN_UPDATE)) / 1000000.0;
     output_float(PORT, t_loc);
@@ -396,9 +319,6 @@ void loop() {
     delay(10);
   }
 
-  // ---------------------------------------------------------------
-  //  HEARTBEAT LOSS — EMERGENCY SHUTDOWN
-  // ---------------------------------------------------------------
   bool comms_lost = (micros() - LAST_COMMUNICATION_TIME) > CONNECTION_TIMEOUT;
   bool human_lost = (micros() - LAST_HUMAN_UPDATE)       > HUMAN_CONNECTION_TIMEOUT;
 
