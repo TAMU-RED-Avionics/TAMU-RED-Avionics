@@ -1,58 +1,43 @@
-/*
-====================================================================
-  Only use for rag torch testing!
-  This is almost the same as the Elysium Teensy, but with some modifications
-  loadcell and thermocouple code are NOT in this.
-====================================================================
-*/
+// Only for ragnarok torch igniter test
 
 #include <Arduino.h>
 
-/*
--------------------------------------------------------------------
-  TIMING VARIABLES
--------------------------------------------------------------------
-*/
 long unsigned LAST_SENSOR_UPDATE      = 0;
-const long unsigned SENSOR_UPDATE_INTERVAL   = 1000;      // µs
+const long unsigned SENSOR_UPDATE_INTERVAL   = 1000;      // µs  <-- USER INPUT
 
 
 long unsigned LAST_COMMUNICATION_TIME = 0;
-const long unsigned CONNECTION_TIMEOUT       = 200000;    // µs
+const long unsigned CONNECTION_TIMEOUT       = 200000;    // µs  <-- USER INPUT
 
 long unsigned LAST_HUMAN_UPDATE       = 0;
-const long unsigned HUMAN_CONNECTION_TIMEOUT = 300000000; // µs
+const long unsigned HUMAN_CONNECTION_TIMEOUT = 300000000; // µs  <-- USER INPUT
 
 long unsigned ABORT_TIME_TRACKING     = 0;
 const long unsigned ABORTED_TIME_INTERVAL    = 500000;    // µs between "Aborted" prints
 
 const int BAUD = 115200;
 
-// ============================================================
-// delete/update pin values when hardware is ready
-const int NCS1_PIN = -1;   // <-- USER INPUT
-const int NCS2_PIN = -1;   // <-- USER INPUT
-const int NCS3_PIN = -1;   // <-- USER INPUT
-const int NCS4_PIN = -1;   // <-- USER INPUT
-const int NCS5_PIN = -1;   // <-- USER INPUT
+const int NCS1_PIN = 0;   // <-- USER INPUT
+const int NCS2_PIN = 0;   // <-- USER INPUT
+const int NCS3_PIN = 0;   // <-- USER INPUT
+const int NCS4_PIN = 0;   // <-- USER INPUT
+const int NCS5_PIN = 0;   // <-- USER INPUT
 
-const int EABV_PIN = -1;   // <-- USER INPUT
-const int PABV_PIN = -1;   // <-- USER INPUT
-const int SPARK_PIN = -1;  // <-- USER INPUT
+const int EABV_PIN = 0;   // <-- USER INPUT
+const int PABV_PIN = 0;   // <-- USER INPUT
+const int SPARK_PIN = 0;  // <-- USER INPUT
 
-// Spark continuous firing variables
-bool is_sparking = false;
-const unsigned int dwellTime = 3000; // us
-const unsigned int sparkTime = 2000; // us
-const unsigned int timeBetweenSparks = 50; // ms
-unsigned long lastSparkMillis = 0;
-// ============================================================
+// Ignition coil timing
+const unsigned int DWELL_TIME     = 3000;  // µs — coil charge time (keep < ~5000 to avoid overheating)
+const unsigned int SPARK_TIME     = 2000;  // µs — off time after coil collapse / spark
+const unsigned int BETWEEN_SPARKS = 50;    // ms — delay between full spark events
 
-/*
--------------------------------------------------------------------
-  COMMUNICATIONS
--------------------------------------------------------------------
-*/
+// Spark state machine
+enum SparkPhase { SPARK_IDLE, SPARK_DWELL, SPARK_DISCHARGE, SPARK_WAIT };
+SparkPhase spark_phase     = SPARK_IDLE;
+unsigned long spark_phase_start = 0;
+bool is_sparking            = false;
+
 #include <NativeEthernet.h>
 #include <NativeEthernetUdp.h>
 #include <IPAddress.h>
@@ -104,9 +89,7 @@ bool init_comms(byte* mac, unsigned int port) {
   return true;
 }
 
-
-// Serial input parsing variables
-String IDENTIFIER  = "";
+String IDENTIFIER    = "";
 int    CONTROL_STATE = 0;
 
 int get_pin(String id) {
@@ -144,14 +127,9 @@ float pressureCalculation(float analog, size_t id) {
   return pt_slope[id - 1] * analog + pt_intercept[id - 1];
 }
 
-/*
-===================================================================
-  SETUP
-===================================================================
-*/
 void setup() {
-  init_comms(MAC_ADDRESS, PORT);
   Serial.begin(BAUD);
+  init_comms(MAC_ADDRESS, PORT);
 
   auto safe_pinMode = [](int pin, int mode) {
     if (pin >= 0) pinMode(pin, mode);
@@ -169,7 +147,7 @@ void setup() {
   safe_pinMode(PABV_PIN,  OUTPUT);
   safe_pinMode(SPARK_PIN, OUTPUT);
 
-  // Default all valves closed, spark driver idle
+  // Default all valves closed, spark driver idle (LOW = IGBT off = coil resting)
   safe_digitalWrite(NCS1_PIN,  LOW);
   safe_digitalWrite(NCS2_PIN,  LOW);
   safe_digitalWrite(NCS3_PIN,  LOW);
@@ -177,12 +155,11 @@ void setup() {
   safe_digitalWrite(NCS5_PIN,  LOW);
   safe_digitalWrite(EABV_PIN,  LOW);
   safe_digitalWrite(PABV_PIN,  LOW);
-  safe_digitalWrite(SPARK_PIN, HIGH); // Safe startup state
+  safe_digitalWrite(SPARK_PIN, LOW); // IGBT off, coil resting at startup
 
   output_string(PORT, "RT: pins initialised\n");
 
 }
-
 
 void emergency_close_all() {
   // All solenoids / actuators off
@@ -194,8 +171,10 @@ void emergency_close_all() {
   if (EABV_PIN >= 0) digitalWrite(EABV_PIN, LOW);
   if (PABV_PIN >= 0) digitalWrite(PABV_PIN, LOW);
 
-  is_sparking = false;
-  if (SPARK_PIN >= 0) digitalWrite(SPARK_PIN, HIGH);
+  // Spark: driver LOW = IGBT off = coil resting = safe
+  is_sparking  = false;
+  spark_phase  = SPARK_IDLE;
+  if (SPARK_PIN >= 0) digitalWrite(SPARK_PIN, LOW);
 }
 
 void loop() {
@@ -212,79 +191,69 @@ void loop() {
     // h_nop = explicit no-op from a button — update timers, ignore
     if (input == "h_nop:0\r" || input == "h_nop:1\r") return;
 
-    // Parse "ID:STATE"
     int delim = input.indexOf(':');
     if (delim == -1) return;
     IDENTIFIER    = input.substring(0, delim);
     CONTROL_STATE = input.substring(delim + 1).toInt();
 
     int pin = get_pin(IDENTIFIER);
-    if (pin == -1) return;   // unknown or unassigned pin
+    if (pin == -1) return;
 
-    // -------------------------------------------------------
-    //  VALVE / SPARK COMMAND DISPATCH
-    // -------------------------------------------------------
     if (IDENTIFIER == "SPARK") {
-
       switch (CONTROL_STATE) {
-
         case 1:
-          // Enable continuous spark mode
           is_sparking = true;
-
-          // Ensure safe initial state
-          digitalWrite(SPARK_PIN, HIGH);
-
+          spark_phase = SPARK_IDLE;
           break;
-
         case 0:
-          // Disable ignition
           is_sparking = false;
-
-          // Ensure MOSFET OFF
-          digitalWrite(SPARK_PIN, HIGH);
-
+          spark_phase = SPARK_IDLE;
+          if (SPARK_PIN >= 0) digitalWrite(SPARK_PIN, LOW);
           break;
       }
-
     } else {
-
-      // Standard active-high valves
+      // All other valves: standard active-high (0 = closed, 1 = open)
       switch (CONTROL_STATE) {
-
         case 0:
-          if (pin >= 0) digitalWrite(pin, LOW);
+          if (pin >= 0) digitalWrite(pin, LOW);   // Close
           break;
-
         case 1:
-          if (pin >= 0) digitalWrite(pin, HIGH);
+          if (pin >= 0) digitalWrite(pin, HIGH);  // Open
           break;
       }
     }
   }
 
+  if (is_sparking && SPARK_PIN >= 0) {
+    unsigned long now = micros();
 
-  if (is_sparking) {
-    if ((millis() - lastSparkMillis) >= timeBetweenSparks) {
+    switch (spark_phase) {
+      case SPARK_IDLE:
+        digitalWrite(SPARK_PIN, HIGH);
+        spark_phase_start = now;
+        spark_phase = SPARK_DWELL;
+        break;
 
-      lastSparkMillis = millis();
+      case SPARK_DWELL:
+        if ((now - spark_phase_start) >= DWELL_TIME) {
+          digitalWrite(SPARK_PIN, LOW);
+          spark_phase_start = now;
+          spark_phase = SPARK_DISCHARGE;
+        }
+        break;
 
-      // -------------------------------------------
-      // 1. CHARGE COIL
-      // LOW -> MOSFET ON
-      // -------------------------------------------
-      digitalWrite(SPARK_PIN, LOW);
+      case SPARK_DISCHARGE:
+        if ((now - spark_phase_start) >= SPARK_TIME) {
+          spark_phase_start = now;
+          spark_phase = SPARK_WAIT;
+        }
+        break;
 
-      delayMicroseconds(dwellTime);
-
-      // -------------------------------------------
-      // 2. FIRE SPARK
-      // HIGH -> MOSFET OFF
-      // Spark generated here
-      // -------------------------------------------
-      digitalWrite(SPARK_PIN, HIGH);
-
-      delayMicroseconds(sparkTime);
+      case SPARK_WAIT:
+        if ((now - spark_phase_start) >= (BETWEEN_SPARKS * 1000UL)) {
+          spark_phase = SPARK_IDLE;
+        }
+        break;
     }
   }
 
@@ -319,6 +288,7 @@ void loop() {
     delay(10);
   }
 
+  // heartbeat loss check
   bool comms_lost = (micros() - LAST_COMMUNICATION_TIME) > CONNECTION_TIMEOUT;
   bool human_lost = (micros() - LAST_HUMAN_UPDATE)       > HUMAN_CONNECTION_TIMEOUT;
 
@@ -342,7 +312,6 @@ void loop() {
           aborted = false;
           LAST_COMMUNICATION_TIME = micros();
           LAST_HUMAN_UPDATE       = micros();
-          // Leave all valves closed after recovery — operator must re-sequence
         }
       }
     }
