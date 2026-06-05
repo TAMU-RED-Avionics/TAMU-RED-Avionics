@@ -13,19 +13,19 @@ long unsigned LAST_HUMAN_UPDATE       = 0;
 const long unsigned HUMAN_CONNECTION_TIMEOUT = 300000000; // µs  <-- USER INPUT
 
 long unsigned ABORT_TIME_TRACKING     = 0;
-const long unsigned ABORTED_TIME_INTERVAL    = 500000;    // µs between "Aborted" prints
+const long unsigned ABORTED_TIME_INTERVALc   = 500000;    // µs between "Aborted" prints
 
 const int BAUD = 115200;
 
-const int NCS1_PIN = 0;   // <-- USER INPUT
-const int NCS2_PIN = 0;   // <-- USER INPUT
-const int NCS3_PIN = 0;   // <-- USER INPUT
-const int NCS4_PIN = 0;   // <-- USER INPUT
-const int NCS5_PIN = 0;   // <-- USER INPUT
+const int NCS1_PIN = -1;   // <-- USER INPUT
+const int NCS2_PIN = -1;   // <-- USER INPUT
+const int NCS3_PIN = -1;   // <-- USER INPUT
+const int NCS4_PIN = -1;   // <-- USER INPUT
+const int NCS5_PIN = -1;   // <-- USER INPUT
 
-const int EABV_PIN = 0;   // <-- USER INPUT
-const int PABV_PIN = 0;   // <-- USER INPUT
-const int SPARK_PIN = 0;  // <-- USER INPUT
+const int EABV_PIN = -1;   // <-- USER INPUT
+const int PABV_PIN = -1;   // <-- USER INPUT
+const int SPARK_PIN = -1;  // <-- USER INPUT
 
 // Ignition coil timing
 const unsigned int DWELL_TIME     = 3000;  // µs — coil charge time (keep < ~5000 to avoid overheating)
