@@ -88,13 +88,13 @@ class VTComms(QObject):
             0x03: False,  # NCS3
             0x04: False,  # NCS4
             0x05: False,  # NCS5
-            0x06: False,  # NCS6
-            0x10: False,  # LA-BV1
-            0x11: False,  # LA-BV2
+            0x06: False,  # PA-BV3 (previously NCS6)
+            0x10: False,  # PA-BV1
+            0x11: False,  # PA-BV2
             0x20: False,  # GV-1
             0x21: False,  # GV-2
-            0x30: False,  # IG1
-            0x31: False,  # IG2
+            0x30: False,  # IGN-1
+            0x31: False,  # IGN-2
         }
         self.ack_enabled = {} # component_name -> bool
 
@@ -250,10 +250,10 @@ class VTComms(QObject):
     def get_valve_name(self, valve_id: int) -> str:
         """Convert valve ID to name"""
         valve_names = {
-            0x01: "NCS1", 0x02: "NCS2", 0x03: "NCS3", 0x04: "NCS4", 0x05: "NCS5", 0x06: "NCS6",
-            0x10: "LA-BV1", 0x11: "LA-BV2",
+            0x01: "NCS1", 0x02: "NCS2", 0x03: "NCS3", 0x04: "NCS4", 0x05: "NCS5", 0x06: "PA-BV3",
+            0x10: "PA-BV1", 0x11: "PA-BV2",
             0x20: "GV-1", 0x21: "GV-2",
-            0x30: "IG1", 0x31: "IG2",
+            0x30: "IGN-1", 0x31: "IGN-2",
         }
         return valve_names.get(valve_id, f"VALVE_{valve_id:02X}")
 
@@ -276,7 +276,7 @@ class VTComms(QObject):
         active_sensors = [(name, val) for name, val in self.sensor_data.items() if val != "NULL" and name in EGCPPacket.SENSOR_MAP]
         
         # Send in groups of 3 (5 bytes per sensor = 15 bytes per packet)
-        for i in range(0, len(active_sensors)):
+        for i in range(0, len(active_sensors), 3):
             body = b''
             for sensor_name, sensor_value in active_sensors[i:i+3]:
                 sensor_id = EGCPPacket.SENSOR_MAP.get(sensor_name, 0x00)

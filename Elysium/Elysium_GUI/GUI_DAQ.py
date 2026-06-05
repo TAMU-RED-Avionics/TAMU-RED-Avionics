@@ -44,6 +44,8 @@ class DAQWindow(QWidget):
         self.controller = controller
         self.controller.signals.abort_triggered.connect(self.abort_action)
         self.controller.signals.safe_state.connect(self.safe_state_action)
+        self.controller.signals.recording_started.connect(self.on_recording_started)
+        self.controller.signals.recording_stopped.connect(self.on_recording_stopped)
 
         self.layout = QVBoxLayout()
         self.layout.setContentsMargins(0, 0, 0, 0)
@@ -139,3 +141,12 @@ class DAQWindow(QWidget):
         self.manual_btn.setEnabled(True)
         self.throttling_btn.setEnabled(True)
         self.gimbaling_btn.setEnabled(True)
+
+    def on_recording_started(self, filename):
+        self.filename_input.setText(filename)
+        self.start_button.setEnabled(False)
+        self.stop_button.setEnabled(True)
+
+    def on_recording_stopped(self):
+        self.start_button.setEnabled(True)
+        self.stop_button.setEnabled(False)

@@ -37,8 +37,8 @@ const long unsigned SHUTDOWN_PURGE_TIME = 2000;           // duration of purge f
 // BAUD rate 
 const int BAUD = 115200;                   // serial com in bits per second     <-- USER INPUT
 
-// LABV 1 state variable
-bool is_LABV1_open = false;
+// PA-BV1 state variable
+bool is_PABV1_open = false;
 
 /*
 VALVE SETUP
@@ -50,9 +50,9 @@ const int NCS2_PIN = 8;                          // <-- USER INPUT
 const int NCS3_PIN = 11;                         // <-- USER INPUT
 const int NCS4_PIN = 0;                          // <-- USER INPUT
 const int NCS5_PIN = 0;                          // <-- USER INPUT
-const int NCS6_PIN = 0;                          // <-- USER INPUT
-const int LABV1_PIN = 5;                         // <-- USER INPUT
-const int LABV2_PIN = 0;                         // <-- USER INPUT
+const int PA_BV3_PIN = 0;                        // <-- USER INPUT (was NCS6)
+const int PA_BV1_PIN = 5;                        // <-- USER INPUT (was LABV1)
+const int PA_BV2_PIN = 0;                        // <-- USER INPUT
 const int GV1_PIN = 0;                           // <-- USER INPUT
 const int GV2_PIN = 0;                           // <-- USER INPUT
 const int GIMBAL_ENABLE_PIN = 14;                // <-- USER INPUT
@@ -75,19 +75,19 @@ int get_pin(String id) {
     return NCS3_PIN;
   } else if (id =="NCS5") {
     return NCS5_PIN;
-  } else if (id =="NCS6") {
-    return NCS6_PIN;
-  } else if (id =="LA-BV1") {
-    return LABV1_PIN;
-  } else if (id =="LA-BV2") {
-    return LABV2_PIN;
+  } else if (id =="PA-BV3") {
+    return PA_BV3_PIN;
+  } else if (id =="PA-BV1") {
+    return PA_BV1_PIN;
+  } else if (id =="PA-BV2") {
+    return PA_BV2_PIN;
   } else if (id =="GV1") {
     return GV1_PIN;
   } else if (id =="GV2") {
     return GV2_PIN;
-  } else if (id =="IG1") {
+  } else if (id =="IGN-1") {
     return IGN1_PIN;
-  } else if (id =="IG2") {
+  } else if (id =="IGN-2") {
     return IGN2_PIN;
   } else if (id =="GIMBAL") {
     return GIMBAL_ENABLE_PIN;
@@ -104,9 +104,9 @@ int get_pin_from_valve_id(uint8_t valve_id) {
     case EGCPPacket::VALVE_NCS2: return NCS2_PIN;
     case EGCPPacket::VALVE_NCS3: return NCS3_PIN;
     case EGCPPacket::VALVE_NCS5: return NCS5_PIN;
-    case EGCPPacket::VALVE_NCS6: return NCS6_PIN;
-    case EGCPPacket::VALVE_LA_BV1: return LABV1_PIN;
-    case EGCPPacket::VALVE_LA_BV2: return LABV2_PIN;
+    case EGCPPacket::VALVE_NCS6: return PA_BV3_PIN;   // PA-BV3 (renamed from NCS6)
+    case EGCPPacket::VALVE_LA_BV1: return PA_BV1_PIN; // PA-BV1 (renamed from LA-BV1)
+    case EGCPPacket::VALVE_LA_BV2: return PA_BV2_PIN; // PA-BV2 (renamed from LA-BV2)
     case EGCPPacket::VALVE_GV1: return GV1_PIN;
     case EGCPPacket::VALVE_GV2: return GV2_PIN;
     case EGCPPacket::VALVE_IG1: return IGN1_PIN;
@@ -124,13 +124,13 @@ const char* get_valve_name(uint8_t valve_id) {
     case EGCPPacket::VALVE_NCS3: return "NCS3";
     case EGCPPacket::VALVE_NCS4: return "NCS4";
     case EGCPPacket::VALVE_NCS5: return "NCS5";
-    case EGCPPacket::VALVE_NCS6: return "NCS6";
-    case EGCPPacket::VALVE_LA_BV1: return "LA-BV1";
-    case EGCPPacket::VALVE_LA_BV2: return "LA-BV2";
+    case EGCPPacket::VALVE_NCS6: return "PA-BV3";   // renamed
+    case EGCPPacket::VALVE_LA_BV1: return "PA-BV1"; // renamed
+    case EGCPPacket::VALVE_LA_BV2: return "PA-BV2"; // renamed
     case EGCPPacket::VALVE_GV1: return "GV1";
     case EGCPPacket::VALVE_GV2: return "GV2";
-    case EGCPPacket::VALVE_IG1: return "IG1";
-    case EGCPPacket::VALVE_IG2: return "IG2";
+    case EGCPPacket::VALVE_IG1: return "IGN-1";
+    case EGCPPacket::VALVE_IG2: return "IGN-2";
     case EGCPPacket::VALVE_GIMBAL: return "GIMBAL"; 
     default: return "UNKNOWN";
   }
@@ -400,9 +400,9 @@ void setup() {
   pinMode(NCS3_PIN, OUTPUT); 
   pinMode(NCS4_PIN, OUTPUT); 
   pinMode(NCS5_PIN, OUTPUT); 
-  pinMode(NCS6_PIN, OUTPUT); 
-  pinMode(LABV1_PIN, OUTPUT);
-  pinMode(LABV2_PIN, OUTPUT);
+  pinMode(PA_BV3_PIN, OUTPUT);
+  pinMode(PA_BV1_PIN, OUTPUT);
+  pinMode(PA_BV2_PIN, OUTPUT);
   pinMode(GV1_PIN, OUTPUT);
   pinMode(GV2_PIN, OUTPUT);
   pinMode(IGN1_PIN, OUTPUT);
@@ -512,9 +512,9 @@ void trigger_shutdown(const char* reason) {
   digitalWrite(NCS3_PIN, LOW);
   digitalWrite(NCS4_PIN, LOW);
   digitalWrite(NCS5_PIN, LOW);
-  digitalWrite(NCS6_PIN, LOW);
-  digitalWrite(LABV1_PIN, LOW);
-  digitalWrite(LABV2_PIN, LOW);
+  digitalWrite(PA_BV3_PIN, LOW);
+  digitalWrite(PA_BV1_PIN, LOW);
+  digitalWrite(PA_BV2_PIN, LOW);
   digitalWrite(GV1_PIN, LOW);
   digitalWrite(GV2_PIN, LOW);
   digitalWrite(GIMBAL_ENABLE_PIN, LOW);
@@ -523,13 +523,13 @@ void trigger_shutdown(const char* reason) {
   digitalWrite(IGN1_PIN, LOW);
   digitalWrite(IGN2_PIN, LOW);
 
-  // If LABV1 is open, system purges with nitrogen
-  if (is_LABV1_open) {
+  // If PA-BV1 is open, system purges with nitrogen
+  if (is_PABV1_open) {
     // Open NCS4 for 3 seconds
     digitalWrite(NCS4_PIN, HIGH);
     delay(SHUTDOWN_PURGE_TIME);
     digitalWrite(NCS4_PIN, LOW);
-    is_LABV1_open = false; // Reset state since we shut it down
+    is_PABV1_open = false; // Reset state since we shut it down
   }
 
   // Send emergency abort packet to GUI
@@ -691,9 +691,9 @@ void loop() {
               DBG_PRINT(" pin=");
               DBG_PRINTLN(pin);
               
-              // Special handling for LA-BV1
+              // Special handling for PA-BV1
               if (valve_id == EGCPPacket::VALVE_LA_BV1) {
-                is_LABV1_open = true;
+                is_PABV1_open = true;
               }
               
               LAST_HUMAN_UPDATE = micros();
@@ -717,12 +717,12 @@ void loop() {
               DBG_PRINT(" pin=");
               DBG_PRINTLN(pin);
               
-              // Special handling for LA-BV1
+              // Special handling for PA-BV1
               if (valve_id == EGCPPacket::VALVE_LA_BV1) {
-                if (is_LABV1_open) {
+                if (is_PABV1_open) {
                   digitalWrite(NCS2_PIN, HIGH);  // Vent to NCS2
                 }
-                is_LABV1_open = false;
+                is_PABV1_open = false;
               }
               
               LAST_HUMAN_UPDATE = micros();

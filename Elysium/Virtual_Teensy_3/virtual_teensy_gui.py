@@ -92,7 +92,7 @@ class VirtualTeensy(QMainWindow):
         
         self.valve_indicators = {}
         self.valve_failure_checkboxes = {}
-        valve_names = ["NCS1", "NCS2", "NCS3", "NCS4", "NCS5", "NCS6", "LA-BV1", "LA-BV2", "GV-1", "GV-2", "IG1", "IG2"]
+        valve_names = ["NCS1", "NCS2", "NCS3", "NCS4", "NCS5", "PA-BV3", "PA-BV1", "PA-BV2", "GV-1", "GV-2", "IGN-1", "IGN-2"]
         valve_ids = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x10, 0x11, 0x20, 0x21, 0x30, 0x31]
         
         for name, valve_id in zip(valve_names, valve_ids):

@@ -311,3 +311,7 @@ class MainWindow(QMainWindow):
 
             for sym in self.diagram.valve_symbols.values():
                 sym.spinner.color = QColor(0,0,0)
+
+    def closeEvent(self, event):
+        self.controller.stop_recording()
+        event.accept()

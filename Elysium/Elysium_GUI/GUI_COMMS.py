@@ -71,13 +71,13 @@ class EthernetClient:
         'NCS3': 0x03,
         'NCS4': 0x04,
         'NCS5': 0x05,
-        'NCS6': 0x06,
-        'LA-BV1': 0x10,
-        'LA-BV2': 0x11,
+        'PA-BV3': 0x06,
+        'PA-BV1': 0x10,
+        'PA-BV2': 0x11,
         'GV-1': 0x20,
         'GV-2': 0x21,
-        'IG1': 0x30,
-        'IG2': 0x31,
+        'IGN-1': 0x30,
+        'IGN-2': 0x31,
     }
     # reverse mapping for ADC sensor IDs to names
     SENSOR_MAP = {
@@ -619,19 +619,21 @@ class EthernetClient:
                                             self.receive_callback(f"0,VALVE_FAIL:{valve_name}")
                             
                             elif packet.packet_type == EGCPPacket.PKT_ADC:
-                                # ADC reading: 1 byte sensor ID + 4 bytes IEEE 754 float (calibrated value)
-                                if len(packet.body) >= 5:
-                                    sensor_id = packet.body[0]
-                                    # Unpack as big-endian float
-                                    raw_value = struct.unpack('>f', packet.body[1:5])[0]
+                                # Send ACK for ADC packet
+                                self._send_ack(packet.packet_id)
+                                
+                                if self.receive_callback:
+                                    # Process all sensor readings in the packet body (each is 5 bytes: 1-byte ID + 4-byte float)
+                                    sensor_strings = []
+                                    for offset in range(0, len(packet.body), 5):
+                                        if offset + 5 <= len(packet.body):
+                                            sensor_id = packet.body[offset]
+                                            raw_value = struct.unpack('>f', packet.body[offset+1:offset+5])[0]
+                                            sensor_name = self.SENSOR_MAP.get(sensor_id, f"SENSOR_{sensor_id}")
+                                            sensor_strings.append(f"{sensor_name}:{raw_value:.2f}")
                                     
-                                    # Send ACK for ADC packet
-                                    self._send_ack(packet.packet_id)
-                                    
-                                    # Convert to string format for backward compatibility
-                                    if self.receive_callback:
-                                        sensor_name = self.SENSOR_MAP.get(sensor_id, f"SENSOR_{sensor_id}")
-                                        data_str = f"0,{sensor_name}:{raw_value:.2f}"
+                                    if sensor_strings:
+                                        data_str = f"0,{','.join(sensor_strings)}"
                                         self.receive_callback(data_str)
                             
                             elif packet.packet_type == EGCPPacket.PKT_SFE:

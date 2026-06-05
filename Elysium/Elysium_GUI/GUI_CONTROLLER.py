@@ -1,6 +1,7 @@
 # GUI_CONTROLLER.py
 # This file will manage all UI related states, and stores functions that will manipulate them
 import csv, os
+from collections import deque
 from ast import Dict, Str
 from re import S
 from typing import Optional
@@ -27,6 +28,8 @@ class Signals(QObject):
     countdown_update = pyqtSignal(int)  # remaining_seconds
     countdown_close = pyqtSignal()
 
+    recording_started = pyqtSignal(str)
+    recording_stopped = pyqtSignal()
 
 """
 GUI CONTROLLER
@@ -95,6 +98,14 @@ class GUIController:
 
         self.p3_p5_violation_start = None
         self.p4_p6_violation_start = None
+        self.low_stiffness_violation_start = None
+        self.p7_high_violation_start = None
+        self.p3_high_violation_start = None
+        self.p3_high_pressure_active = False 
+
+        # Keyed by sensor name -> deque of recent raw readings
+        self.abort_smooth_window = 5   # number of samples to average
+        self.sensor_history: dict = {}
 
         self.warning_ranges: Dict[str, dict] = {}
         self.load_warning_ranges()
@@ -113,39 +124,45 @@ class GUIController:
             "NCS2": False,
             "NCS3": False,
             "NCS5": False,
-            "NCS6": False,
-            "LA-BV1": False,
+            "PA-BV3": False,
+            "PA-BV1": False,
+            "PA-BV2": False,
+            "IGN-1": False,
+            "IGN-2": False,
             "GV-1": False,
             "GV-2": False
         }
 
         # This is a list of the different buttons and the valves that they manipulate
         self.valve_operation_states: Dict(str, [str]) = {
-            "Open Oxidizer": ["LA-BV1"],
-            "Oxidizer Fill": ["NCS3", "NCS2", "LA-BV1"],
-            "Oxidizer Leak Check": ["LA-BV1"],
-            "Oxidizer Leak Check Fill": ["NCS1", "LA-BV1"],
-            "Close Oxidizer": ["NCS3", "LA-BV1"],
-            "Oxidizer Vent": ["GV-1", "NCS2", "NCS3", "LA-BV1"],
+            "Open Oxidizer": ["PA-BV1"],
+            "Oxidizer Fill": ["NCS3", "NCS2", "PA-BV1"],
+            "Oxidizer Leak Check": ["PA-BV1"],
+            "Oxidizer Leak Check Fill": ["NCS1", "PA-BV1"],
+            "Close Oxidizer": ["NCS3", "PA-BV1"],
+            "Oxidizer Vent": ["GV-1", "NCS2", "NCS3", "PA-BV1"],
 
 
-            "Open Pressure": ["LA-BV1"],
-            "Fuel Fill 1": ["NCS5", "NCS6", "LA-BV1"],
-            "Fuel Leak Check": ["LA-BV1"],
-            "Fuel Leak Check Fill": ["NCS1", "LA-BV1"],
-            "Close Pressure 1": ["LA-BV1"],
-            "Vent Pressure": ["NCS1", "NCS3", "LA-BV1"],
+            "Open Pressure": ["PA-BV1"],
+            "Fuel Fill 1": ["NCS5", "PA-BV3", "PA-BV1"],
+            "Fuel Leak Check": ["PA-BV1"],
+            "Fuel Leak Check Fill": ["NCS1", "PA-BV1"],
+            "Close Pressure 1": ["PA-BV1"],
+            "Vent Pressure": ["NCS1", "NCS3", "PA-BV1"],
             
             
-            "Postfire Purge": ["NCS1", "GV-1", "LA-BV1"],
-            "Fuel Fill 2": ["NCS5", "LA-BV1"],
-            "Prefire Purge 1": ["GV-1", "LA-BV1"],
-            "Prefire Purge 2": ["GV-1", "LA-BV1"],
-            "Close Pressure 2": ["NCS3", "LA-BV1"],
+            "Postfire Purge": ["NCS1", "GV-1", "PA-BV1"],
+            "Fuel Fill 2": ["NCS5", "PA-BV1"],
+            "Prefire Purge 1": ["GV-1", "PA-BV1"],
+            "Prefire Purge 2": ["GV-1", "PA-BV1"],
+            "Close Pressure 2": ["NCS3", "PA-BV1"],
             "Power down": [],
 
-            "Fire": ["GV-1", "GV-2", "NCS1", "LA-BV1"],
-            "Kill and Vent": ["NCS3", "GV-1", "GV-2", "LA-BV1"],
+            # Terminal count states
+            "Ignition 1": ["PA-BV2", "IGN-1"],
+            "Main Valves Open": ["PA-BV2", "IGN-1", "PA-BV1"],
+            "Ignition 2": ["PA-BV2", "IGN-1", "PA-BV1", "IGN-2"],
+            "Shutdown": ["NCS3", "GV-1", "GV-2"],
         }
         
         # Abort related configuration
@@ -189,6 +206,9 @@ class GUIController:
             "reverse_flow": True,
             "high_chamber_pressure": True,
             "high_p2": True,
+            "low_stiffness": True,
+            "high_pressure_p7": True,
+            "high_pressure_p3": True,
         }
 
     def load_warning_ranges(self):
@@ -231,7 +251,19 @@ class GUIController:
             return "BLUE"
             
         return "DEFAULT"
-    
+
+    def _push_sensor_history(self, sensor_name: str, value: float):
+        if sensor_name not in self.sensor_history:
+            self.sensor_history[sensor_name] = deque(maxlen=self.abort_smooth_window)
+        self.sensor_history[sensor_name].append(value)
+
+    def _get_smoothed(self, sensor_name: str, fallback: float = 0.0) -> float:
+        history = self.sensor_history.get(sensor_name)
+        if history:
+            return sum(history) / len(history)
+        return self.current_sensor_values.get(sensor_name, fallback)
+
+
     def check_abort_conditions(self):
         if self.lockout:
             return
@@ -241,13 +273,14 @@ class GUIController:
             return
 
         current_time = QDateTime.currentMSecsSinceEpoch()
-        p3 = self.current_sensor_values.get("P3", 0)
-        p4 = self.current_sensor_values.get("P4", 0)
-        p5 = self.current_sensor_values.get("P5", 0)
-        p6 = self.current_sensor_values.get("P6", 0)
-        pc = self.current_sensor_values.get("P8", 0)
-        pline = self.current_sensor_values.get("P7", 0)
-        p2 = self.current_sensor_values.get("P2", 0)
+
+        p3     = self._get_smoothed("P3")
+        p4     = self._get_smoothed("P4")
+        p5     = self._get_smoothed("P5")
+        p6     = self._get_smoothed("P6")
+        pc     = self._get_smoothed("P8")
+        pline  = self._get_smoothed("P7")
+        p2     = self._get_smoothed("P2")
 
         if p2 > 1375:
             if not self.valve_states.get("NCS3", False):
@@ -292,6 +325,57 @@ class GUIController:
             else:
                 self.p4_p6_violation_start = None
 
+        # --- Low stiffness abort ---
+        if self.abort_modes["low_stiffness"] and pline > 0:
+            stiffness_violated = (pc < 1.2 * pline) or (p5 < 1.2 * pline)
+            if stiffness_violated:
+                if self.low_stiffness_violation_start is None:
+                    self.low_stiffness_violation_start = current_time
+                elif current_time - self.low_stiffness_violation_start >= 150:
+                    self.signals.abort_triggered.emit(
+                        "low_stiffness",
+                        f"Low stiffness: P8={pc:.1f} psi, P5={p5:.1f} psi vs 1.2×P7={1.2*pline:.1f} psi"
+                    )
+            else:
+                self.low_stiffness_violation_start = None
+
+        if self.abort_modes["high_pressure_p7"]:
+            if pline > 700:
+                if self.p7_high_violation_start is None:
+                    self.p7_high_violation_start = current_time
+                elif current_time - self.p7_high_violation_start >= 150:
+                    self.signals.abort_triggered.emit(
+                        "high_pressure_p7",
+                        f"Line pressure P7={pline:.1f} psi > 700 psi"
+                    )
+            else:
+                self.p7_high_violation_start = None
+
+        if self.abort_modes["high_pressure_p3"]:
+            if p3 > 1300:
+                if self.p3_high_violation_start is None:
+                    self.p3_high_violation_start = current_time
+                elif current_time - self.p3_high_violation_start >= 150 and not self.p3_high_pressure_active:
+                    self.p3_high_pressure_active = True
+                    self._handle_p3_high_pressure(p3)
+            else:
+                self.p3_high_violation_start = None
+                self.p3_high_pressure_active = False
+
+    def _handle_p3_high_pressure(self, p3_value: float):
+        self.log_event("HIGH_PRESSURE_P3", f"P3={p3_value:.1f} psi > 1300 psi - closing all valves")
+
+
+        for valve in list(self.valve_states.keys()):
+            self.toggle_valve(valve, False)
+
+        # One second later, open NCS3 to vent
+        QTimer.singleShot(1000, self._open_ncs3_after_p3_event)
+
+    def _open_ncs3_after_p3_event(self):
+        self.log_event("HIGH_PRESSURE_P3", "Opening NCS3 (1s delay after P3 over-pressure)")
+        self.toggle_valve("NCS3", True)
+
     def trigger_manual_abort(self):
         """Manual abort button handler (Req 11)"""
         self.signals.abort_triggered.emit(
@@ -313,8 +397,11 @@ class GUIController:
         modes = [
             ("high_upstream_pressure", "High Upstream Pressure"),
             ("reverse_flow", "Reverse Flow Risk"),
-            ("high_chamber_pressure", "High Chamber Pressure"),
+            ("high_chamber_pressure", "High Chamber Pressure (P8 > 700)"),
             ("high_p2", "High P2 Pressure"),
+            ("low_stiffness", "Low Stiffness (P8 or P5 < 1.2*P7)"),
+            ("high_pressure_p7", "High Line Pressure (P7 > 700)"),
+            ("high_pressure_p3", "High Upstream Pressure P3 (P3 > 1300 → close all, open NCS3)"),
         ]
         
         for mode_id, mode_name in modes:
@@ -384,8 +471,7 @@ class GUIController:
             self.log_event("SAFE_STATE", "Operator confirmed safe state")
 
 
-    # DAQ RECORDING ------------------------------------------------------------------------------------------------
-
+    # DAQ RECORDING -----------------------------------------------------------------------------------------------
     def log_event(self, event_type, event_details=""):
         """Log an event to CSV (Req 15)"""
         # Handle auto-abort countdown events - use signals for thread safety
@@ -411,17 +497,29 @@ class GUIController:
         if event_type.startswith("COMMS_AUTO_ABORT:"):
             self.signals.countdown_close.emit()
         
+        if event_type.strip().lower() == "heartbeat:hrt":
+            return
+            
         if not self.csv_writer:
             return
             
         timestamp = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz")
-        self.csv_writer.writerow([
+        row = [
             timestamp, "", 
             "ON" if self.throttling_enabled else "OFF",
-            "ON" if self.gimbaling_enabled else "OFF",
-            "", event_type, event_details
-        ])
-
+            "ON" if self.gimbaling_enabled else "OFF"
+        ]
+        # Sensor values (P1 to B2)
+        sensor_names = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", 
+                        "TC1", "TC2", "TC3", "LC1", "LC2", "LC3", "B1", "B2"]
+        for sensor in sensor_names:
+            val = self.current_sensor_values.get(sensor, "")
+            if isinstance(val, (int, float)):
+                row.append(f"{val:.2f}")
+            else:
+                row.append(str(val))
+        row.extend([event_type, event_details])
+        self.csv_writer.writerow(row)
 
     # WILL BE RUN INSIDE A BACKGROUND THREAD
     def handle_new_data(self, data_str: str):
@@ -433,8 +531,19 @@ class GUIController:
         sensor_data = parts[1] if len(parts) > 1 else data_str
 
         readings = sensor_data.strip().split(sep=",")
+        
+        # Determine if this data parsing result contains event types to record in CSV columns
+        event_type = ""
+        event_details = ""
+        is_heartbeat = False
+        
         for reading in readings:
-            if "ABORTED" in reading:
+            if "HEARTBEAT:HRT" in reading.upper():
+                is_heartbeat = True
+            elif "ABORTED" in reading:
+                event_type = "ABORTED"
+                event_details = reading
+                
                 # Parse abort reason if available
                 if "ABORTED:COMMS:" in reading:
                     # Extract reason after ABORTED:COMMS:
@@ -466,6 +575,8 @@ class GUIController:
 
             # Valve command responses
             elif "VALVE_SUCCESS" in reading:
+                event_type = "VALVE_SUCCESS"
+                event_details = reading
                 
                 parts = reading.split(':')
                 if len(parts) >= 3:
@@ -482,6 +593,8 @@ class GUIController:
                 
 
             elif "VALVE_FAIL" in reading:
+                event_type = "VALVE_FAIL"
+                event_details = reading
                 parts = reading.split(':')
                 if len(parts) >= 2:
                     valve_name: str = parts[1]
@@ -502,18 +615,29 @@ class GUIController:
                     sensor_name = parts[0].strip().upper()
                     value = float(parts[1].strip())
                     self.current_sensor_values[sensor_name] = value
+                    # Feed into the rolling history buffer used for smoothed abort checks
+                    self._push_sensor_history(sensor_name, value)
                     self.signals.sensor_updated.emit(sensor_name, value, timestamp)
                 except ValueError:
                     pass
         
-        if self.csv_writer:
+        if self.csv_writer and not is_heartbeat:
             timestamp_str = QDateTime.currentDateTime().toString("yyyy-MM-dd HH:mm:ss.zzz")
-            self.csv_writer.writerow([
+            row = [
                 timestamp_str, teensy_ts, 
                 "ON" if self.throttling_enabled else "OFF",
-                "ON" if self.gimbaling_enabled else "OFF",
-                sensor_data, "", ""
-            ])
+                "ON" if self.gimbaling_enabled else "OFF"
+            ]
+            sensor_names = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", 
+                            "TC1", "TC2", "TC3", "LC1", "LC2", "LC3", "B1", "B2"]
+            for sensor in sensor_names:
+                val = self.current_sensor_values.get(sensor, "")
+                if isinstance(val, (int, float)):
+                    row.append(f"{val:.2f}")
+                else:
+                    row.append(str(val))
+            row.extend([event_type, event_details])
+            self.csv_writer.writerow(row)
 
     # Start recording, returns whether the conditions were fit for recording to start, otherwise returns false
     def start_recording(self, filename: str) -> bool:
@@ -527,8 +651,8 @@ class GUIController:
         # Check if file exists (Req 12)
         if os.path.exists(filename):
             reply = QMessageBox.question(self.parent, "File Exists", 
-                                        f"{filename} already exists. Overwrite?",
-                                        QMessageBox.Yes | QMessageBox.No)
+                                         f"{filename} already exists. Overwrite?",
+                                         QMessageBox.Yes | QMessageBox.No)
             if reply != QMessageBox.Yes:
                 return False
         
@@ -538,9 +662,12 @@ class GUIController:
             # Add columns for throttling/gimbaling (Req 26) and event logging (Req 15)
             self.csv_writer.writerow([
                 "Timestamp", "TeensyTimestamp", "Throttling", "Gimbaling", 
-                "SensorData", "EventType", "EventDetails"
+                "P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8",
+                "TC1", "TC2", "TC3", "LC1", "LC2", "LC3", "B1", "B2",
+                "EventType", "EventDetails"
             ])
             self.log_event("RECORDING:START")
+            self.signals.recording_started.emit(filename)
 
             return True
 
@@ -555,6 +682,7 @@ class GUIController:
             self.csv_file.close()
             self.csv_file = None
             self.csv_writer = None
+            self.signals.recording_stopped.emit()
 
     # VALVE CONTROL ------------------------------------------------------------------------------------------------
     def toggle_throttling(self):
@@ -590,15 +718,24 @@ class GUIController:
         if confirm_dialog.exec_() != QDialog.Accepted:
             return
 
-        # Create countdown dialog
+        # Start recording if not already doing so
+        if not self.csv_file:
+            filename = QDateTime.currentDateTime().toString("yyyy-MM-dd_HH-mm-ss")
+            self.start_recording(filename)
+
+        # Create countdown dialog (10-second hold before terminal count begins)
         countdown_dialog = QDialog(self.parent)
         countdown_dialog.setWindowTitle("Ignition Sequence")
         countdown_dialog.setMinimumSize(300, 150)
         countdown_layout = QVBoxLayout(countdown_dialog)
         
         # Countdown label
-        self.countdown_label = QLabel("Ignition in 10 seconds...")
+        self.countdown_label = QLabel("Terminal Count: T-10")
         self.countdown_label.setAlignment(Qt.AlignCenter)
+        font = self.countdown_label.font()
+        font.setPointSize(14)
+        font.setBold(True)
+        self.countdown_label.setFont(font)
         countdown_layout.addWidget(self.countdown_label)
         
         # Cancel button
@@ -606,35 +743,58 @@ class GUIController:
         cancel_btn.setStyleSheet("background-color: red; color: white;")
         countdown_layout.addWidget(cancel_btn)
         
-        # Initialize countdown
+        # Initialize 10-second hold countdown (counts down from 10 to 0, then fires)
         self.countdown_value = 10
         self.countdown_timer = QTimer()
         self.countdown_timer.setInterval(1000)  # 1 second interval
+        self._sequence_cancelled = False
         
-        # Update countdown display
         def update_countdown():
             self.countdown_value -= 1
             if self.countdown_value > 0:
-                self.countdown_label.setText(f"Ignition in {self.countdown_value} seconds...")
+                self.countdown_label.setText(f"Terminal count begins in T-{self.countdown_value}...")
             else:
                 self.countdown_timer.stop()
-                countdown_dialog.accept()  # Close dialog and proceed
-        
-        # Cancel sequence
+                countdown_dialog.accept()  # Close dialog and proceed to terminal count
+
         def cancel_sequence():
+            self._sequence_cancelled = True
             self.countdown_timer.stop()
             countdown_dialog.reject()
         
-        # Connect signals
         self.countdown_timer.timeout.connect(update_countdown)
         cancel_btn.clicked.connect(cancel_sequence)
-        
-        # Start countdown
         self.countdown_timer.start()
         
-        # Show dialog and handle result
-        if countdown_dialog.exec_() == QDialog.Accepted:
-            self.apply_operation("Pressurization")
+        if countdown_dialog.exec_() != QDialog.Accepted:
+            return
+
+        # TERMINAL COUNT
+        # All timings are relative to T-0.5 (the moment the dialog closes = T-0.5)
+        # T-0.5s  →  now (t=0 ms offset):   PA-BV2 opens + IGN-1 actuates
+        # T+0.0s  →  +500 ms:                PA-BV1 opens
+        # T+0.4s  →  +900 ms:                IGN-2 actuates
+        # T+15.5s →  +16000 ms:              PA-BV1, PA-BV2, NCS1 close (engine cutoff)
+
+        self.log_event("FIRE_SEQUENCE", "Terminal count")
+
+        self.apply_operation("Ignition 1")
+
+        QTimer.singleShot(500, lambda: (
+            self.apply_operation("Main Valves Open")
+            if not self._sequence_cancelled else None
+        ))
+
+        QTimer.singleShot(900, lambda: (
+            self.apply_operation("Ignition 2")
+            if not self._sequence_cancelled else None
+        ))
+
+        #QTimer.singleShot(16000, lambda: (
+        QTimer.singleShot(6000, lambda: (                      # 5 second burn
+            self.apply_operation("Shutdown")
+            if not self._sequence_cancelled else None
+        ))
 
     def show_abort_countdown_dialog(self, initial_seconds: int, valve_name: str = "UNKNOWN", cmd_type: str = "COMMAND"):
         """Show a non-modal dialog displaying the auto-abort countdown"""
@@ -822,7 +982,3 @@ class GUIController:
         # self.status_label.setText(f"Current State: {operation}")
 
         self.log_event("OPERATION", f"{operation}")
-
-        if operation == "Pressurization":
-            QTimer.singleShot(5000, lambda: self.apply_operation("Fire"))
-            QTimer.singleShot(20000, lambda: self.apply_operation("Kill and Vent"))

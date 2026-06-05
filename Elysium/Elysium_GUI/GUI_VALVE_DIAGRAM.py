@@ -64,8 +64,11 @@ class ValveDiagramWindow(QWidget):
             "NCS2": (239, 541),
             "NCS3": (582, 531),
             "NCS5": (464, 72),
-            "NCS6": (464, 5),
-            "LA-BV1": (513, 226),
+            "PA-BV3": (464, 5),
+            "PA-BV1": (513, 226),
+            "PA-BV2": (513, 180),   # position TBD — adjust to match P&ID
+            "IGN-1": (560, 226),    # position TBD — adjust to match P&ID
+            "IGN-2": (560, 180),    # position TBD — adjust to match P&ID
             "GV-1": (455, 626),
             "GV-2": (505, 626)
         }
@@ -101,6 +104,8 @@ class ValveDiagramWindow(QWidget):
     def set_valve_state(self, name: str, state: str):
         sf = self.scalingFactor
         
+        if name not in self.valve_symbols:
+            return  # Ignore valves not represented on the diagram
         sym: QWidget = self.valve_symbols[name]
         if state == "PENDING":
             sym.setStyleSheet(f"background-color: transparent; border-radius: {int(20 * sf)}px;")
