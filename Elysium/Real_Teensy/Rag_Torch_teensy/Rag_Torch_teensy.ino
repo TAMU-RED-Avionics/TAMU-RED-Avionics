@@ -1,19 +1,21 @@
 // Only for ragnarok torch igniter test
 
 #include <Arduino.h>
+#include <NativeEthernet.h>
+#include <NativeEthernetUdp.h>
+#include <IPAddress.h>
 
-long unsigned LAST_SENSOR_UPDATE      = 0;
-const long unsigned SENSOR_UPDATE_INTERVAL   = 1000;      // µs  <-- USER INPUT
-
+long unsigned LAST_SENSOR_UPDATE           = 0;
+const long unsigned SENSOR_UPDATE_INTERVAL = 10000;    // µs <-- CHANGED TO 10ms (10,000 µs) FOR PERFORMANCE
 
 long unsigned LAST_COMMUNICATION_TIME = 0;
-const long unsigned CONNECTION_TIMEOUT       = 200000;    // µs  <-- USER INPUT
+const long unsigned CONNECTION_TIMEOUT       = 200000;  // µs  <-- USER INPUT
 
 long unsigned LAST_HUMAN_UPDATE       = 0;
 const long unsigned HUMAN_CONNECTION_TIMEOUT = 300000000; // µs  <-- USER INPUT
 
 long unsigned ABORT_TIME_TRACKING     = 0;
-const long unsigned ABORTED_TIME_INTERVALc   = 500000;    // µs between "Aborted" prints
+const long unsigned ABORTED_TIME_INTERVAL   = 500000;  // µs between "Aborted" prints
 
 const int BAUD = 115200;
 
@@ -38,12 +40,7 @@ SparkPhase spark_phase     = SPARK_IDLE;
 unsigned long spark_phase_start = 0;
 bool is_sparking            = false;
 
-#include <NativeEthernet.h>
-#include <NativeEthernetUdp.h>
-#include <IPAddress.h>
-
 unsigned int PORT = 8888;
-char packetBuffer[UDP_TX_PACKET_MAX_SIZE];
 EthernetUDP udp;
 byte MAC_ADDRESS[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED};
 IPAddress REMOTE(192, 168, 1, 175);
@@ -53,25 +50,6 @@ void output_string(unsigned int port, const char *to_write) {
   udp.beginPacket(REMOTE, port);
   udp.write(to_write);
   udp.endPacket();
-}
-
-void output_float(unsigned int port, float to_write) {
-  char buf[100];
-  constexpr unsigned long PRECISION = 5;
-  dtostrf(to_write, 1, PRECISION, buf);
-  udp.beginPacket(REMOTE, port);
-  udp.write(buf);
-  udp.endPacket();
-}
-
-String input_until(char stop_character) {
-  String ret = "";
-  char c = udp.read();
-  while (c != stop_character) {
-    ret += c;
-    c = udp.read();
-  }
-  return ret;
 }
 
 bool init_comms(byte* mac, unsigned int port) {
@@ -101,15 +79,9 @@ int get_pin(String id) {
   else if (id == "EABV")  return EABV_PIN;
   else if (id == "PABV")  return PABV_PIN;
   else if (id == "SPARK") return SPARK_PIN;
-  // h_nop is handled before get_pin() is called; ignore here
   return -1;
 }
 
-/*
--------------------------------------------------------------------
-  PRESSURE TRANSDUCER SET UP
--------------------------------------------------------------------
-*/
 const int PT1_PIN = 23;  // <-- USER INPUT
 const int PT2_PIN = 22;  // <-- USER INPUT
 const int PT3_PIN = 21;  // <-- USER INPUT
@@ -155,14 +127,12 @@ void setup() {
   safe_digitalWrite(NCS5_PIN,  LOW);
   safe_digitalWrite(EABV_PIN,  LOW);
   safe_digitalWrite(PABV_PIN,  LOW);
-  safe_digitalWrite(SPARK_PIN, LOW); // IGBT off, coil resting at startup
+  safe_digitalWrite(SPARK_PIN, LOW);
 
   output_string(PORT, "RT: pins initialised\n");
-
 }
 
 void emergency_close_all() {
-  // All solenoids / actuators off
   if (NCS1_PIN >= 0) digitalWrite(NCS1_PIN, LOW);
   if (NCS2_PIN >= 0) digitalWrite(NCS2_PIN, LOW);
   if (NCS3_PIN >= 0) digitalWrite(NCS3_PIN, LOW);
@@ -171,55 +141,64 @@ void emergency_close_all() {
   if (EABV_PIN >= 0) digitalWrite(EABV_PIN, LOW);
   if (PABV_PIN >= 0) digitalWrite(PABV_PIN, LOW);
 
-  // Spark: driver LOW = IGBT off = coil resting = safe
   is_sparking  = false;
   spark_phase  = SPARK_IDLE;
   if (SPARK_PIN >= 0) digitalWrite(SPARK_PIN, LOW);
 }
 
 void loop() {
+  int packetSize = udp.parsePacket();
+  if (packetSize > 0) {
+    char incomingBuffer[128];
+    int len = udp.read(incomingBuffer, sizeof(incomingBuffer) - 1);
+    
+    if (len > 0) {
+      incomingBuffer[len] = '\0';
+      String input = String(incomingBuffer);
+      
+      input.replace("\r", "");
+      input.replace("\n", "");
+      
+      LAST_COMMUNICATION_TIME = micros();
 
-  udp.parsePacket();
-  if (udp.available() > 0) {
-    String input = input_until('\n');
-    LAST_COMMUNICATION_TIME = micros();
+      if (input == "nop") {
+        // Just a heartbeat update, bounce out
+      } else {
+        LAST_HUMAN_UPDATE = micros();
 
-    // nop = heartbeat only, no human action
-    if (input == "nop\r") return;
-    LAST_HUMAN_UPDATE = micros();
+        if (input != "h_nop:0" && input != "h_nop:1") {
+          int delim = input.indexOf(':');
+          if (delim != -1) {
+            IDENTIFIER    = input.substring(0, delim);
+            CONTROL_STATE = input.substring(delim + 1).toInt();
 
-    // h_nop = explicit no-op from a button — update timers, ignore
-    if (input == "h_nop:0\r" || input == "h_nop:1\r") return;
-
-    int delim = input.indexOf(':');
-    if (delim == -1) return;
-    IDENTIFIER    = input.substring(0, delim);
-    CONTROL_STATE = input.substring(delim + 1).toInt();
-
-    int pin = get_pin(IDENTIFIER);
-    if (pin == -1) return;
-
-    if (IDENTIFIER == "SPARK") {
-      switch (CONTROL_STATE) {
-        case 1:
-          is_sparking = true;
-          spark_phase = SPARK_IDLE;
-          break;
-        case 0:
-          is_sparking = false;
-          spark_phase = SPARK_IDLE;
-          if (SPARK_PIN >= 0) digitalWrite(SPARK_PIN, LOW);
-          break;
-      }
-    } else {
-      // All other valves: standard active-high (0 = closed, 1 = open)
-      switch (CONTROL_STATE) {
-        case 0:
-          if (pin >= 0) digitalWrite(pin, LOW);   // Close
-          break;
-        case 1:
-          if (pin >= 0) digitalWrite(pin, HIGH);  // Open
-          break;
+            int pin = get_pin(IDENTIFIER);
+            if (pin != -1) {
+              if (IDENTIFIER == "SPARK") {
+                switch (CONTROL_STATE) {
+                  case 1:
+                    is_sparking = true;
+                    spark_phase = SPARK_IDLE;
+                    break;
+                  case 0:
+                    is_sparking = false;
+                    spark_phase = SPARK_IDLE;
+                    if (SPARK_PIN >= 0) digitalWrite(SPARK_PIN, LOW);
+                    break;
+                }
+              } else {
+                switch (CONTROL_STATE) {
+                  case 0:
+                    if (pin >= 0) digitalWrite(pin, LOW);
+                    break;
+                  case 1:
+                    if (pin >= 0) digitalWrite(pin, HIGH);
+                    break;
+                }
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -267,35 +246,31 @@ void loop() {
     pt5_analog = analogRead(PT5_PIN);
     pt6_analog = analogRead(PT6_PIN);
 
-    output_string(PORT, "t:");
-    output_float(PORT, LAST_SENSOR_UPDATE);
-    output_string(PORT, ",P1:");
-    output_float(PORT, pressureCalculation(pt1_analog, 1));
-    output_string(PORT, ",P2:");
-    output_float(PORT, pressureCalculation(pt2_analog, 2));
-    output_string(PORT, ",P3:");
-    output_float(PORT, pressureCalculation(pt3_analog, 3));
-    output_string(PORT, ",P4:");
-    output_float(PORT, pressureCalculation(pt4_analog, 4));
-    output_string(PORT, ",P5:");
-    output_float(PORT, pressureCalculation(pt5_analog, 5));
-    output_string(PORT, ",P6:");
-    output_float(PORT, pressureCalculation(pt6_analog, 6));
-    output_string(PORT, ",t_loc:");
+    float p1 = pressureCalculation(pt1_analog, 1);
+    float p2 = pressureCalculation(pt2_analog, 2);
+    float p3 = pressureCalculation(pt3_analog, 3);
+    float p4 = pressureCalculation(pt4_analog, 4);
+    float p5 = pressureCalculation(pt5_analog, 5);
+    float p6 = pressureCalculation(pt6_analog, 6);
     float t_loc = (HUMAN_CONNECTION_TIMEOUT - (LAST_SENSOR_UPDATE - LAST_HUMAN_UPDATE)) / 1000000.0;
-    output_float(PORT, t_loc);
-    output_string(PORT, "\n");
-    delay(10);
+
+    char tx_buffer[256];
+    snprintf(tx_buffer, sizeof(tx_buffer),
+             "t:%lu,P1:%.5f,P2:%.5f,P3:%.5f,P4:%.5f,P5:%.5f,P6:%.5f,t_loc:%.5f\n",
+             LAST_SENSOR_UPDATE, p1, p2, p3, p4, p5, p6, t_loc);
+
+    udp.beginPacket(REMOTE, PORT);
+    udp.write(tx_buffer);
+    udp.endPacket();
   }
 
-  // heartbeat loss check
+  // --- HEARTBEAT MONITOR & LOCKOUT ---
   bool comms_lost = (micros() - LAST_COMMUNICATION_TIME) > CONNECTION_TIMEOUT;
   bool human_lost = (micros() - LAST_HUMAN_UPDATE)       > HUMAN_CONNECTION_TIMEOUT;
 
   if (comms_lost || human_lost) {
     emergency_close_all();
 
-    // Sit in abort loop until "start" is received
     bool aborted = true;
     while (aborted) {
       if ((micros() - ABORT_TIME_TRACKING) > ABORTED_TIME_INTERVAL) {
@@ -303,15 +278,24 @@ void loop() {
         output_string(PORT, "Aborted\n");
       }
 
-      udp.parsePacket();
-      if (udp.available() > 0) {
-        String input = input_until('\n');
-        output_string(PORT, ("New Input= " + input + '\n').c_str());
+      int abortPacketSize = udp.parsePacket();
+      if (abortPacketSize > 0) {
+        char abortBuffer[128];
+        int len = udp.read(abortBuffer, sizeof(abortBuffer) - 1);
+        if (len > 0) {
+          abortBuffer[len] = '\0';
+          String input = String(abortBuffer);
+          
+          input.replace("\r", "");
+          input.replace("\n", "");
 
-        if ((input == "start\r") || (input == "Start\r")) {
-          aborted = false;
-          LAST_COMMUNICATION_TIME = micros();
-          LAST_HUMAN_UPDATE       = micros();
+          output_string(PORT, ("New Input= " + input + "\n").c_str());
+
+          if (input == "start" || input == "Start") {
+            aborted = false;
+            LAST_COMMUNICATION_TIME = micros();
+            LAST_HUMAN_UPDATE       = micros();
+          }
         }
       }
     }

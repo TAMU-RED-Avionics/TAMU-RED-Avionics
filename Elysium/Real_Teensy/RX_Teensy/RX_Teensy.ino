@@ -3,7 +3,7 @@
 #include <IPAddress.h>
 
 unsigned int PORT = 8888;
-char packetBuffer[UDP_TX_PACKET_MAX_SIZE];  // buffer to hold incoming packet,
+char packetBuffer[512];  // buffer to hold incoming packet,
 // An EthernetUDP instance to let us send and receive packets over UDP
 EthernetUDP udp;
 byte MAC_ADDRESS[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xD5};
