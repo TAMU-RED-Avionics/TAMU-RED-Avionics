@@ -1,6 +1,7 @@
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QLineEdit, QSizePolicy, QGridLayout
 
 from GUI_CONTROLLER import GUIController
+import os
 
 """
 DAQWindow
@@ -122,7 +123,11 @@ class DAQWindow(QWidget):
 
     def start_recording_daq(self):
         filename = self.filename_input.text().strip()
-        if self.controller.start_recording(filename):
+        data_folder = "Data"
+        os.makedirs(data_folder, exist_ok=True)
+        full_path = os.path.join(data_folder, filename)
+        
+        if self.controller.start_recording(full_path):
             self.start_button.setEnabled(False)
             self.stop_button.setEnabled(True)
 

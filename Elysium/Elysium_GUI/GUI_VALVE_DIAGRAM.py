@@ -66,9 +66,9 @@ class ValveDiagramWindow(QWidget):
             "NCS5": (464, 72),
             "PA-BV3": (464, 5),
             "PA-BV1": (513, 226),
-            "PA-BV2": (513, 180),   # position TBD — adjust to match P&ID
-            "IGN-1": (560, 226),    # position TBD — adjust to match P&ID
-            "IGN-2": (560, 180),    # position TBD — adjust to match P&ID
+            "PA-BV2": (513, 180),   # position TBD - adjust to match newest P&ID
+            "IGN-1": (560, 226),    # position TBD - adjust to match newest P&ID
+            "IGN-2": (560, 180),    # position TBD - adjust to match newest P&ID
             "GV-1": (455, 626),
             "GV-2": (505, 626)
         }

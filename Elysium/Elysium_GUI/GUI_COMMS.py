@@ -95,8 +95,10 @@ class EthernetClient:
         0x0C: 'LC1',  # load cells
         0x0D: 'LC2',
         0x0E: 'LC3',
-        0x0F: 'B1',
-        0x10: 'B2',
+        0x0F: 'LC4',
+        0x10: 'LC5',
+        0x11: 'B1',   # battery voltages
+        0x12: 'B2', 
     }
     
     def __init__(self, log_event_callback: (str)=None, receive_callback: (str)=None, connect_callback: (bool)=None, disconnect_callback: (str)=None):
@@ -233,13 +235,13 @@ class EthernetClient:
                 self.log_event_callback("AUTO_ABORT_COUNTDOWN:CANCELED")
 
     def _is_fire_state(self) -> bool:
-        return str(self.system_state).strip().upper() == "FIRE"
+        return self.system_state in ["Ignition 1", "Main Valves Open", "Ignition 2 (Fire)", "Shutdown"]
 
     def _trigger_comms_auto_abort(self, reason: str):
         """Trigger emergency abort behavior from comms layer."""
         try:
             sfe_packet = EGCPPacket(self._get_next_tx_id(), EGCPPacket.PKT_SFE)
-            self._send_packet(sfe_packet, track_ack=True)
+            self._send_packet(sfe_packet)
         except Exception:
             pass
 
@@ -492,7 +494,7 @@ class EthernetClient:
                             self.heartbeat_miss_last_rx_ms = self.heartbeat_last_rx
                             self.heartbeat_miss_triggered_ms = now
                             self.heartbeat_miss_recovery_logged = False
-                            print(f"[EthernetClient] Heartbeat missed (>{self.heartbeat_rx_miss_interval}ms)! Waiting for next packet to measure gap...")
+                            print(f"[EthernetClient] Heartbeat missed (>{self.heartbeat_rx_miss_interval}ms)!")
 
                 time.sleep(0.001)    # Control the pace of this thread to 1ms to prevent it from burning too much CPU
         
@@ -620,7 +622,7 @@ class EthernetClient:
                             
                             elif packet.packet_type == EGCPPacket.PKT_ADC:
                                 # Send ACK for ADC packet
-                                self._send_ack(packet.packet_id)
+                                #self._send_ack(packet.packet_id)
                                 
                                 if self.receive_callback:
                                     # Process all sensor readings in the packet body (each is 5 bytes: 1-byte ID + 4-byte float)
@@ -700,6 +702,7 @@ class EthernetClient:
         self.connected = False
         self.stop_heartbeat()
         self.stop_listening()
+        self.pending_acks.clear()
         if self.sock:
             self.sock.close()
             self.sock = None

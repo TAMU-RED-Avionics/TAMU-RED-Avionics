@@ -258,9 +258,9 @@ class SensorGridWindow(QWidget):
         self.setLayout(self.grid)
 
         self.sensors = [f"P{i}" for i in range(1, 9)] + \
-                       [f"TC{i}" for i in range(1, 4)] + \
-                       [f"LC{i}" for i in range(1, 4)] + \
-                       [f"B{i}" for i in range(1, 3)]
+                       [f"TC{i}" for i in range(1, 2)] + \
+                       [f"LC{i}" for i in range(1, 6)] + \
+                       [f"B{i}" for i in range(1, 3)] # check the TC count, there might be more.
         
         self.sensor_frames: Dict[str, SensorFrame] = {}  # Container frames for each sensor
         self.sensor_labels: Dict[str, str] = {}  # Sensor name labels

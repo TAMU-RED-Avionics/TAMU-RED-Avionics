@@ -158,11 +158,13 @@ class GUIController:
             "Close Pressure 2": ["NCS3", "PA-BV1"],
             "Power down": [],
 
-            # Terminal count states
+            # Auto sequence states
             "Ignition 1": ["PA-BV2", "IGN-1"],
             "Main Valves Open": ["PA-BV2", "IGN-1", "PA-BV1"],
-            "Ignition 2": ["PA-BV2", "IGN-1", "PA-BV1", "IGN-2"],
-            "Shutdown": ["NCS3", "GV-1", "GV-2"],
+            "Ignition 2 (Fire)": ["PA-BV2", "IGN-1", "PA-BV1", "IGN-2"],
+            # "Throttle": ["PA-BV2", "IGN-1", "PA-BV1", "IGN-2", "THROTTLE"],
+            # "Gimbal": ["PA-BV2", "IGN-1", "PA-BV1", "IGN-2", "GIMBAL"],
+            "Shutdown": [],
         }
         
         # Abort related configuration
@@ -274,13 +276,13 @@ class GUIController:
 
         current_time = QDateTime.currentMSecsSinceEpoch()
 
+        p2     = self._get_smoothed("P2")
         p3     = self._get_smoothed("P3")
         p4     = self._get_smoothed("P4")
         p5     = self._get_smoothed("P5")
         p6     = self._get_smoothed("P6")
-        pc     = self._get_smoothed("P8")
         pline  = self._get_smoothed("P7")
-        p2     = self._get_smoothed("P2")
+        pc     = self._get_smoothed("P8")
 
         if p2 > 1375:
             if not self.valve_states.get("NCS3", False):
@@ -363,18 +365,17 @@ class GUIController:
                 self.p3_high_pressure_active = False
 
     def _handle_p3_high_pressure(self, p3_value: float):
-        self.log_event("HIGH_PRESSURE_P3", f"P3={p3_value:.1f} psi > 1300 psi - closing all valves")
-
-
-        for valve in list(self.valve_states.keys()):
-            self.toggle_valve(valve, False)
-
-        # One second later, open NCS3 to vent
+        self.signals.abort_triggered.emit(
+            "HIGH_PRESSURE_P3", 
+            f"P3={p3_value:.1f} psi > 1300 psi\nNCS3 WILL OPEN IN 1S"
+        )
+        self.lockout = False
         QTimer.singleShot(1000, self._open_ncs3_after_p3_event)
 
     def _open_ncs3_after_p3_event(self):
         self.log_event("HIGH_PRESSURE_P3", "Opening NCS3 (1s delay after P3 over-pressure)")
         self.toggle_valve("NCS3", True)
+        self.lockout = True
 
     def trigger_manual_abort(self):
         """Manual abort button handler (Req 11)"""
@@ -446,14 +447,17 @@ class GUIController:
         for valve in self.valve_states.keys():
             self.toggle_valve(valve, False)
 
-        # Show abort popup (Req 20)
-        QMessageBox.critical(
-            self.parent, # has to bind to a real widget
-            "ABORT TRIGGERED", 
-            f"Abort Type: {abort_type}\nReason: {reason}"
-        )
-
         self.lockout = True
+        self._sequence_cancelled = True
+
+        # Show non-blocking abort popup (Req 20)
+        msg_box = QMessageBox(self.parent) # has to bind to a real widget
+        msg_box.setIcon(QMessageBox.Critical)
+        msg_box.setWindowTitle("ABORT TRIGGERED")
+        msg_box.setText(f"Abort Type: {abort_type}\nReason: {reason}")
+        msg_box.setWindowFlags(msg_box.windowFlags() | Qt.WindowStaysOnTopHint)
+        msg_box.setAttribute(Qt.WA_DeleteOnClose) 
+        msg_box.show()
 
         # Log abort event
         self.log_event("ABORT", f"{abort_type}:{reason}")
@@ -720,8 +724,19 @@ class GUIController:
 
         # Start recording if not already doing so
         if not self.csv_file:
-            filename = QDateTime.currentDateTime().toString("yyyy-MM-dd_HH-mm-ss")
-            self.start_recording(filename)
+            data_folder = "Data"
+            os.makedirs(data_folder, exist_ok=True)
+            date_str = QDateTime.currentDateTime().toString("yyyy-MM-dd")
+            filename = f"Elysium2_Hotfire_1_{date_str}.csv"
+            full_path = os.path.join(data_folder, filename)
+
+            i = 2
+            while os.path.exists(full_path):
+                filename = f"Elysium2_Hotfire_{i}_{date_str}.csv"
+                full_path = os.path.join(data_folder, filename)
+                i += 1
+
+            self.start_recording(full_path)
 
         # Create countdown dialog (10-second hold before terminal count begins)
         countdown_dialog = QDialog(self.parent)
@@ -744,18 +759,18 @@ class GUIController:
         countdown_layout.addWidget(cancel_btn)
         
         # Initialize 10-second hold countdown (counts down from 10 to 0, then fires)
-        self.countdown_value = 10
+        self.countdown_value = 10.0
         self.countdown_timer = QTimer()
-        self.countdown_timer.setInterval(1000)  # 1 second interval
+        self.countdown_timer.setInterval(500)  # 1 second interval
         self._sequence_cancelled = False
         
         def update_countdown():
-            self.countdown_value -= 1
-            if self.countdown_value > 0:
-                self.countdown_label.setText(f"Terminal count begins in T-{self.countdown_value}...")
-            else:
-                self.countdown_timer.stop()
-                countdown_dialog.accept()  # Close dialog and proceed to terminal count
+            self.countdown_value -= .5
+            if self.countdown_value > 0 and self.countdown_value.is_integer():
+                self.countdown_label.setText(f"Terminal Count: T-{self.countdown_value:.0f}")
+            if self.countdown_value == 0.5:
+                self.countdown_timer.stop()          # STOP at T-0.5 to start ignition 1
+                countdown_dialog.accept()
 
         def cancel_sequence():
             self._sequence_cancelled = True
@@ -769,15 +784,14 @@ class GUIController:
         if countdown_dialog.exec_() != QDialog.Accepted:
             return
 
-        # TERMINAL COUNT
-        # All timings are relative to T-0.5 (the moment the dialog closes = T-0.5)
-        # T-0.5s  →  now (t=0 ms offset):   PA-BV2 opens + IGN-1 actuates
-        # T+0.0s  →  +500 ms:                PA-BV1 opens
-        # T+0.4s  →  +900 ms:                IGN-2 actuates
-        # T+15.5s →  +16000 ms:              PA-BV1, PA-BV2, NCS1 close (engine cutoff)
+        # TERMINAL COUNT | AUTO FIRE SEQUENCE
+        # All timings are relative to T-0.5
+        # T-0.5s  →  now (t=0 ms offset):     PA-BV2 opens + IGN-1 actuates
+        # T+0.0s  →  +500 ms:                 PA-BV1 opens
+        # T+0.4s  →  +900 ms:                 IGN-2 actuates
+        # T+15.5s →  +16000 ms:               PA-BV1, PA-BV2, NCS1 close
 
-        self.log_event("FIRE_SEQUENCE", "Terminal count")
-
+        self.log_event("FIRE_SEQUENCE", "T-0.5 Ignition 1")
         self.apply_operation("Ignition 1")
 
         QTimer.singleShot(500, lambda: (
@@ -786,12 +800,12 @@ class GUIController:
         ))
 
         QTimer.singleShot(900, lambda: (
-            self.apply_operation("Ignition 2")
+            self.apply_operation("Ignition 2 (Fire)")
             if not self._sequence_cancelled else None
         ))
 
-        #QTimer.singleShot(16000, lambda: (
-        QTimer.singleShot(6000, lambda: (                      # 5 second burn
+        #QTimer.singleShot(16000, lambda: (                    # 15 second burn 
+        QTimer.singleShot(6000, lambda: (                      #  5 second burn
             self.apply_operation("Shutdown")
             if not self._sequence_cancelled else None
         ))

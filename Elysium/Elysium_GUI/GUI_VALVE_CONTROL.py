@@ -55,7 +55,7 @@ class ValveControlWindow(QWidget):
         current_column_layout.setSpacing(10)
 
         for op in self.controller.valve_operation_states:
-            if op in ["Ignition 1", "Main Valves Open", "Ignition 2", "Shutdown"]:
+            if op in ["Ignition 1", "Main Valves Open", "Ignition 2 (Fire)", "Shutdown"]:
                 continue
             
             btn = QPushButton(op)
