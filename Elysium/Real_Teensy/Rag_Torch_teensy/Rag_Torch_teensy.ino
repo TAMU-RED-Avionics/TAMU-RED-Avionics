@@ -19,15 +19,15 @@ const long unsigned ABORTED_TIME_INTERVAL   = 500000;  // µs between "Aborted" 
 
 const int BAUD = 115200;
 
-const int NCS1_PIN = -1;   // <-- USER INPUT
-const int NCS2_PIN = -1;   // <-- USER INPUT
+const int NCS1_PIN =  7;   // <-- USER INPUT
+const int NCS2_PIN =  8;   // <-- USER INPUT
 const int NCS3_PIN = -1;   // <-- USER INPUT
 const int NCS4_PIN = -1;   // <-- USER INPUT
-const int NCS5_PIN = -1;   // <-- USER INPUT
+const int NCS5_PIN = 11;   // <-- USER INPUT
 
-const int EABV_PIN = -1;   // <-- USER INPUT
-const int PABV_PIN = -1;   // <-- USER INPUT
-const int SPARK_PIN = -1;  // <-- USER INPUT
+const int EABV_PIN =  9;   // <-- USER INPUT
+const int PABV_PIN = 10;   // <-- USER INPUT
+const int SPARK_PIN = 5;   // <-- USER INPUT
 
 // Ignition coil timing
 const unsigned int DWELL_TIME     = 3000;  // µs — coil charge time (keep < ~5000 to avoid overheating)
