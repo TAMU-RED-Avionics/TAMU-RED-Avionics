@@ -5,20 +5,28 @@ VARIABLES & USER INPUT
 */
 
 #include <Arduino.h>
+#include <SPI.h>
+#include <Wire.h>
+#include <NativeEthernet.h>
+#include <NativeEthernetUdp.h>
+#include <IPAddress.h>
+#include <Adafruit_I2CDevice.h>
+#include <Adafruit_I2CRegister.h>
+#include <Adafruit_MCP9600.h>
 #include "EGCP.h"
 
 #define SERIAL_DEBUG 1
 
 #if defined(ARDUINO) && SERIAL_DEBUG
-  #define DBG_PRINTLN(x) Serial.println(x)
-  #define DBG_PRINT(x)   Serial.print(x)
+  #define DBG_PRINTLN(...) Serial.println(__VA_ARGS__)
+  #define DBG_PRINT(...)   Serial.print(__VA_ARGS__)
 #else
-  #define DBG_PRINTLN(x)
-  #define DBG_PRINT(x)
+  #define DBG_PRINTLN(...)
+  #define DBG_PRINT(...)
 #endif
 
 
-const long unsigned SENSOR_UPDATE_INTERVAL     = 1000;          // <-- USER INPUT       sensor update interval (microsec)
+const long unsigned SENSOR_UPDATE_INTERVAL     = 10000;         // <-- USER INPUT       sensor update interval (microsec)
 const long unsigned LC_UPDATE_INTERVAL         = 100000;        // <-- USER INPUT       load cell update interval (microsec)
 const long unsigned CONNECTION_TIMEOUT         = 5000000;       // <-- USER INPUT       automated shutdown timeout for complete comms failure (microsec)
 const long unsigned HUMAN_CONNECTION_TIMEOUT   = 3600000000;    // <-- USER INPUT       automated shutdown timeout for human comms failure (microsec)
@@ -31,83 +39,202 @@ long unsigned LAST_SENSOR_UPDATE               = 0;             // timestamp of 
 long unsigned LAST_LC_UPDATE                   = 0;             // timestamp of last load cell reading (microsec)
 long unsigned LAST_COMMUNICATION_TIME          = 0;             // timestamp of last communication of any type (microsec)
 long unsigned LAST_HUMAN_UPDATE                = 0;             // timestamp of last human communication (microsec)
-long unsigned ABORT_TIME_TRACKING              = 0;
+long unsigned ABORT_TIME_TRACKING              = 0;             // timestamp of last "aborted" print (when aborted)
 
+const int BAUD = 115200;
 
-// BAUD rate 
-const int BAUD = 115200;                                        // serial com in bits per second
-
-// Valves / Solenoids
-const int NCS1_PIN   = -1;    // <-- USER INPUT
-const int NCS2_PIN   = -1;    // <-- USER INPUT (vent line — HIGH = open/vent)
-const int NCS3_PIN   = -1;    // <-- USER INPUT
+// ---------------------------------------------------------------------------
+// VALVE PIN ASSIGNMENTS
+// Available RELAY→GPIO assignments from schematic:
+//   RELAY1  → GPIO 2  or GPIO 32
+//   RELAY3  → GPIO 33
+//   RELAY4  → GPIO 3
+//   RELAY5  → GPIO 34
+//   RELAY6  → GPIO 4
+//   RELAY7  → GPIO 5
+//   RELAY8  → GPIO 35
+//   RELAY9  → GPIO 36
+//   RELAY10 → GPIO 6
+//   RELAY11 → GPIO 37
+//   RELAY12 → GPIO 38
+//   RELAY13 → GPIO 39
+//   RELAY14 → GPIO 40
+//   RELAY15 → GPIO 14
+//   RELAY16 → GPIO 41
+// ---------------------------------------------------------------------------
+const int NCS1_PIN   = -1;   // <-- USER INPUT  (available: see RELAY map above)
+const int NCS2_PIN   = -1;   // <-- USER INPUT  (vent line — HIGH = open)
+const int NCS3_PIN   = -1;   // <-- USER INPUT
 // NCS4 is a manual switch
-const int NCS5_PIN   = -1;    // <-- USER INPUT
-const int PA_BV3_PIN = -1;    // <-- USER INPUT (was NCS6)
-const int PA_BV1_PIN = -1;    // <-- USER INPUT (was LA-BV1; special: open triggers purge-on-close logic)
-const int PA_BV2_PIN = -1;    // <-- USER INPUT (was LA-BV2)
-const int GV1_PIN    = -1;    // <-- USER INPUT
-const int GV2_PIN    = -1;    // <-- USER INPUT
-const int GIMBAL_PIN = -1;    // <-- USER INPUT
+const int NCS5_PIN   = -1;   // <-- USER INPUT 
+const int PA_BV3_PIN = -1;   // <-- USER INPUT  (prev. NCS6)
+const int PA_BV1_PIN = -1;   // <-- USER INPUT  (prev. LA-BV1)
+const int PA_BV2_PIN = -1;   // <-- USER INPUT  (prev. LA-BV2)
+const int GV1_PIN    = -1;   // <-- USER INPUT
+const int GV2_PIN    = -1;   // <-- USER INPUT
+const int IGN1_PIN   = -1;   // <-- USER INPUT
+const int IGN2_PIN   = -1;   // <-- USER INPUT
+const int GIMBAL_PIN = -1;   // <-- USER INPUT
 
-// Igniters
-const int IGN1_PIN   = -1;    // <-- USER INPUT
-const int IGN2_PIN   = -1;    // <-- USER INPUT
+// ---------------------------------------------------------------------------
+// ADS7953 SPI ADC  (pressure transducers + LC4/LC5 analog)
+// Pins fixed by schematic — do not change
+// ---------------------------------------------------------------------------
+const int ADS_CS_PIN  = 10;   // GPIO10 = CS1
+const int ADS_MOSI    = 11;   // GPIO11 = SDI1
+const int ADS_MISO    = 12;   // GPIO12 = SDO1
+const int ADS_SCK     = 13;   // GPIO13 = SCLK1
 
-const int PT1_PIN    = -1;    // <-- USER INPUT
-const int PT2_PIN    = -1;    // <-- USER INPUT
-const int PT3_PIN    = -1;    // <-- USER INPUT
-const int PT4_PIN    = -1;    // <-- USER INPUT
-const int PT5_PIN    = -1;    // <-- USER INPUT
-const int PT6_PIN    = -1;    // <-- USER INPUT
-const int PT7_PIN    = -1;    // <-- USER INPUT
-const int PT8_PIN    = -1;    // <-- USER INPUT
+// ADS7953 channel assignments
+// PT1-PT8 → CH0-CH7 (4-20mA sensors with 150Ω shunt, 0-3V on 3.3V rail)
+// LC4, LC5 → CH8, CH9 (FX292X analog bridge via OPA192 amp)
+// CH10-CH15 reserved / unassigned
 
-// Load Cells
-const int LC1_DOUT   = -1;    // <-- USER INPUT
-const int LC1_CLK    = -1;    // <-- USER INPUT
+// Calibration: psi = slope * raw12bit + intercept
+// Raw range for 4-20mA / 150Ω shunt on 3.3V:
+//   4mA  → 0.6V → raw = 4095*(0.6/3.3) = 744
+//   20mA → 3.0V → raw = 4095*(3.0/3.3) = 3723
+const float PT_SLOPE[8]     = { 0.5035f, 0.5035f, 0.5035f, 0.5035f,      // PT1-4: 0-1500 psi  <-- USER INPUT (verify gain)
+                                 0.5035f, 0.5035f,                       // PT5-6: 0-1500 psi
+                                 0.3357f, 0.3357f };                     // PT7-8: 0-1000 psi
+const float PT_INTERCEPT[8] = { -374.6f, -374.6f, -374.6f, -374.6f,
+                                  -374.6f, -374.6f,
+                                  -249.7f, -249.7f };
 
-const int LC2_DOUT   = -1;    // <-- USER INPUT
-const int LC2_CLK    = -1;    // <-- USER INPUT
+// FX292X LC4/LC5: analog bridge, 0-200 lbs full scale
+// Calibration depends on OPA192 gain — PLACEHOLDER, recalibrate on hardware
+const float LC45_SLOPE     = 0.04884f;   // <-- USER INPUT  (lbs per raw count, no amp gain known)
+const float LC45_INTERCEPT = 0.0f;       // <-- USER INPUT
 
-const int LC3_DOUT   = -1;    // <-- USER INPUT
-const int LC3_CLK    = -1;    // <-- USER INPUT
-
-const int LC4_DOUT   = -1;    // <-- USER INPUT
-const int LC4_CLK    = -1;    // <-- USER INPUT
-
-const int LC5_DOUT   = -1;    // <-- USER INPUT
-const int LC5_CLK    = -1;    // <-- USER INPUT
-
-
-const float pt_slope[]     = {2.0161f, 2.0161f, 2.0161f, 2.0161f,      // PT1-4: 0-1500 psi
-                                2.0161f, 2.0161f,                       // PT5-6: 0-1500 psi
-                                1.3441f, 1.3441f };                     // PT7-8: 0-1000 psi
-
-const float pt_intercept[] = {-375.0f, -375.0f, -375.0f, -375.0f,      // PT1-4
-                                -375.0f, -375.0f,                       // PT5-6
-                                -250.0f, -250.0f};                     // PT7-8
-
-inline float pressureCalculation(int raw, int channel) {
-    return pt_slope[channel] * raw + pt_intercept[channel];
+uint16_t ads7953_read(uint8_t channel) {
+    // ADS7953 manual-mode single-channel read
+    // Command: bits[15:12]=0001 (manual), bits[11:8]=channel, bits[7:0]=0
+    uint16_t cmd = (0x1000) | ((uint16_t)(channel & 0x0F) << 8);
+    digitalWrite(ADS_CS_PIN, LOW);
+    uint8_t hi = SPI.transfer((cmd >> 8) & 0xFF);
+    uint8_t lo = SPI.transfer(cmd & 0xFF);
+    digitalWrite(ADS_CS_PIN, HIGH);
+    uint16_t result = ((uint16_t)(hi & 0x0F) << 8) | lo;
+    return result;
 }
 
+inline float pt_psi(uint8_t channel) {
+    uint16_t raw = ads7953_read(channel);
+    return PT_SLOPE[channel] * raw + PT_INTERCEPT[channel];
+}
 
-#include <NativeEthernet.h>
-#include <NativeEthernetUdp.h>
-#include <IPAddress.h>
-#include "HX711.h"
-#include <Wire.h>
-#include <Adafruit_I2CDevice.h>
-#include <Adafruit_I2CRegister.h>
-#include <Adafruit_MCP9600.h>
+// ---------------------------------------------------------------------------
+// NAU7802 I2C ADC  (load cells LC1-LC3)
+// I2C bus: SCL=GPIO16 (SCLLC), SDA=GPIO17 (SDALC)
+// TCA9548A mux selects which NAU7802 is active
+// NAU7802 default I2C address: 0x2A
+// ---------------------------------------------------------------------------
+#define NAU7802_ADDR     0x2A
+#define TCA_LC_ADDR      0x70   // <-- USER INPUT  (TCA9548A address for LC bus, set by A0-A2 strapping)
+
+// NAU7802 register addresses
+#define NAU7802_PU_CTRL  0x00
+#define NAU7802_CTRL1    0x01
+#define NAU7802_ADCO_B2  0x12
+
+TwoWire& LC_WIRE  = Wire1;   // GPIO16/17 = Wire1 on Teensy 4.1  <-- confirm with pinout
+
+void tca_lc_select(uint8_t channel) {
+    // Select TCA9548A channel (0-7) on the LC I2C bus
+    LC_WIRE.beginTransmission(TCA_LC_ADDR);
+    LC_WIRE.write(1 << channel);
+    LC_WIRE.endTransmission();
+}
+
+bool nau7802_write(uint8_t reg, uint8_t val) {
+    LC_WIRE.beginTransmission(NAU7802_ADDR);
+    LC_WIRE.write(reg);
+    LC_WIRE.write(val);
+    return LC_WIRE.endTransmission() == 0;
+}
+
+uint8_t nau7802_read_byte(uint8_t reg) {
+    LC_WIRE.beginTransmission(NAU7802_ADDR);
+    LC_WIRE.write(reg);
+    LC_WIRE.endTransmission(false);
+    LC_WIRE.requestFrom((uint8_t)NAU7802_ADDR, (uint8_t)1);
+    return LC_WIRE.available() ? LC_WIRE.read() : 0;
+}
+
+bool nau7802_data_ready() {
+    return (nau7802_read_byte(NAU7802_PU_CTRL) & 0x20) != 0;
+}
+
+int32_t nau7802_read_adc() {
+    // Read 24-bit signed result from ADCO registers
+    LC_WIRE.beginTransmission(NAU7802_ADDR);
+    LC_WIRE.write(NAU7802_ADCO_B2);
+    LC_WIRE.endTransmission(false);
+    LC_WIRE.requestFrom((uint8_t)NAU7802_ADDR, (uint8_t)3);
+    int32_t val = 0;
+    if (LC_WIRE.available() >= 3) {
+        val  = (int32_t)LC_WIRE.read() << 16;
+        val |= (int32_t)LC_WIRE.read() << 8;
+        val |= (int32_t)LC_WIRE.read();
+        if (val & 0x800000) val |= 0xFF000000;   // sign extend
+    }
+    return val;
+}
+
+bool nau7802_init() {
+    // Reset and power up NAU7802
+    nau7802_write(NAU7802_PU_CTRL, 0x01);   // RR: reset
+    delay(1);
+    nau7802_write(NAU7802_PU_CTRL, 0x02);   // PUD: power up digital
+    delay(1);
+    uint8_t ready = nau7802_read_byte(NAU7802_PU_CTRL);
+    if (!(ready & 0x08)) return false;       // PUR bit must set
+    nau7802_write(NAU7802_PU_CTRL, 0x86);   // AVDDS=1, PGA=1, PUD=1
+    nau7802_write(NAU7802_CTRL1, 0x30);     // gain=128, LDO=3.0V  <-- USER INPUT if gain differs
+    return true;
+}
+
+// LC1-LC3 calibration: lbs = slope * raw24bit + intercept
+const float LC_SLOPE[3]     = { 1.0f, 1.0f, 1.0f };     // <-- USER INPUT  (calibrate on hardware)
+const float LC_INTERCEPT[3] = { 0.0f, 0.0f, 0.0f };     // <-- USER INPUT
+
+float lc_weights[5] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+
+// ---------------------------------------------------------------------------
+// THERMOCOUPLES  (MCP9600 via I2C)
+// I2C bus: SCL=GPIO18 (SCLTC), SDA=GPIO19 (SDATC)  = Wire2 on Teensy 4.1
+// TCA9548A mux selects which MCP9600 is active
+// ---------------------------------------------------------------------------
+#define TCA_TC_ADDR  0x71   // <-- USER INPUT  (TCA9548A address for TC bus)
+
+TwoWire& TC_WIRE = Wire2;   // GPIO18/19 = Wire2 on Teensy 4.1  <-- confirm with pinout
+
+#define TC1_MUX_CH  0   // <-- USER INPUT  (which TCA9548A channel each MCP9600 is on)
+#define TC2_MUX_CH  1   // <-- USER INPUT
+#define TC3_MUX_CH  2   // <-- USER INPUT
+
+Adafruit_MCP9600 tc1_sensor;
+Adafruit_MCP9600 tc2_sensor;
+Adafruit_MCP9600 tc3_sensor;
+bool tc1_ok = false;
+bool tc2_ok = false;
+bool tc3_ok = false;
+
+#define MCP9600_ADDR  0x60   // MCP9600 fixed I2C address (all instances share same addr, mux selects)
+
+void tca_tc_select(uint8_t channel) {
+    TC_WIRE.beginTransmission(TCA_TC_ADDR);
+    TC_WIRE.write(1 << channel);
+    TC_WIRE.endTransmission();
+}
+
+float lc45_weights[2] = { 0.0f, 0.0f };
 
 
 byte MAC_ADDRESS[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
 IPAddress LOCAL_IP(192, 168, 1, 174);
 IPAddress REMOTE_IP(192, 168, 1, 175);
 unsigned int UDP_PORT = 8888;
-
 // Dynamic peer (updated on first packet received from GUI)
 IPAddress ACTIVE_REMOTE(192, 168, 1, 175);
 unsigned int ACTIVE_REMOTE_PORT = 8888;
@@ -121,31 +248,6 @@ uint16_t egcp_rx_pos = 0;
 uint32_t tx_packet_id = 0;
 uint32_t heartbeat_rx_count = 0;
 unsigned long last_loop_log_ms = 0;
-
-HX711 lc1, lc2, lc3, lc4, lc5;
-float lc1_weight = 0.0f;
-float lc2_weight = 0.0f;
-float lc3_weight = 0.0f;
-float lc4_weight = 0.0f;
-float lc5_weight = 0.0f;
-
-
-// Thermocouple I2C addresses - Default I2C addresses for MCP9600 are 0x60–0x67 (set by ADDR pin strapping).
-#define TC1_I2C_ADDR  0x67    // <-- USER INPUT  (match board address strapping)
-#define TC2_I2C_ADDR  0x66    // <-- USER INPUT
-#define TC3_I2C_ADDR  0x65    // <-- USER INPUT
-#define STRINGIFY(x) #x
-#define TOSTRING(x) STRINGIFY(x)
-
-Adafruit_MCP9600 tc1_sensor;
-Adafruit_MCP9600 tc2_sensor;
-Adafruit_MCP9600 tc3_sensor;
-
-bool tc1_ok = false;
-bool tc2_ok = false;
-bool tc3_ok = false;
-
-// bool is_PABV1_open = false;     // tracks PA-BV1 open/closed for purge-on-close logic
 
 uint32_t next_tx_id() {
     uint32_t id = tx_packet_id;
@@ -163,7 +265,7 @@ void send_packet(const EGCPPacket& pkt) {
     uint8_t buf[20];
     uint8_t sz = pkt.encode(buf, sizeof(buf));
     if (sz == 0) return;
-    IPAddress dst_ip   = active_remote_valid ? ACTIVE_REMOTE : REMOTE_IP;
+    IPAddress dst_ip      = active_remote_valid ? ACTIVE_REMOTE : REMOTE_IP;
     unsigned int dst_port = active_remote_valid ? ACTIVE_REMOTE_PORT : UDP_PORT;
     udp.beginPacket(dst_ip, dst_port);
     udp.write(buf, sz);
@@ -188,7 +290,6 @@ void send_adc_packet(uint8_t sensor_id, float value) {
     send_packet(pkt);
 }
 
-// Function to get pin number from EGCP valve ID
 int get_pin_from_valve_id(uint8_t id) {
     switch (id) {
         case 0x01: return NCS1_PIN;
@@ -207,7 +308,6 @@ int get_pin_from_valve_id(uint8_t id) {
     }
 }
 
-// Get valve name from ID (for logging)
 const char* get_valve_name(uint8_t id) {
     switch (id) {
         case 0x01: return "NCS1";
@@ -226,39 +326,30 @@ const char* get_valve_name(uint8_t id) {
     }
 }
 
-// Shutdown procedure - triggered by timeout or emergency abort
+void safe_all_valves() {
+    const int pins[] = {NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
+    for (int pin : pins) {
+        if (pin >= 0) digitalWrite(pin, LOW);
+    }
+    // if (NCS2_PIN >= 0) digitalWrite(NCS2_PIN, HIGH); // check with ops
+}
+
 void trigger_shutdown(const char* reason) {
     DBG_PRINT("[TEENSY] Trigger Shutdown: ");
     DBG_PRINTLN(reason ? reason : "UNKNOWN");
 
-    // Safe valve configuration: vent via NCS2, everything else closed
-    digitalWrite(NCS2_PIN, HIGH);           // Open vent
-    digitalWrite(NCS1_PIN, LOW);
-    digitalWrite(NCS3_PIN, LOW);
-    digitalWrite(NCS5_PIN, LOW);
-    digitalWrite(PA_BV3_PIN, LOW);
-    digitalWrite(PA_BV1_PIN, LOW);
-    digitalWrite(PA_BV2_PIN, LOW);
-    digitalWrite(GV1_PIN, LOW);
-    digitalWrite(GV2_PIN, LOW);
-    digitalWrite(IGN1_PIN, LOW);
-    digitalWrite(IGN2_PIN, LOW);
-    digitalWrite(GIMBAL_PIN, LOW);
+    safe_all_valves();
 
-    // PA-BV1 close purge: if PA-BV1 was open, momentarily open NCS4 to purge propellant lines
-    /*if (is_PABV1_open) {
-        DBG_PRINTLN("[E2] PA-BV1 purge sequence");           NCS4 is a manual valve.
-        digitalWrite(NCS4_PIN, HIGH);
-        delay(SHUTDOWN_PURGE_TIME);
-        digitalWrite(NCS4_PIN, LOW);
-        is_PABV1_open = false;
-    }*/
-
-    // Try to notify GUI we are in abort state
     EGCPPacket sfe(next_tx_id(), EGCPPacket::PKT_SFE);
     send_packet(sfe);
 
-    // Spin waiting for STA (restart handshake) from GUI
+    // Clear the local parse buffer entirely before entering the loop
+    egcp_rx_pos = 0; 
+    memset(egcp_rx_buf, 0, sizeof(egcp_rx_buf));
+
+    // Clear hardware UDP buffer entirely
+    while (udp.parsePacket() > 0) { while (udp.available()) udp.read(); }
+
     bool aborted = true;
     while (aborted) {
         Ethernet.maintain();
@@ -277,8 +368,8 @@ void trigger_shutdown(const char* reason) {
             egcp_rx_pos += n;
 
             while (egcp_rx_pos >= 4) {
-                uint8_t  body_len   = egcp_rx_buf[3] & 0xF;
-                uint16_t total_sz   = 4 + body_len;
+                uint8_t  body_len = egcp_rx_buf[3] & 0xF;
+                uint16_t total_sz = 4 + body_len;
                 if (egcp_rx_pos < total_sz) break;
 
                 EGCPPacket rx;
@@ -286,45 +377,29 @@ void trigger_shutdown(const char* reason) {
                     if (rx.packet_type == EGCPPacket::PKT_STA) {
                         DBG_PRINTLN("[TEENSY] STA received | Exiting abort state");
                         aborted = false;
+                        
+                        // Sync timers to NOW so it doesn't instantly timeout on exit
                         LAST_COMMUNICATION_TIME = micros();
                         LAST_HUMAN_UPDATE       = micros();
-                        digitalWrite(NCS2_PIN, LOW);    // Close vent after restart confirmed
+                        LAST_SENSOR_UPDATE      = micros();
+                        LAST_LC_UPDATE          = micros();
+                        
+                        if (NCS2_PIN >= 0) digitalWrite(NCS2_PIN, LOW);
                         send_ack(rx.packet_id);
-                        egcp_rx_pos = 0;
                         break;
                     }
-                    // Ignore everything else while aborted
                 }
-
                 memmove(egcp_rx_buf, egcp_rx_buf + total_sz, egcp_rx_pos - total_sz);
                 egcp_rx_pos -= total_sz;
             }
         }
     }
+    
     egcp_rx_pos = 0;
-    // Brief pause then discard one more round of anything queued
-    delay(100);
-    while (udp.parsePacket() > 0) {
-        while (udp.available()) udp.read();
-    }
+    memset(egcp_rx_buf, 0, sizeof(egcp_rx_buf));
+    while (udp.parsePacket() > 0) { while (udp.available()) udp.read(); }
+    
     DBG_PRINTLN("[TEENSY] Exited abort state, returning to main loop");
-}
-
-bool init_comms(byte* mac, unsigned int port) {
-    IPAddress GATEWAY(192, 168, 1, 1);   // there is no router, so this is meaningless 
-    IPAddress SUBNET(255, 255, 255, 0);  // could be almost anything else tbh
-    Ethernet.begin(mac, LOCAL_IP, GATEWAY, SUBNET);
-    if (Ethernet.hardwareStatus() == EthernetNoHardware) {
-        DBG_PRINTLN("[TEENSY] ERR: No Ethernet hardware");
-        return false;
-    }
-    if (Ethernet.linkStatus() == LinkOFF) {
-        DBG_PRINTLN("[TEENSY] ERR: Ethernet cable disconnected");
-        return false;
-    }
-    udp.begin(port);
-    DBG_PRINT("[TEENSY] UDP listening on port "); DBG_PRINTLN(port);
-    return true;
 }
 
 void setup() {
@@ -332,84 +407,88 @@ void setup() {
     Serial.begin(BAUD);
     delay(50);
 #endif
-
     DBG_PRINTLN("Booting E2 Teensy firmware");
-
-    // ---- Comms ----
-    init_comms(MAC_ADDRESS, UDP_PORT);
-    LAST_COMMUNICATION_TIME = micros();
-    LAST_HUMAN_UPDATE       = micros();
-
-    Wire.begin();
-
-    // ---- Valve / Actuator Pins ----
-    const int output_pins[] = {NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
-    for (int pin : output_pins) {
-        if (pin > -1) pinMode(pin, OUTPUT);
+    {
+        IPAddress GATEWAY(192, 168, 1, 1);   // there is no router, so this is meaningless
+        IPAddress SUBNET(255, 255, 255, 0);  // could be almost anything else tbh
+        Ethernet.begin(MAC_ADDRESS, LOCAL_IP, GATEWAY, SUBNET);
+        if (Ethernet.hardwareStatus() == EthernetNoHardware) {DBG_PRINTLN("ERR: No Ethernet hardware");}
+        if (Ethernet.linkStatus() == LinkOFF) {DBG_PRINTLN("WARN: Ethernet cable disconnected");}
+        udp.begin(UDP_PORT);
+        DBG_PRINT("UDP listening on port "); DBG_PRINTLN(UDP_PORT);
     }
-    DBG_PRINTLN("Valve pins initialized");
 
-    // ---- Load Cells ----
-    lc1.begin(LC1_DOUT, LC1_CLK);
-    lc2.begin(LC2_DOUT, LC2_CLK);
-    lc3.begin(LC3_DOUT, LC3_CLK);
-    lc4.begin(LC4_DOUT, LC4_CLK);
-    lc5.begin(LC5_DOUT, LC5_CLK);
+    // ---- SPI for ADS7953 ----
+    pinMode(ADS_CS_PIN, OUTPUT);
+    digitalWrite(ADS_CS_PIN, HIGH);
+    SPI.begin();
+    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    // Send a dummy read to put ADS7953 into manual mode
+    ads7953_read(0);
+    ads7953_read(0);
+    DBG_PRINTLN("ADS7953 SPI initialized");
 
-    lc1.set_scale(-3980.0f);    // <-- USER INPUT (calibration factor)
-    lc2.set_scale(-3880.0f);    // <-- USER INPUT
-    lc3.set_scale(-3780.0f);    // <-- USER INPUT
-    lc4.set_scale(-3680.0f);    // <-- USER INPUT
-    lc5.set_scale(-3580.0f);    // <-- USER INPUT
+    // ---- I2C for NAU7802 load cells ----
+    LC_WIRE.begin();
+    LC_WIRE.setClock(400000);
+    for (uint8_t ch = 0; ch < 3; ch++) {
+        tca_lc_select(ch);
+        if (nau7802_init()) {
+            DBG_PRINT("LC"); DBG_PRINT(ch + 1); DBG_PRINTLN(" (NAU7802) ready");
+        } else {
+            DBG_PRINT("WARN: LC"); DBG_PRINT(ch + 1); DBG_PRINTLN(" NAU7802 not responding");
+        }
+    }
 
+    // ---- I2C for MCP9600 thermocouples ----
+    TC_WIRE.begin();
+    TC_WIRE.setClock(400000);
 
-    lc1.wait_ready_timeout(500) ? DBG_PRINTLN("LC1 ready") : DBG_PRINTLN("WARN: LC1 not ready");
-    lc2.wait_ready_timeout(500) ? DBG_PRINTLN("LC2 ready") : DBG_PRINTLN("WARN: LC2 not ready");
-    lc3.wait_ready_timeout(500) ? DBG_PRINTLN("LC3 ready") : DBG_PRINTLN("WARN: LC3 not ready");
-    lc4.wait_ready_timeout(500) ? DBG_PRINTLN("LC4 ready") : DBG_PRINTLN("WARN: LC4 not ready");
-    lc5.wait_ready_timeout(500) ? DBG_PRINTLN("LC5 ready") : DBG_PRINTLN("WARN: LC5 not ready");
-    DBG_PRINTLN("Load cell init complete (no tare in setup to avoid blocking)");
-
-    // ---- Thermocouples (MCP9600 via I2C) ----
-    // If a sensor is absent, tc_ok stays false and we transmit 0.0 as a sentinel.
-    tc1_ok = tc1_sensor.begin(TC1_I2C_ADDR);
+    tca_tc_select(TC1_MUX_CH);
+    tc1_ok = tc1_sensor.begin(MCP9600_ADDR, &TC_WIRE);
     if (tc1_ok) {
         tc1_sensor.setADCresolution(MCP9600_ADCRESOLUTION_18);
         tc1_sensor.setThermocoupleType(MCP9600_TYPE_K);
         tc1_sensor.setFilterCoefficient(3);
         tc1_sensor.enable(true);
         DBG_PRINTLN("TC1 ready");
-    } else {
-        DBG_PRINTLN("WARN: TC1 not found at I2C addr " TOSTRING(TC1_I2C_ADDR));
-    }
+    } else { DBG_PRINTLN("WARN: TC1 not found"); }
 
-    tc2_ok = tc2_sensor.begin(TC2_I2C_ADDR);
+    tca_tc_select(TC2_MUX_CH);
+    tc2_ok = tc2_sensor.begin(MCP9600_ADDR, &TC_WIRE);
     if (tc2_ok) {
         tc2_sensor.setADCresolution(MCP9600_ADCRESOLUTION_18);
         tc2_sensor.setThermocoupleType(MCP9600_TYPE_K);
         tc2_sensor.setFilterCoefficient(3);
         tc2_sensor.enable(true);
         DBG_PRINTLN("TC2 ready");
-    } else {
-        DBG_PRINTLN("WARN: TC2 not found at I2C addr " TOSTRING(TC2_I2C_ADDR));
-    }
+    } else { DBG_PRINTLN("WARN: TC2 not found"); }
 
-    tc3_ok = tc3_sensor.begin(TC3_I2C_ADDR);
+    tca_tc_select(TC3_MUX_CH);
+    tc3_ok = tc3_sensor.begin(MCP9600_ADDR, &TC_WIRE);
     if (tc3_ok) {
         tc3_sensor.setADCresolution(MCP9600_ADCRESOLUTION_18);
         tc3_sensor.setThermocoupleType(MCP9600_TYPE_K);
         tc3_sensor.setFilterCoefficient(3);
         tc3_sensor.enable(true);
         DBG_PRINTLN("TC3 ready");
-    } else {
-        DBG_PRINTLN("WARN: TC3 not found at I2C addr " TOSTRING(TC3_I2C_ADDR));
+    } else { DBG_PRINTLN("WARN: TC3 not found"); }
+
+    // ---- Valve output pins ----
+    {
+        const int output_pins[] = {NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
+        for (int pin : output_pins) {
+            if (pin >= 0) { pinMode(pin, OUTPUT); digitalWrite(pin, LOW); }
+        }
+        DBG_PRINTLN("Valve pins initialized");
     }
 
+    LAST_COMMUNICATION_TIME = micros();
+    LAST_HUMAN_UPDATE = micros();
     DBG_PRINTLN("Setup complete | Entering main loop");
 }
 
 void loop() {
-    // ---- Periodic debug heartbeat ----
     unsigned long now_ms = millis();
     if (now_ms - last_loop_log_ms >= 1000) {
         last_loop_log_ms = now_ms;
@@ -418,16 +497,14 @@ void loop() {
             DBG_PRINT(ACTIVE_REMOTE[0]); DBG_PRINT('.'); DBG_PRINT(ACTIVE_REMOTE[1]); DBG_PRINT('.');
             DBG_PRINT(ACTIVE_REMOTE[2]); DBG_PRINT('.'); DBG_PRINT(ACTIVE_REMOTE[3]);
             DBG_PRINT(':'); DBG_PRINTLN(ACTIVE_REMOTE_PORT);
-        } else {
-            DBG_PRINTLN("none");
-        }
+        } else { DBG_PRINTLN("none"); }
     }
 
     // Read incoming packets
     int pkt_sz = udp.parsePacket();
     if (pkt_sz > 0) {
         // Capture dynamic remote address so we can reply to whoever sent us a packet
-        ACTIVE_REMOTE      = udp.remoteIP();
+        ACTIVE_REMOTE = udp.remoteIP();
         ACTIVE_REMOTE_PORT = udp.remotePort();
         active_remote_valid = true;
 
@@ -440,73 +517,74 @@ void loop() {
 
         // Process all complete packets from the receive buffer
         while (egcp_rx_pos >= 4) {
-            uint8_t  body_len  = egcp_rx_buf[3] & 0xF;
-            uint16_t total_sz  = 4 + body_len;
+            uint8_t  body_len = egcp_rx_buf[3] & 0xF;
+            uint16_t total_sz = 4 + body_len;
             if (egcp_rx_pos < total_sz) break;
 
             EGCPPacket rx;
             if (EGCPPacket::decode(egcp_rx_buf, total_sz, rx)) {
 
-                // ---- STA: connection handshake ----
+                // STA: Connection Handshake
                 if (rx.packet_type == EGCPPacket::PKT_STA) {
                     DBG_PRINTLN("STA received -> ACK");
+                    LAST_COMMUNICATION_TIME = micros();
+                    LAST_HUMAN_UPDATE = micros();
                     send_ack(rx.packet_id);
+                    egcp_rx_pos = 0; 
+                    memset(egcp_rx_buf, 0, sizeof(egcp_rx_buf)); // Optional: completely clear memory
+                    break;
                 }
 
-                // ---- HRT: heartbeat ----
+                // HRT: Heartbeat
                 else if (rx.packet_type == EGCPPacket::PKT_HRT) {
                     heartbeat_rx_count++;
                     send_ack(rx.packet_id);
                 }
 
-                // ---- VSO: open a valve ----
+                // VSO: Valve Open
                 else if (rx.packet_type == EGCPPacket::PKT_VSO) {
                     if (rx.body_length >= 1) {
                         uint8_t vid = rx.body[0];
                         int     pin = get_pin_from_valve_id(vid);
-                        if (pin > 0) {
+                        if (pin >= 0) {
                             digitalWrite(pin, HIGH);
                             DBG_PRINT("VSO "); DBG_PRINT(get_valve_name(vid));
                             DBG_PRINT(" pin="); DBG_PRINTLN(pin);
-
-                            //if (vid == 0x10) is_PABV1_open = true;   // PA-BV1 tracking
-
                             LAST_HUMAN_UPDATE = micros();
                         } else {
-                            DBG_PRINT("VSO unknown valve id="); DBG_PRINTLN(vid);
+                            DBG_PRINT("VSO pin=-1 (unassigned) valve="); DBG_PRINTLN(get_valve_name(vid));
                         }
                         send_ack(rx.packet_id);
                     }
                 }
 
-                // ---- VSC: close a valve ----
+                // VSC: Valve Close
                 else if (rx.packet_type == EGCPPacket::PKT_VSC) {
                     if (rx.body_length >= 1) {
                         uint8_t vid = rx.body[0];
                         int     pin = get_pin_from_valve_id(vid);
-                        if (pin > 0) {
-                            // PA-BV1 close: if it was open, vent via NCS2 before fully closing
-                            //if (vid == 0x10 && is_PABV1_open) {
-                            //    digitalWrite(NCS2_PIN, HIGH);
-                            //}
-
+                        if (pin >= 0) {
                             digitalWrite(pin, LOW);
                             DBG_PRINT("VSC "); DBG_PRINT(get_valve_name(vid));
                             DBG_PRINT(" pin="); DBG_PRINTLN(pin);
-
-                            //if (vid == 0x10) is_PABV1_open = false;
-
                             LAST_HUMAN_UPDATE = micros();
                         } else {
-                            DBG_PRINT("VSC unknown valve id="); DBG_PRINTLN(vid);
+                            DBG_PRINT("VSC pin=-1 (unassigned) valve="); DBG_PRINTLN(get_valve_name(vid));
                         }
                         send_ack(rx.packet_id);
                     }
                 }
 
-                // ---- SFE: emergency abort from GUI ----
+                // SFE: Abort from GUI
                 else if (rx.packet_type == EGCPPacket::PKT_SFE) {
                     DBG_PRINTLN("SFE from GUI");
+                    DBG_PRINT(rx.packet_id, HEX);
+                    DBG_PRINT(" body_len="); DBG_PRINT(rx.body_length);
+                    DBG_PRINT(" raw bytes: ");
+                    for (int i = 0; i < total_sz; i++) {
+                        DBG_PRINT(egcp_rx_buf[i], HEX); DBG_PRINT(' ');
+                    }
+                    DBG_PRINTLN("");
                     send_ack(rx.packet_id);
                     trigger_shutdown("RX_SFE");
                     break;
@@ -523,50 +601,51 @@ void loop() {
     if ((micros() - LAST_SENSOR_UPDATE) > SENSOR_UPDATE_INTERVAL) {
         LAST_SENSOR_UPDATE = micros();
 
-        // ---- Pressure Transducers (P1–P8, sensor IDs 0x01–0x08) ----
-        const int pt_pins[8] = { PT1_PIN, PT2_PIN, PT3_PIN, PT4_PIN, PT5_PIN, PT6_PIN, PT7_PIN, PT8_PIN };
+        // PT1-PT8 via ADS7953 CH0-CH7
         for (int i = 0; i < 8; i++) {
-            float psi = (pt_pins[i] > 0) ? pressureCalculation(analogRead(pt_pins[i]), i) : 0.0f;
+            uint16_t raw = ads7953_read(i);
+            float psi = PT_SLOPE[i] * raw + PT_INTERCEPT[i];
             send_adc_packet(0x01 + i, psi);
         }
 
-        // ---- Thermocouples (TC1–TC3, sensor IDs 0x09–0x0B) ----
+        // TC1-TC3 via MCP9600 through TCA9548A mux
+        tca_tc_select(TC1_MUX_CH);
         float tc1_temp = tc1_ok ? tc1_sensor.readThermocouple() : 0.0f;
+        tca_tc_select(TC2_MUX_CH);
         float tc2_temp = tc2_ok ? tc2_sensor.readThermocouple() : 0.0f;
+        tca_tc_select(TC3_MUX_CH);
         float tc3_temp = tc3_ok ? tc3_sensor.readThermocouple() : 0.0f;
         send_adc_packet(0x09, tc1_temp);
         send_adc_packet(0x0A, tc2_temp);
         send_adc_packet(0x0B, tc3_temp);
 
-        // ---- Load Cells (LC1–LC3, sensor IDs 0x0C–0x0E) ----
+        // LC1-LC3 via NAU7802 through TCA9548A mux (slower update rate)
         if ((LAST_SENSOR_UPDATE - LAST_LC_UPDATE) > LC_UPDATE_INTERVAL) {
             LAST_LC_UPDATE = LAST_SENSOR_UPDATE;
-
-            if (lc1.is_ready()) lc1_weight = lc1.get_units(1);
-            if (lc2.is_ready()) lc2_weight = lc2.get_units(1);
-            if (lc3.is_ready()) lc3_weight = lc3.get_units(1);
-            if (lc4.is_ready()) lc4_weight = lc4.get_units(1);
-            if (lc5.is_ready()) lc5_weight = lc5.get_units(1);
+            for (uint8_t ch = 0; ch < 3; ch++) {
+                tca_lc_select(ch);
+                if (nau7802_data_ready()) {
+                    int32_t raw = nau7802_read_adc();
+                    lc_weights[ch] = LC_SLOPE[ch] * raw + LC_INTERCEPT[ch];
+                }
+            }
+            // LC4 and LC5 via ADS7953 CH8-CH9 (FX292X analog bridge)
+            uint16_t raw4 = ads7953_read(8);
+            uint16_t raw5 = ads7953_read(9);
+            lc45_weights[0] = LC45_SLOPE * raw4 + LC45_INTERCEPT;
+            lc45_weights[1] = LC45_SLOPE * raw5 + LC45_INTERCEPT;
         }
-        send_adc_packet(0x0C, lc1_weight);
-        send_adc_packet(0x0D, lc2_weight);
-        send_adc_packet(0x0E, lc3_weight);
-        send_adc_packet(0x0F, lc4_weight);
-        send_adc_packet(0x10, lc5_weight);
 
-        /*// ---- Battery Voltage (B1, B2 — sensor IDs 0x0F, 0x10) ----
-        // The E2 board routes battery sense through the jumper-select headers (J24-J56)
-        // to analog inputs. Values below are raw-to-voltage placeholders; update
-        // the scale factor once the resistor divider values are known from the schematic.
-        float b1_volts = (BAT1_PIN > 0) ? (analogRead(BAT1_PIN) * (3.3f / 1023.0f)) : 0.0f;
-        float b2_volts = (BAT2_PIN > 0) ? (analogRead(BAT2_PIN) * (3.3f / 1023.0f)) : 0.0f;
-        send_adc_packet(0x11, b1_volts);
-        send_adc_packet(0x12, b2_volts);*/
+        send_adc_packet(0x0C, lc_weights[0]);
+        send_adc_packet(0x0D, lc_weights[1]);
+        send_adc_packet(0x0E, lc_weights[2]);
+        send_adc_packet(0x0F, lc45_weights[0]);
+        send_adc_packet(0x10, lc45_weights[1]);
 
-        delay(1);   // brief yield to prevent starving UDP receive on heavy TX bursts
+        delay(1);
     }
 
-    // Lost communication shutdown
+    // Lost comms shutdown
     if ((micros() - LAST_COMMUNICATION_TIME) > CONNECTION_TIMEOUT) {
         trigger_shutdown("CONNECTION_TIMEOUT");
     }

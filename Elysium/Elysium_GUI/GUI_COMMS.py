@@ -559,10 +559,7 @@ class EthernetClient:
                                 )
                                 self.heartbeat_miss_recovery_logged = True
                                 self.heartbeat_miss_abort_active = False
-                                
-                                # Abort now that we've received the next packet and measured the gap
-                                self._trigger_comms_auto_abort("heartbeat_timeout_measured")
-                            
+                                                            
                             # Handle different packet types
                             if packet.packet_type == EGCPPacket.PKT_STA:
                                 # Connection START received - ACK it
