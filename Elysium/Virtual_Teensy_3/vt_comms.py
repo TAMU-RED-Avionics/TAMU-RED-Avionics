@@ -22,11 +22,11 @@ class EGCPPacket:
     
     # Sensor ID mapping
     SENSOR_MAP = {
-        "P1": 0x01, "P2": 0x02, "P3": 0x03, "P4": 0x04, "P5": 0x05, "P6": 0x06,
-        "P7": 0x07, "P8": 0x08,
-        "TC1": 0x09, "TC2": 0x0A, "TC3": 0x0B,
-        "LC1": 0x0C, "LC2": 0x0D, "LC3": 0x0E,
-        "B1": 0x0F, "B2": 0x10,
+        "P1": 0x01, "P2": 0x02, "P3": 0x03, "P4": 0x04,
+        "P5": 0x05, "P6": 0x06, "P7": 0x07, "P8": 0x08,
+        "TC1": 0x09,
+        "LC1": 0x0C, "LC2": 0x0D, "LC3": 0x0E, "LC4": 0x0F, "LC5": 0x10,
+        "B1": 0x11, "B2": 0x12,
     }
     
     def __init__(self, packet_id: int, packet_type: int, body: bytes = b''):
@@ -88,20 +88,21 @@ class VTComms(QObject):
             0x03: False,  # NCS3
             0x04: False,  # NCS4
             0x05: False,  # NCS5
-            0x06: False,  # PA-BV3 (previously NCS6)
-            0x10: False,  # PA-BV1
-            0x11: False,  # PA-BV2
+            0x06: False,  # NCS6
+            0x10: False,  # LA-BV1
+            0x11: False,  # LA-BV2
             0x20: False,  # GV-1
             0x21: False,  # GV-2
-            0x30: False,  # IGN-1
-            0x31: False,  # IGN-2
+            0x30: False,  # IG1
+            0x31: False,  # IG2
         }
         self.ack_enabled = {} # component_name -> bool
 
         self.sensor_data = {
-            "P1": 0.0, "P2": 0.0, "P3": 0.0, "P4": 0.0, "P5": 0.0, "P6": 0.0, "P7": 0.0, "P8": 0.0,
-            "TC1": 0.0, "TC2": 0.0, "TC3": 0.0,
-            "LC1": 0.0, "LC2": 0.0, "LC3": 0.0,
+            "P1": 0.0, "P2": 0.0, "P3": 0.0, "P4": 0.0,
+            "P5": 0.0, "P6": 0.0, "P7": 0.0, "P8": 0.0,
+            "TC1": 0.0,
+            "LC1": 0.0, "LC2": 0.0, "LC3": 0.0, "LC4": 0.0, "LC5": 0.0,
             "B1": 0.0, "B2": 0.0,
         }
         self.start_time = time.time()
@@ -214,15 +215,8 @@ class VTComms(QObject):
         while self.running:
             try:
                 current_time = time.time()
-                
-                # Send HRT (heartbeat) every 10ms if enabled
-                if self.heartbeat_enabled and self.last_addr:
-                    pkt = EGCPPacket(self.packet_id_counter, EGCPPacket.PKT_HRT)
-                    self.packet_id_counter = (self.packet_id_counter + 1) & 0xFFFFFF
-                    self.sock.sendto(pkt.encode(), self.last_addr)
-                
-                # Send sensor data every 100ms
-                if current_time - last_sensor_time >= 0.1:
+                # Send sensor data every 10ms (matching E2_Teensy)
+                if current_time - last_sensor_time >= 0.01:
                     self.send_sensors()
                     last_sensor_time = current_time
                 
@@ -250,10 +244,10 @@ class VTComms(QObject):
     def get_valve_name(self, valve_id: int) -> str:
         """Convert valve ID to name"""
         valve_names = {
-            0x01: "NCS1", 0x02: "NCS2", 0x03: "NCS3", 0x04: "NCS4", 0x05: "NCS5", 0x06: "PA-BV3",
-            0x10: "PA-BV1", 0x11: "PA-BV2",
+            0x01: "NCS1", 0x02: "NCS2", 0x03: "NCS3", 0x04: "NCS4", 0x05: "NCS5", 0x06: "NCS6",
+            0x10: "LA-BV1", 0x11: "LA-BV2",
             0x20: "GV-1", 0x21: "GV-2",
-            0x30: "IGN-1", 0x31: "IGN-2",
+            0x30: "IG1", 0x31: "IG2",
         }
         return valve_names.get(valve_id, f"VALVE_{valve_id:02X}")
 
@@ -276,7 +270,7 @@ class VTComms(QObject):
         active_sensors = [(name, val) for name, val in self.sensor_data.items() if val != "NULL" and name in EGCPPacket.SENSOR_MAP]
         
         # Send in groups of 3 (5 bytes per sensor = 15 bytes per packet)
-        for i in range(0, len(active_sensors), 3):
+        for i in range(0, len(active_sensors)):
             body = b''
             for sensor_name, sensor_value in active_sensors[i:i+3]:
                 sensor_id = EGCPPacket.SENSOR_MAP.get(sensor_name, 0x00)
@@ -297,4 +291,3 @@ class VTComms(QObject):
     def update_sensor(self, name, value):
         if name in self.sensor_data:
             self.sensor_data[name] = value
-
