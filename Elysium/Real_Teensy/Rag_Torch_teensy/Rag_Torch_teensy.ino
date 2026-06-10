@@ -6,16 +6,16 @@
 #include <IPAddress.h>
 
 long unsigned LAST_SENSOR_UPDATE           = 0;
-const long unsigned SENSOR_UPDATE_INTERVAL = 10000;    // µs <-- CHANGED TO 10ms (10,000 µs) FOR PERFORMANCE
+const long unsigned SENSOR_UPDATE_INTERVAL = 10000;        // µs 
 
 long unsigned LAST_COMMUNICATION_TIME = 0;
-const long unsigned CONNECTION_TIMEOUT       = 200000;  // µs  <-- USER INPUT
+const long unsigned CONNECTION_TIMEOUT       = 200000;     // µs  <-- USER INPUT
 
 long unsigned LAST_HUMAN_UPDATE       = 0;
-const long unsigned HUMAN_CONNECTION_TIMEOUT = 300000000; // µs  <-- USER INPUT
+const long unsigned HUMAN_CONNECTION_TIMEOUT = 300000000;  // µs  <-- USER INPUT
 
 long unsigned ABORT_TIME_TRACKING     = 0;
-const long unsigned ABORTED_TIME_INTERVAL   = 500000;  // µs between "Aborted" prints
+const long unsigned ABORTED_TIME_INTERVAL   = 500000;      // µs between "Aborted" prints
 
 const int BAUD = 115200;
 
@@ -27,18 +27,6 @@ const int NCS5_PIN = 11;   // <-- USER INPUT
 
 const int EABV_PIN =  9;   // <-- USER INPUT
 const int PABV_PIN = 10;   // <-- USER INPUT
-const int SPARK_PIN = 5;   // <-- USER INPUT
-
-// Ignition coil timing
-const unsigned int DWELL_TIME     = 3000;  // µs — coil charge time (keep < ~5000 to avoid overheating)
-const unsigned int SPARK_TIME     = 2000;  // µs — off time after coil collapse / spark
-const unsigned int BETWEEN_SPARKS = 50;    // ms — delay between full spark events
-
-// Spark state machine
-enum SparkPhase { SPARK_IDLE, SPARK_DWELL, SPARK_DISCHARGE, SPARK_WAIT };
-SparkPhase spark_phase     = SPARK_IDLE;
-unsigned long spark_phase_start = 0;
-bool is_sparking            = false;
 
 unsigned int PORT = 8888;
 EthernetUDP udp;
@@ -78,7 +66,6 @@ int get_pin(String id) {
   else if (id == "NCS5")  return NCS5_PIN;
   else if (id == "EABV")  return EABV_PIN;
   else if (id == "PABV")  return PABV_PIN;
-  else if (id == "SPARK") return SPARK_PIN;
   return -1;
 }
 
@@ -110,24 +97,21 @@ void setup() {
     if (pin >= 0) digitalWrite(pin, val);
   };
 
-  safe_pinMode(NCS1_PIN,  OUTPUT);
-  safe_pinMode(NCS2_PIN,  OUTPUT);
-  safe_pinMode(NCS3_PIN,  OUTPUT);
-  safe_pinMode(NCS4_PIN,  OUTPUT);
-  safe_pinMode(NCS5_PIN,  OUTPUT);
-  safe_pinMode(EABV_PIN,  OUTPUT);
-  safe_pinMode(PABV_PIN,  OUTPUT);
-  safe_pinMode(SPARK_PIN, OUTPUT);
+  safe_pinMode(NCS1_PIN, OUTPUT);
+  safe_pinMode(NCS2_PIN, OUTPUT);
+  safe_pinMode(NCS3_PIN, OUTPUT);
+  safe_pinMode(NCS4_PIN, OUTPUT);
+  safe_pinMode(NCS5_PIN, OUTPUT);
+  safe_pinMode(EABV_PIN, OUTPUT);
+  safe_pinMode(PABV_PIN, OUTPUT);
 
-  // Default all valves closed, spark driver idle (LOW = IGBT off = coil resting)
-  safe_digitalWrite(NCS1_PIN,  LOW);
-  safe_digitalWrite(NCS2_PIN,  LOW);
-  safe_digitalWrite(NCS3_PIN,  LOW);
-  safe_digitalWrite(NCS4_PIN,  LOW);
-  safe_digitalWrite(NCS5_PIN,  LOW);
-  safe_digitalWrite(EABV_PIN,  LOW);
-  safe_digitalWrite(PABV_PIN,  LOW);
-  safe_digitalWrite(SPARK_PIN, LOW);
+  safe_digitalWrite(NCS1_PIN, LOW);
+  safe_digitalWrite(NCS2_PIN, LOW);
+  safe_digitalWrite(NCS3_PIN, LOW);
+  safe_digitalWrite(NCS4_PIN, LOW);
+  safe_digitalWrite(NCS5_PIN, LOW);
+  safe_digitalWrite(EABV_PIN, LOW);
+  safe_digitalWrite(PABV_PIN, LOW);
 
   output_string(PORT, "RT: pins initialised\n");
 }
@@ -140,10 +124,6 @@ void emergency_close_all() {
   if (NCS5_PIN >= 0) digitalWrite(NCS5_PIN, LOW);
   if (EABV_PIN >= 0) digitalWrite(EABV_PIN, LOW);
   if (PABV_PIN >= 0) digitalWrite(PABV_PIN, LOW);
-
-  is_sparking  = false;
-  spark_phase  = SPARK_IDLE;
-  if (SPARK_PIN >= 0) digitalWrite(SPARK_PIN, LOW);
 }
 
 void loop() {
@@ -151,18 +131,18 @@ void loop() {
   if (packetSize > 0) {
     char incomingBuffer[128];
     int len = udp.read(incomingBuffer, sizeof(incomingBuffer) - 1);
-    
+
     if (len > 0) {
       incomingBuffer[len] = '\0';
       String input = String(incomingBuffer);
-      
+
       input.replace("\r", "");
       input.replace("\n", "");
-      
+
       LAST_COMMUNICATION_TIME = micros();
 
       if (input == "nop") {
-        // Just a heartbeat update, bounce out
+        // heartbeat, do nothing
       } else {
         LAST_HUMAN_UPDATE = micros();
 
@@ -174,65 +154,14 @@ void loop() {
 
             int pin = get_pin(IDENTIFIER);
             if (pin != -1) {
-              if (IDENTIFIER == "SPARK") {
-                switch (CONTROL_STATE) {
-                  case 1:
-                    is_sparking = true;
-                    spark_phase = SPARK_IDLE;
-                    break;
-                  case 0:
-                    is_sparking = false;
-                    spark_phase = SPARK_IDLE;
-                    if (SPARK_PIN >= 0) digitalWrite(SPARK_PIN, LOW);
-                    break;
-                }
-              } else {
-                switch (CONTROL_STATE) {
-                  case 0:
-                    if (pin >= 0) digitalWrite(pin, LOW);
-                    break;
-                  case 1:
-                    if (pin >= 0) digitalWrite(pin, HIGH);
-                    break;
-                }
+              switch (CONTROL_STATE) {
+                case 0: if (pin >= 0) digitalWrite(pin, LOW);  break;
+                case 1: if (pin >= 0) digitalWrite(pin, HIGH); break;
               }
             }
           }
         }
       }
-    }
-  }
-
-  if (is_sparking && SPARK_PIN >= 0) {
-    unsigned long now = micros();
-
-    switch (spark_phase) {
-      case SPARK_IDLE:
-        digitalWrite(SPARK_PIN, HIGH);
-        spark_phase_start = now;
-        spark_phase = SPARK_DWELL;
-        break;
-
-      case SPARK_DWELL:
-        if ((now - spark_phase_start) >= DWELL_TIME) {
-          digitalWrite(SPARK_PIN, LOW);
-          spark_phase_start = now;
-          spark_phase = SPARK_DISCHARGE;
-        }
-        break;
-
-      case SPARK_DISCHARGE:
-        if ((now - spark_phase_start) >= SPARK_TIME) {
-          spark_phase_start = now;
-          spark_phase = SPARK_WAIT;
-        }
-        break;
-
-      case SPARK_WAIT:
-        if ((now - spark_phase_start) >= (BETWEEN_SPARKS * 1000UL)) {
-          spark_phase = SPARK_IDLE;
-        }
-        break;
     }
   }
 
@@ -264,7 +193,7 @@ void loop() {
     udp.endPacket();
   }
 
-  // --- HEARTBEAT MONITOR & LOCKOUT ---
+  // heartbeat monitor
   bool comms_lost = (micros() - LAST_COMMUNICATION_TIME) > CONNECTION_TIMEOUT;
   bool human_lost = (micros() - LAST_HUMAN_UPDATE)       > HUMAN_CONNECTION_TIMEOUT;
 
@@ -285,7 +214,7 @@ void loop() {
         if (len > 0) {
           abortBuffer[len] = '\0';
           String input = String(abortBuffer);
-          
+
           input.replace("\r", "");
           input.replace("\n", "");
 
