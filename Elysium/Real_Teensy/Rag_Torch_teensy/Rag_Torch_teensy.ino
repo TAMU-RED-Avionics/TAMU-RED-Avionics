@@ -25,7 +25,6 @@ const int NCS3_PIN = -1;   // <-- USER INPUT
 const int NCS4_PIN = -1;   // <-- USER INPUT
 const int NCS5_PIN = 11;   // <-- USER INPUT
 
-const int EABV_PIN =  9;   // <-- USER INPUT
 const int PABV_PIN = 10;   // <-- USER INPUT
 
 unsigned int PORT = 8888;
@@ -64,7 +63,6 @@ int get_pin(String id) {
   else if (id == "NCS3")  return NCS3_PIN;
   else if (id == "NCS4")  return NCS4_PIN;
   else if (id == "NCS5")  return NCS5_PIN;
-  else if (id == "EABV")  return EABV_PIN;
   else if (id == "PABV")  return PABV_PIN;
   return -1;
 }
@@ -102,7 +100,6 @@ void setup() {
   safe_pinMode(NCS3_PIN, OUTPUT);
   safe_pinMode(NCS4_PIN, OUTPUT);
   safe_pinMode(NCS5_PIN, OUTPUT);
-  safe_pinMode(EABV_PIN, OUTPUT);
   safe_pinMode(PABV_PIN, OUTPUT);
 
   safe_digitalWrite(NCS1_PIN, LOW);
@@ -110,7 +107,6 @@ void setup() {
   safe_digitalWrite(NCS3_PIN, LOW);
   safe_digitalWrite(NCS4_PIN, LOW);
   safe_digitalWrite(NCS5_PIN, LOW);
-  safe_digitalWrite(EABV_PIN, LOW);
   safe_digitalWrite(PABV_PIN, LOW);
 
   output_string(PORT, "RT: pins initialised\n");
@@ -122,7 +118,6 @@ void emergency_close_all() {
   if (NCS3_PIN >= 0) digitalWrite(NCS3_PIN, LOW);
   if (NCS4_PIN >= 0) digitalWrite(NCS4_PIN, LOW);
   if (NCS5_PIN >= 0) digitalWrite(NCS5_PIN, LOW);
-  if (EABV_PIN >= 0) digitalWrite(EABV_PIN, LOW);
   if (PABV_PIN >= 0) digitalWrite(PABV_PIN, LOW);
 }
 

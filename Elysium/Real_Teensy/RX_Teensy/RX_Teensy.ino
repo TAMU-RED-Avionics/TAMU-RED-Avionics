@@ -1,10 +1,9 @@
 // THIS CODE IS ONLY TO BE USED SPECIFICALLY FOR RAG TORCH TESTING.
-// UNCOMMENT (AND FIX AS NEEDED) THE SERVO STUFF WHEN YOU ACTUALLY WIRE IT UP
 
 #include <NativeEthernet.h>
 #include <NativeEthernetUdp.h>
 #include <IPAddress.h>
-// #include <PWMServo.h>  // uncomment when servo is wired up
+#include <PWMServo.h> 
 
 unsigned int PORT = 8888;
 char packetBuffer[512];
@@ -26,11 +25,11 @@ SparkPhase spark_phase           = SPARK_IDLE;
 unsigned long spark_phase_start  = 0;
 bool is_sparking                 = false;
 
-// ---- Servo (ox ball valve) config ----
-// const int   SERVO_PIN        = 6;    // <-- USER INPUT: whichever PWM-capable pin you wire to
-// const int   SERVO_OPEN_DEG   = 90;   // <-- USER INPUT: tune to your valve's open position
-// const int   SERVO_CLOSE_DEG  = 0;    // <-- USER INPUT: tune to your valve's closed position
-// PWMServo    oxValveServo;
+
+const int   EABV_PIN        = 6;    // <-- USER INPUT: whichever pin you desire
+const int   EABV_OPEN_DEG   = 90;   // <-- USER INPUT: tune to valve's open position
+const int   EABV_CLOSE_DEG  = 0;    // <-- USER INPUT: tune to valve's closed position
+PWMServo    eabvServo;
 
 void run_spark_state_machine() {
   if (!is_sparking) return;
@@ -73,8 +72,8 @@ void setup() {
   pinMode(SPARK_PIN, OUTPUT);
   digitalWrite(SPARK_PIN, LOW);
 
-  // oxValveServo.attach(SERVO_PIN);
-  // oxValveServo.write(SERVO_CLOSE_DEG);  // default closed on boot
+  eabvServo.attach(EABV_PIN);
+  eabvServo.write(EABV_CLOSE_DEG);  // default closed on boot
 
   if (Ethernet.hardwareStatus() == EthernetNoHardware) {
     Serial.println("ERR: Ethernet board disconnected");
@@ -105,13 +104,13 @@ void loop() {
       spark_phase = SPARK_IDLE;
       digitalWrite(SPARK_PIN, LOW);
 
-    // } else if (cmd == "SERV:1") {
-    //   oxValveServo.write(SERVO_OPEN_DEG);
-    //   // do NOT forward to main Teensy — servo is local
+    } else if (cmd == "EABV:1") {
+      eabvServo.write(EABV_OPEN_DEG);
+      // do NOT forward to main Teensy
 
-    // } else if (cmd == "SERV:0") {
-    //   oxValveServo.write(SERVO_CLOSE_DEG);
-    //   // do NOT forward to main Teensy — servo is local
+    } else if (cmd == "EABV:0") {
+      eabvServo.write(EABV_CLOSE_DEG);
+      // do NOT forward to main Teensy
 
     } else {
       udp.beginPacket(REMOTE, PORT);
