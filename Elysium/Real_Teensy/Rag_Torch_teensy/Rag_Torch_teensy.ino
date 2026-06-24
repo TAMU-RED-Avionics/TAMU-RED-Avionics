@@ -170,22 +170,24 @@ void loop() {
     pt5_analog = analogRead(PT5_PIN);
     pt6_analog = analogRead(PT6_PIN);
 
-    float p1 = pressureCalculation(pt1_analog, 1);
-    float p2 = pressureCalculation(pt2_analog, 2);
-    float p3 = pressureCalculation(pt3_analog, 3);
-    float p4 = pressureCalculation(pt4_analog, 4);
-    float p5 = pressureCalculation(pt5_analog, 5);
-    float p6 = pressureCalculation(pt6_analog, 6);
-    float t_loc = (HUMAN_CONNECTION_TIMEOUT - (LAST_SENSOR_UPDATE - LAST_HUMAN_UPDATE)) / 1000000.0;
-
-    char tx_buffer[256];
-    snprintf(tx_buffer, sizeof(tx_buffer),
-             "t:%lu,P1:%.5f,P2:%.5f,P3:%.5f,P4:%.5f,P5:%.5f,P6:%.5f,t_loc:%.5f\n",
-             LAST_SENSOR_UPDATE, p1, p2, p3, p4, p5, p6, t_loc);
-
-    udp.beginPacket(REMOTE, PORT);
-    udp.write(tx_buffer);
-    udp.endPacket();
+    output_string(PORT, "t:");
+    output_float(PORT, LAST_SENSOR_UPDATE);
+    output_string(PORT, ",P1:");
+    output_float(PORT, pressureCalculation(pt1_analog, 1));
+    output_string(PORT, ",P2:");
+    output_float(PORT, pressureCalculation(pt2_analog, 2));
+    output_string(PORT, ",P3:");
+    output_float(PORT, pressureCalculation(pt3_analog, 3));
+    output_string(PORT, ",P4:");
+    output_float(PORT, pressureCalculation(pt4_analog, 4));
+    output_string(PORT, ",P5:");
+    output_float(PORT, pressureCalculation(pt5_analog, 5));
+    output_string(PORT, ",P6:");
+    output_float(PORT, pressureCalculation(pt6_analog, 6));
+    output_string(PORT, ",t_loc:");
+    float t_loc = (HUMAN_CONNECTION_TIMEOUT - (LAST_SENSOR_UPDATE -LAST_HUMAN_UPDATE)) / 1000000.0;
+    output_float(PORT, t_loc);
+    output_string(PORT, "\n");
   }
 
   // heartbeat monitor

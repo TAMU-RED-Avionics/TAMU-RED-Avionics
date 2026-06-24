@@ -6,7 +6,7 @@
 #include <PWMServo.h> 
 
 unsigned int PORT = 8888;
-char packetBuffer[512];
+char packetBuffer[UDP_TX_PACKET_MAX_SIZE];
 
 EthernetUDP udp;
 byte MAC_ADDRESS[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xD5};
@@ -27,8 +27,8 @@ bool is_sparking                 = false;
 
 
 const int   EABV_PIN        = 6;    // <-- USER INPUT: whichever pin you desire
-const int   EABV_OPEN_DEG   = 90;   // <-- USER INPUT: tune to valve's open position
-const int   EABV_CLOSE_DEG  = 0;    // <-- USER INPUT: tune to valve's closed position
+const int   EABV_OPEN_DEG   = 0;   // <-- USER INPUT: tune to valve's open position
+const int   EABV_CLOSE_DEG  = 90;    // <-- USER INPUT: tune to valve's closed position
 PWMServo    eabvServo;
 
 void run_spark_state_machine() {
