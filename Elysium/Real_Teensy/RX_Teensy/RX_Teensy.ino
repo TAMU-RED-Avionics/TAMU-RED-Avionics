@@ -83,6 +83,7 @@ void setup() {
     Serial.println("ERR: Ethernet cable disconnected");
   }
   udp.begin(PORT);
+  Serial.println("RX Teensy Booted");
 }
 
 void loop() {
