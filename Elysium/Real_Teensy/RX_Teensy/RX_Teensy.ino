@@ -6,7 +6,8 @@
 #include <PWMServo.h> 
 
 unsigned int PORT = 8888;
-char packetBuffer[UDP_TX_PACKET_MAX_SIZE];
+const int MAX_PACKET_SIZE = 512;
+char packetBuffer[MAX_PACKET_SIZE];
 
 EthernetUDP udp;
 byte MAC_ADDRESS[] = {0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xD5};
@@ -125,8 +126,9 @@ void loop() {
   while (true) {
     int packetSize = udp.parsePacket();
     if (packetSize) {
-      udp.read(packetBuffer, UDP_TX_PACKET_MAX_SIZE);
-      packetBuffer[packetSize] = '\0';
+      int readSize = packetSize < MAX_PACKET_SIZE - 1 ? packetSize : MAX_PACKET_SIZE - 1;
+      udp.read(packetBuffer, readSize);
+      packetBuffer[readSize] = '\0';
       Serial.print(packetBuffer);
     } else {
       break;

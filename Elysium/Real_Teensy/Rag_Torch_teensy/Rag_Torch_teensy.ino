@@ -62,7 +62,7 @@ int get_pin(String id) {
   else if (id == "NCS3")  return NCS3_PIN;
   else if (id == "NCS4")  return NCS4_PIN;
   else if (id == "NCS5")  return NCS5_PIN;
-  else if (id == "NCS6")  return NCS6_PIN
+  else if (id == "NCS6")  return NCS6_PIN;
   return -1;
 }
 
@@ -169,24 +169,23 @@ void loop() {
     pt5_analog = analogRead(PT5_PIN);
     pt6_analog = analogRead(PT6_PIN);
 
-    output_string(PORT, "t:");
-    output_float(PORT, LAST_SENSOR_UPDATE);
-    output_string(PORT, ",P1:");
-    output_float(PORT, pressureCalculation(pt1_analog, 1));
-    output_string(PORT, ",P2:");
-    output_float(PORT, pressureCalculation(pt2_analog, 2));
-    output_string(PORT, ",P3:");
-    output_float(PORT, pressureCalculation(pt3_analog, 3));
-    output_string(PORT, ",P4:");
-    output_float(PORT, pressureCalculation(pt4_analog, 4));
-    output_string(PORT, ",P5:");
-    output_float(PORT, pressureCalculation(pt5_analog, 5));
-    output_string(PORT, ",P6:");
-    output_float(PORT, pressureCalculation(pt6_analog, 6));
-    output_string(PORT, ",t_loc:");
-    float t_loc = (HUMAN_CONNECTION_TIMEOUT - (LAST_SENSOR_UPDATE -LAST_HUMAN_UPDATE)) / 1000000.0;
-    output_float(PORT, t_loc);
-    output_string(PORT, "\n");
+    float p1 = pressureCalculation(pt1_analog, 1);
+    float p2 = pressureCalculation(pt2_analog, 2);
+    float p3 = pressureCalculation(pt3_analog, 3);
+    float p4 = pressureCalculation(pt4_analog, 4);
+    float p5 = pressureCalculation(pt5_analog, 5);
+    float p6 = pressureCalculation(pt6_analog, 6);
+    float t_loc = (HUMAN_CONNECTION_TIMEOUT - (LAST_SENSOR_UPDATE - LAST_HUMAN_UPDATE)) / 1000000.0;
+
+    String payload = "t:" + String(LAST_SENSOR_UPDATE) + 
+                     ",P1:" + String(p1, 2) +
+                     ",P2:" + String(p2, 2) +
+                     ",P3:" + String(p3, 2) +
+                     ",P4:" + String(p4, 2) +
+                     ",P5:" + String(p5, 2) +
+                     ",P6:" + String(p6, 2) +
+                     ",t_loc:" + String(t_loc, 2) + "\n";
+    output_string(PORT, payload.c_str());
   }
 
   // heartbeat monitor
