@@ -31,12 +31,12 @@ const int SEQUENCE_DELAY = 10000 - (PURGE_DURATION + PURGE_DELAY + IGNITION_DELA
 
 // ============================================================
 // RAGNAROK TORCH IGNITER TEST — delete this block when done
-// Delay from T+0s to T+0.25s: EABV opens, spark fires; ethanol has not yet flowed
-const int RT_ETHANOL_DELAY  = 250;   // ms  (T+0 → T+0.25s: ethanol begins)
-// Delay from T+0.25s to T+1s: EABV closes, ethanol purges the torch
-const int RT_PURGE_START    = 750;   // ms  (T+0.25 → T+1s: EABV closes)
-// Duration of the ethanol purge: T+1s → T+2s
-const int RT_PURGE_DURATION = 500;  // ms  (T+1s → T+1.5s: PABV closes)
+// Delay from T+0s to T+0.5s: EABV opens, spark fires; ethanol has not yet flowed
+const int RT_ETHANOL_DELAY  = 500;   // ms  (T+0 → T+0.5s: NCS5 begins)
+// Delay from T+0.5s to T+1.5s: EABV closes, ethanol purges the torch
+const int RT_PURGE_START    = 1000;   // ms  (T+0.5s → T+1.5s: EABV closes)
+// Duration of the ethanol purge: T+1.5s → T+2.0s
+const int RT_PURGE_DURATION = 500;   // ms  (T+1.5s → T+2.0s: NCS5 closes)
 // ============================================================
 
 // Constructor
