@@ -31,6 +31,7 @@ const int SEQUENCE_DELAY = 10000 - (PURGE_DURATION + PURGE_DELAY + IGNITION_DELA
 
 // ============================================================
 // RAGNAROK TORCH IGNITER TEST — delete this block when done
+const int RT_TERMINAL_COUNT = 3000;  // ms
 // Delay from T+0s to T+0.5s: EABV opens, spark fires; ethanol has not yet flowed
 const int RT_ETHANOL_DELAY  = 500;   // ms  (T+0 → T+0.5s: NCS5 begins)
 // Delay from T+0.5s to T+1.5s: EABV closes, ethanol purges the torch
@@ -359,7 +360,22 @@ void State_Machine::ragnarok_torch_igniter(bool new_state, bool abort) {
     if ("RT Safe" == this->cur_state) {
         // Initial safe state — operator may begin the sequence
         if (this->people_safe_dist) {
-            new_allowed_states << "RT Ignition Start";
+            new_allowed_states << "RT Terminal Count";
+        }
+
+    } else if ("RT Terminal Count" == this->cur_state) {
+        // Terminal count - waiting to start ignition
+        // Abort always available
+        new_allowed_states << "RT Shutdown";
+
+        if (new_state) {
+            QTimer* term_timer = new QTimer(this);
+            term_timer->setTimerType(Qt::PreciseTimer);
+            term_timer->setSingleShot(true);
+            QObject::connect(term_timer, &QTimer::timeout,
+                             this, [this]() { emit this->new_state("RT Ignition Start"); });
+            QObject::connect(this, SIGNAL(new_state(QString)), term_timer, SLOT(stop()));
+            term_timer->start(RT_TERMINAL_COUNT);
         }
 
     } else if ("RT Ignition Start" == this->cur_state) {
