@@ -17,6 +17,7 @@ class Signals(QObject):
     safe_state = pyqtSignal()
     connected = pyqtSignal()
     disconnected = pyqtSignal(str)
+    warnings_changed = pyqtSignal(list)
     
     valve_updated = pyqtSignal(str, str)     # can be open, closed, or pending a response from the MCU
     sensor_updated = pyqtSignal(str, float, float)      # sensor_name, val, timestamp
@@ -112,6 +113,7 @@ class GUIController:
         self._rule_valve_open: dict = {}       # rule_id -> bool, tracks auto-opened valves
         self._sensor_rules: list = []          # compiled from component thresholds
         self._logic_rules: list = []           # AbortRule expression type
+        self._active_warnings: dict[str, str] = {}
 
         # Valve Command Reliability
         self.pending_valve_commands = {} # valve_name -> {"state": bool, "last_sent": timestamp, "retries": int}
@@ -176,6 +178,7 @@ class GUIController:
         self._rebuild_valve_states(project)
         self.reload_abort_rules(project)
         self.ethernet_client.load_project_maps(project)
+        self._emit_warnings()
 
     def _rebuild_valve_states(self, project):
         """Rebuild valve_states from project valve components (hw_id -> bool).
@@ -247,6 +250,7 @@ class GUIController:
         self._logic_rules  = []
         self._rule_violation_start.clear()
         self._rule_valve_open.clear()
+        self._active_warnings.clear()
 
         if project is None:
             return
@@ -294,6 +298,23 @@ class GUIController:
             if rule.condition_type == "expression" and rule.enabled and rule.expression.strip():
                 self._logic_rules.append(rule)
 
+        self._emit_warnings()
+
+    def _emit_warnings(self):
+        messages = sorted(self._active_warnings.values())
+        self.signals.warnings_changed.emit(messages)
+
+    def _set_warning(self, warning_id: str, message: str):
+        if self._active_warnings.get(warning_id) == message:
+            return
+        self._active_warnings[warning_id] = message
+        self._emit_warnings()
+
+    def _clear_warning(self, warning_id: str):
+        if warning_id in self._active_warnings:
+            del self._active_warnings[warning_id]
+            self._emit_warnings()
+
     def get_sensor_status(self, hw_name: str, value: float) -> str:
         mawp_val   = None
         meop_val   = None
@@ -318,10 +339,10 @@ class GUIController:
 
 
     def check_abort_conditions(self):
-        if self.lockout:
-            return
         if not self.current_sensor_values:
             return
+
+        locked_out = self.lockout
 
         current_time = QDateTime.currentMSecsSinceEpoch()
 
@@ -338,6 +359,7 @@ class GUIController:
             if not violated:
                 # Clear soak timer
                 self._rule_violation_start.pop(sr["id"], None)
+                self._clear_warning(sr["id"])
                 # Close auto-opened valve if below hysteresis close threshold
                 if sr["action"] == "open_valve" and self._rule_valve_open.get(sr["id"]):
                     close_below = sr["close_below"]
@@ -356,29 +378,34 @@ class GUIController:
                 elif current_time - self._rule_violation_start[sr["id"]] < soak:
                     continue
 
-            self._fire_sensor_rule(sr, hw_id, value)
+            self._fire_sensor_rule(sr, hw_id, value, locked_out)
 
         for rule in self._logic_rules:
-            self._check_logic_rule(rule, current_time)
+            self._check_logic_rule(rule, current_time, locked_out)
 
-    def _fire_sensor_rule(self, sr: dict, hw_id: str, value: float):
+    def _fire_sensor_rule(self, sr: dict, hw_id: str, value: float, locked_out: bool = False):
         action  = sr["action"]
         band    = sr["band"]
         rule_id = sr["id"]
+        message = f"{hw_id} {band.upper()} threshold exceeded: {value:.2f}"
 
         if action == "abort":
+            if locked_out:
+                return
             self.signals.abort_triggered.emit(
                 rule_id,
-                f"{hw_id} {band.upper()} threshold exceeded: {value:.2f}"
+                message
             )
 
         elif action == "warn":
-            # Log and emit a system_status warning; does NOT trigger abort
-            msg = f"{hw_id} {band.upper()} threshold exceeded: {value:.2f}"
-            self.log_event("WARN", msg)
-            self.signals.system_status.emit(f"WARNING: {msg}")
+            # Keep a persistent UI warning without escalating to abort.
+            self._set_warning(rule_id, message)
+            self.log_event("WARN", message)
+            self.signals.system_status.emit(f"WARNING: {message}")
 
         elif action == "open_valve":
+            if locked_out:
+                return
             target = sr["target_valve"]
             if target and not self._rule_valve_open.get(rule_id):
                 if target in self.valve_states:
@@ -387,7 +414,7 @@ class GUIController:
                 self.log_event("AUTO_VALVE_OPEN",
                                f"Rule {rule_id}: opened {target} ({hw_id}={value:.2f})")
 
-    def _check_logic_rule(self, rule, current_time: int):
+    def _check_logic_rule(self, rule, current_time: int, locked_out: bool = False):
         try:
             result = bool(eval(rule.expression, {"__builtins__": {}},
                                self.current_sensor_values))
@@ -397,6 +424,7 @@ class GUIController:
         rule_id = rule.id
         if not result:
             self._rule_violation_start.pop(rule_id, None)
+            self._clear_warning(rule_id)
             # Close valve if hysteresis met
             if rule.action == "open_valve" and self._rule_valve_open.get(rule_id):
                 if rule.close_valve_below is not None:
@@ -416,11 +444,15 @@ class GUIController:
                 return
 
         if rule.action == "abort":
+            if locked_out:
+                return
             self.signals.abort_triggered.emit(
                 rule_id,
                 rule.description or rule.expression
             )
         elif rule.action == "open_valve":
+            if locked_out:
+                return
             if not self._rule_valve_open.get(rule_id):
                 if rule.target_valve and rule.target_valve in self.valve_states:
                     self.toggle_valve(rule.target_valve, True)
@@ -428,7 +460,9 @@ class GUIController:
                 self.log_event("AUTO_VALVE_OPEN",
                                f"Rule {rule_id}: opened {rule.target_valve}")
         elif rule.action == "warn":
-            self.log_event("WARN", f"Rule {rule_id}: {rule.description or rule.expression}")
+            msg = rule.description or rule.expression
+            self._set_warning(rule_id, msg)
+            self.log_event("WARN", f"Rule {rule_id}: {msg}")
 
     def trigger_manual_abort(self):
         """Manual abort button handler (Req 11)"""

@@ -300,17 +300,25 @@ class AbortRule:
 
 @dataclass
 class SequenceStep:
-    time:    float               # seconds from T-0
+    time_offset: float           # seconds from T-0
     actions: dict                # {component_id: "open"|"close"|"throttle:XX"}
     label:   str = ""
 
+    @property
+    def time(self):
+        return self.time_offset
+
+    @time.setter
+    def time(self, value):
+        self.time_offset = value
+
     def to_dict(self):
-        return {"time": self.time, "actions": self.actions, "label": self.label}
+        return {"time_offset": self.time_offset, "actions": self.actions, "label": self.label}
 
     @staticmethod
     def from_dict(d: dict) -> "SequenceStep":
         return SequenceStep(
-            time    = float(d["time_offset"]),
+            time_offset = float(d.get("time_offset", d.get("time", 0.0))),
             actions = d.get("actions", {}),
             label   = d.get("label", ""),
         )
@@ -351,6 +359,13 @@ class PIDProject:
         self.connections.append(Connection(from_id, to_id, fluid))
 
     def add_line(self, line: PipeLine):
+        existing_ids = {l.id for l in self.lines}
+        if not line.id or line.id in existing_ids:
+            base = "line"
+            next_idx = 0
+            while f"{base}_{next_idx}" in existing_ids:
+                next_idx += 1
+            line.id = f"{base}_{next_idx}"
         self.lines.append(line)
 
     def remove_line(self, line_id: str):
@@ -361,7 +376,7 @@ class PIDProject:
 
     def add_sequence_step(self, step: SequenceStep):
         self.sequence.append(step)
-        self.sequence.sort(key=lambda s: s.time)
+        self.sequence.sort(key=lambda s: getattr(s, "time_offset", getattr(s, "time", 0.0)))
 
     def valve_ids(self) -> list:
         return [cid for cid, c in self.components.items()
@@ -411,6 +426,17 @@ class PIDProject:
  
         for ld in d.get("lines", []):
             proj.lines.append(PipeLine.from_dict(ld))
+
+        seen_ids = set()
+        for line in proj.lines:
+            if line.id not in seen_ids:
+                seen_ids.add(line.id)
+                continue
+            next_idx = 0
+            while f"line_{next_idx}" in seen_ids:
+                next_idx += 1
+            line.id = f"line_{next_idx}"
+            seen_ids.add(line.id)
  
         proj.parameters = SystemParameters.from_dict(d.get("parameters", {}))
  

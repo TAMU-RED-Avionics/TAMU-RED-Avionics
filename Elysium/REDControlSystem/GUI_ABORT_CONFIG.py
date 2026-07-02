@@ -490,8 +490,20 @@ class AbortConfigPage(QWidget):
 
         inner = QWidget()
         self._main_layout = QVBoxLayout(inner)
-        self._main_layout.setContentsMargins(16, 12, 16, 16)
-        self._main_layout.setSpacing(16)
+        self._main_layout.setContentsMargins(10, 8, 10, 10)
+        self._main_layout.setSpacing(10)
+
+        header = QLabel("Abort Configuration")
+        header.setObjectName("panel_section_title")
+        self._main_layout.addWidget(header)
+
+        intro = QLabel(
+            "Tune sensor thresholds and expression rules used by the abort logic. "
+            "Changes are saved back into the active project."
+        )
+        intro.setWordWrap(True)
+        intro.setObjectName("sensor_unit_label")
+        self._main_layout.addWidget(intro)
 
         self._sensor_section = _SensorThresholdsSection()
         self._main_layout.addWidget(self._sensor_section)
@@ -506,7 +518,11 @@ class AbortConfigPage(QWidget):
         save_row = QHBoxLayout()
         save_row.addStretch()
         self._save_btn = QPushButton("Save All Abort Configuration to Project")
-        self._save_btn.setMinimumWidth(300)
+        self._save_btn.setFixedHeight(32)
+        self._save_btn.setFixedWidth(260)
+        self._save_btn.setStyleSheet(
+            "background-color: #b33a3a; color: white; font-weight: bold; border-radius: 6px;"
+        )
         self._save_btn.clicked.connect(self._save_all)
         save_row.addWidget(self._save_btn)
         self._main_layout.addLayout(save_row)

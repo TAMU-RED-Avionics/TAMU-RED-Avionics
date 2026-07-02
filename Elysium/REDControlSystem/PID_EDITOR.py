@@ -5,6 +5,7 @@ from PyQt5.QtWidgets import (
     QLineEdit, QComboBox, QDoubleSpinBox, QCheckBox,
     QSplitter, QMessageBox, QFrame, QSizePolicy, QTextEdit,
     QTableWidget, QTableWidgetItem, QHeaderView, QSpinBox,
+    QToolButton, QScrollArea,
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 from PyQt5.QtGui import QFont, QColor, QFontMetrics
@@ -21,27 +22,80 @@ from PID_SCHEMA import (
 
 from PID_CANVAS import PIDCanvas, snap
 
-PALETTE_ITEMS = [
-    ("Valve",            COMP_VALVE),
-    ("Ball Valve",       COMP_BALL_VALVE),
-    ("Solenoid",         COMP_SOLENOID),
-    ("Globe Valve",      COMP_GLOBE_VALVE),
-    ("Check Valve",      COMP_CHECK_VALVE),
-    None,
-    ("PSV",              COMP_PSV),
-    ("PRV",              COMP_PRV),
-    ("Regulator",        COMP_REGULATOR),
-    None,
-    ("PT",               COMP_PRESSURE),
-    ("Thermocouple",     COMP_TEMPERATURE),
-    ("Load Cell",        COMP_LOAD_CELL),
-    None,
-    ("Reducer",          COMP_REDUCER),
-    ("Tank",             COMP_TANK),
-    ("Injector",         COMP_INJECTOR),
-    ("Junction",         COMP_JUNCTION),
-    ("Label",            COMP_LABEL),
+PALETTE_GROUPS = [
+    ("Valves", [
+        ("Valve",            COMP_VALVE),
+        ("Ball Valve",       COMP_BALL_VALVE),
+        ("Solenoid",         COMP_SOLENOID),
+        ("Globe Valve",      COMP_GLOBE_VALVE),
+        ("Check Valve",      COMP_CHECK_VALVE),
+    ]),
+    ("Pressure Control", [
+        ("PSV",              COMP_PSV),
+        ("PRV",              COMP_PRV),
+        ("Regulator",        COMP_REGULATOR),
+    ]),
+    ("Sensors", [
+        ("PT",               COMP_PRESSURE),
+        ("Thermocouple",     COMP_TEMPERATURE),
+        ("Load Cell",        COMP_LOAD_CELL),
+    ]),
+    ("Plumbing / Misc", [
+        ("Reducer",          COMP_REDUCER),
+        ("Tank",             COMP_TANK),
+        ("Injector",         COMP_INJECTOR),
+        ("Junction",         COMP_JUNCTION),
+        ("Label",            COMP_LABEL),
+    ]),
 ]
+
+
+class _PaletteGroup(QWidget):
+    def __init__(self, title: str, items: list[tuple[str, str]], on_pick, parent=None):
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        header = QWidget()
+        header.setObjectName("collapsible_header")
+        header_layout = QHBoxLayout(header)
+        header_layout.setContentsMargins(6, 4, 6, 4)
+
+        self.toggle_btn = QToolButton()
+        self.toggle_btn.setArrowType(Qt.DownArrow)
+        self.toggle_btn.setFixedSize(16, 16)
+
+        self.title_lbl = QLabel(title)
+        self.title_lbl.setObjectName("collapsible_title")
+
+        header_layout.addWidget(self.toggle_btn)
+        header_layout.addWidget(self.title_lbl)
+        header_layout.addStretch()
+
+        self.content = QWidget()
+        self.content_layout = QVBoxLayout(self.content)
+        self.content_layout.setContentsMargins(6, 4, 6, 6)
+        self.content_layout.setSpacing(4)
+
+        self._expanded = True
+        self.toggle_btn.clicked.connect(self._toggle)
+        header.mousePressEvent = lambda event: self._toggle()
+
+        for label, comp_type in items:
+            btn = QPushButton(label)
+            btn.setFixedHeight(26)
+            btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+            btn.clicked.connect(lambda checked, ct=comp_type: on_pick(ct))
+            self.content_layout.addWidget(btn)
+
+        outer.addWidget(header)
+        outer.addWidget(self.content)
+
+    def _toggle(self):
+        self._expanded = not self._expanded
+        self.content.setVisible(self._expanded)
+        self.toggle_btn.setArrowType(Qt.DownArrow if self._expanded else Qt.RightArrow)
 
 
 class PalettePanel(QWidget):
@@ -50,27 +104,30 @@ class PalettePanel(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(160)
-        layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(3)
+        self.setFixedWidth(120)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(6, 6, 6, 6)
+        outer.setSpacing(6)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
 
         title = QLabel("COMPONENTS")
         title.setObjectName("panel_section_title")
         layout.addWidget(title)
 
-        for item in PALETTE_ITEMS:
-            if item is None:
-                sep = QFrame(); sep.setFrameShape(QFrame.HLine)
-                layout.addWidget(sep)
-                continue
-            label, comp_type = item
-            btn = QPushButton(label)
-            btn.setFixedHeight(26)
-            btn.clicked.connect(lambda checked, ct=comp_type: self.component_type_selected.emit(ct))
-            layout.addWidget(btn)
+        for group_title, items in PALETTE_GROUPS:
+            layout.addWidget(_PaletteGroup(group_title, items, self.component_type_selected.emit))
 
-        layout.addSpacing(8)
+        layout.addSpacing(2)
         pipe_title = QLabel("PIPES")
         pipe_title.setObjectName("panel_section_title")
         layout.addWidget(pipe_title)
@@ -98,12 +155,15 @@ class PalettePanel(QWidget):
         hint.setStyleSheet("color: #666; font-size: 9pt;")
         layout.addWidget(hint)
 
+        scroll.setWidget(content)
+        outer.addWidget(scroll)
+
 class PropertyPanel(QWidget):
     property_changed = pyqtSignal(str, object)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setFixedWidth(210)
+        self.setFixedWidth(140)
         self._comp_id = None
 
         layout = QVBoxLayout(self)
@@ -126,6 +186,13 @@ class PropertyPanel(QWidget):
         self._fields = {}
         self.hide_lbl_cb = None
 
+    def _add_scale_field(self, label: str, key: str, value):
+        le = QLineEdit(str(value))
+        le.setPlaceholderText("1.0")
+        le.editingFinished.connect(lambda k=key, w=le: self.property_changed.emit(k, w.text()))
+        self.form.addRow(label + ":", le)
+        self._fields[key] = le
+
     def show_component(self, comp_id: str, comp: Component):
         self._comp_id = comp_id
         self._clear()
@@ -133,7 +200,14 @@ class PropertyPanel(QWidget):
         self._add("Label", comp.label, key="label")
         self._add("Type", comp.type, readonly=True)
 
+        self._add_scale_field("Width Scale", "extra_scale_x", comp.extras.get("scale_x", 1.0))
+        self._add_scale_field("Height Scale", "extra_scale_y", comp.extras.get("scale_y", 1.0))
+
         self._add_component_specific_fields(comp)
+
+        if comp.type == COMP_PRESSURE:
+            self._add("Linked Line ID", comp.extras.get("line_id", ""), key="extra_line_id")
+            self._add("Color Max (psi)", comp.extras.get("line_pressure_max", "50"), key="extra_line_pressure_max")
 
         self._add("Relay", str(comp.hardware.relay) if comp.hardware.relay is not None else "", key="relay")
         self._add("ADC ch", str(comp.hardware.adc) if comp.hardware.adc is not None else "", key="adc")
@@ -151,9 +225,13 @@ class PropertyPanel(QWidget):
             self._add("Outlet Size", comp.extras.get("outlet_size", ""), key="extra_outlet_size")
             self._add("Reduction Ratio", comp.extras.get("reduction_ratio", ""), key="extra_reduction_ratio")
 
+        ignored_keys = {
+            "scale_x", "scale_y",
+            "normally", "actuation", "set_pressure", "size",
+            "inlet_size", "outlet_size", "reduction_ratio",
+        }
         for k, v in comp.extras.items():
-            if k not in ["normally", "actuation", "set_pressure", "size",
-                         "inlet_size", "outlet_size", "reduction_ratio"]:
+            if k not in ignored_keys:
                 self._add(k, v, key=f"extra_{k}")
 
         self.hide_lbl_cb = QCheckBox("Hide Label")
@@ -253,8 +331,8 @@ class PIDEditorWindow(QWidget):
         toolbar = QWidget()
         toolbar.setObjectName("action_bar")
         tb = QHBoxLayout(toolbar)
-        tb.setContentsMargins(8, 4, 8, 4)
-        tb.setSpacing(5)
+        tb.setContentsMargins(0, 0, 0, 0)
+        tb.setSpacing(1)
 
         def tbtn(text, slot):
             b = QPushButton(text); b.setObjectName("action_bar_btn")
@@ -273,10 +351,11 @@ class PIDEditorWindow(QWidget):
         self._mode_label = QLabel("MODE: select")
         self._mode_label.setStyleSheet("color: #ffd600; font-weight: bold;")
         tb.addWidget(self._mode_label)
-        tb.addStretch()
+
+        tb.addSpacing(4)
 
         self._proj_name_edit = QLineEdit("Untitled Project")
-        self._proj_name_edit.setFixedWidth(180)
+        self._proj_name_edit.setFixedWidth(120)
         self._proj_name_edit.textChanged.connect(
             lambda t: self._project and setattr(self._project, "name", t))
         tb.addWidget(self._proj_name_edit)
@@ -305,10 +384,13 @@ class PIDEditorWindow(QWidget):
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
         splitter.setStretchFactor(2, 0)
+        splitter.setSizes([120, 1080, 140])
+        splitter.setHandleWidth(4)
         root.addWidget(splitter)
 
         self._status = QLabel("Ready.  Open or create a project.")
-        self._status.setStyleSheet("padding: 2px 8px; color: #777;")
+        self._status.setFixedHeight(14)
+        self._status.setStyleSheet("padding: 0px 2px; color: #777; font-size: 8pt;")
         root.addWidget(self._status)
 
         self._new_project()
@@ -500,6 +582,11 @@ class PIDEditorWindow(QWidget):
         elif key in ["set_pressure", "size", "inlet_size", "outlet_size",
                      "reduction_ratio", "normally", "actuation"]:
             comp.extras[key] = value
+        elif key in ["extra_scale_x", "extra_scale_y"]:
+            try:
+                comp.extras[key[6:]] = max(0.2, float(value))
+            except (ValueError, TypeError):
+                comp.extras[key[6:]] = 1.0
         elif key == "hide_lbl":
             comp.hide_lbl = value
 

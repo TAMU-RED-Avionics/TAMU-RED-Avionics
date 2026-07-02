@@ -618,6 +618,11 @@ class SensorGraphPanel(QWidget):
 
         self._reset_range()
 
+    def set_dark_mode(self, dark: bool):
+        self._dark = dark
+        if self._data:
+            self._draw()
+
     def _selected_sensors(self):
 
         sensors = []

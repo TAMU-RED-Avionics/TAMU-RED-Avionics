@@ -1,7 +1,9 @@
-# GUI_LOGO.py
-# This file displays the RED logo with some scaling
+"""Display the RED logo with scaling."""
+
+from pathlib import Path
+
 from PyQt5.QtWidgets import QLabel, QWidget, QVBoxLayout
-from PyQt5.QtGui import QPixmap, QImage
+from PyQt5.QtGui import QPixmap
 from PyQt5.QtCore import Qt
 
 """
@@ -20,6 +22,7 @@ class LogoWindow(QWidget):
     def __init__(self, scale_width=120):
         super().__init__()
         self.scale_width = scale_width
+        self._asset_dir = Path(__file__).resolve().parent
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -37,9 +40,9 @@ class LogoWindow(QWidget):
         layout.addWidget(self.logo_label)
     
     def set_dark_image(self):
-        self.pixmap = QPixmap("RED Logo White.png")
+        self.pixmap = QPixmap(str(self._asset_dir / "RED Logo White.png"))
         self.logo_label.setPixmap(self.pixmap)
 
     def set_light_image(self):
-        self.pixmap = QPixmap("RED Logo Maroon.png")
+        self.pixmap = QPixmap(str(self._asset_dir / "RED Logo Maroon.png"))
         self.logo_label.setPixmap(self.pixmap)

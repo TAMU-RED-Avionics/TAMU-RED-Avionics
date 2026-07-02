@@ -1,19 +1,18 @@
 import os
+from pathlib import Path
 from typing import Optional
 from PID_SCHEMA import PIDProject
 
-PROJECTS_DIR = "PIDs"
+PROJECTS_DIR = Path(__file__).resolve().parent / "PIDs"
 
 def discover_projects() -> list[tuple[str, str]]:
-    if not os.path.isdir(PROJECTS_DIR):
+    if not PROJECTS_DIR.is_dir():
         return []
 
     entries: list[tuple[str, str]] = []
-    for fname in sorted(os.listdir(PROJECTS_DIR)):
-        if fname.lower().endswith(".red"):
-            stem = os.path.splitext(fname)[0]
-            full_path = os.path.join(PROJECTS_DIR, fname)
-            entries.append((stem, os.path.abspath(full_path)))
+    for path in sorted(PROJECTS_DIR.iterdir()):
+        if path.is_file() and path.suffix.lower() == ".red":
+            entries.append((path.stem, str(path.resolve())))
 
     return entries
 

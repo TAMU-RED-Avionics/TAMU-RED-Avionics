@@ -493,6 +493,7 @@ class HomePage(QWidget):
         self.warning_panel = WarningPanel()
 
         self.sensor_panel.sensor_selected.connect(self._on_graph_sensor_changed)
+        self.controller.signals.warnings_changed.connect(self._on_warnings_changed)
 
         self.sensor_grid = SensorGridWindow(controller)
         self.sensor_grid.setVisible(False)
@@ -514,6 +515,7 @@ class HomePage(QWidget):
     def load_project(self, project):
         """Called by MainWindow when a project file is selected."""
         self.live_pid.load_project(project)
+        self.clear_warnings()
 
     def _on_graph_sensor_changed(self, sensor_name: str):
         self.sensor_grid.update_main_graph(sensor_name)
@@ -523,6 +525,12 @@ class HomePage(QWidget):
 
     def clear_warnings(self):
         self.warning_panel.clear_warnings()
+
+    def _on_warnings_changed(self, messages: list):
+        if messages:
+            self.show_warnings(messages)
+        else:
+            self.clear_warnings()
 
     def set_dark_mode(self, dark: bool):
         # The live PID canvas uses its own dark background — nothing to switch
@@ -585,6 +593,11 @@ class ActionBar(QWidget):
         layout.addWidget(self.state_label)
         controller.signals.system_status.connect(lambda s: self.state_label.setText(f"State: {s}"))
 
+        controller.signals.connected.connect(self.sync_fire_sequence_state)
+        controller.signals.disconnected.connect(lambda _: self.sync_fire_sequence_state())
+        controller.signals.abort_triggered.connect(lambda *_: self.sync_fire_sequence_state())
+        controller.signals.safe_state.connect(self.sync_fire_sequence_state)
+
         divider3 = QFrame()
         divider3.setFrameShape(QFrame.VLine)
         layout.addWidget(divider3)
@@ -592,9 +605,14 @@ class ActionBar(QWidget):
         conn_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         layout.addWidget(conn_widget)
 
-        controller.signals.connected.connect(lambda: self.fire_seq_btn.setEnabled(True))
-        controller.signals.disconnected.connect(lambda _: self.fire_seq_btn.setEnabled(False))
-        controller.signals.abort_triggered.connect(lambda *_: self.fire_seq_btn.setEnabled(False))
+        self.sync_fire_sequence_state()
+
+    def sync_fire_sequence_state(self):
+        project = getattr(self.controller, "project", None)
+        has_sequence = bool(project and getattr(project, "sequence", None))
+        connected = bool(getattr(self.controller.ethernet_client, "connected", False))
+        enabled = connected and has_sequence and not self.controller.lockout
+        self.fire_seq_btn.setEnabled(enabled)
 
     def _on_start_recording(self):
         """Start recording and update button states in the action bar."""
@@ -744,11 +762,16 @@ class MainWindow(QMainWindow):
         self.project_combo.setMinimumWidth(150)
 
         self._project_paths: list[str | None] = [None]
-        self.project_combo.addItem("— select project —")
+        self.project_combo.addItem("Choose project")
 
         for display_name, path in discover_projects():
             self.project_combo.addItem(display_name)
             self._project_paths.append(path)
+
+        self.refresh_project_btn = QPushButton("Refresh")
+        self.refresh_project_btn.setObjectName("small_btn")
+        self.refresh_project_btn.setFixedHeight(26)
+        self.refresh_project_btn.clicked.connect(self.refresh_current_project)
 
         self.controller.signals.abort_triggered.connect(
             lambda *_: self.project_combo.setEnabled(False)
@@ -759,6 +782,7 @@ class MainWindow(QMainWindow):
 
         self.project_combo.currentIndexChanged.connect(self._on_project_selected)
         chrome_layout.addWidget(self.project_combo)
+        chrome_layout.addWidget(self.refresh_project_btn)
 
         self.proj_version_label = QLabel("")
         self.proj_version_label.setObjectName("proj_label")
@@ -833,6 +857,39 @@ class MainWindow(QMainWindow):
 
         self._dispatch_project(project)
 
+    def refresh_current_project(self):
+        """Reload the currently loaded project from disk."""
+        path = self.controller.project_path
+        if not path and 0 < self.project_combo.currentIndex() < len(self._project_paths):
+            path = self._project_paths[self.project_combo.currentIndex()]
+
+        if not path:
+            return
+
+        project = load_project(path)
+        if project is None:
+            QMessageBox.critical(
+                self,
+                "Project Load Failed",
+                f"Could not reload project file:\n{path}\n\nCheck the console for details.",
+            )
+            return
+
+        self.controller.project = project
+        self.controller.project_path = path
+
+        if path in self._project_paths:
+            idx = self._project_paths.index(path)
+            if idx > 0 and self.project_combo.currentIndex() != idx:
+                self.project_combo.blockSignals(True)
+                self.project_combo.setCurrentIndex(idx)
+                self.project_combo.blockSignals(False)
+
+        self.proj_version_label.setText(f"v{project.version}")
+        self.proj_version_label.setToolTip(project_summary(project))
+
+        self._dispatch_project(project)
+
     def _dispatch_project(self, project):
         # MUST come first — populates pt_keys / tc_keys / lc_keys and reloads abort rules
         self.controller.load_project(project, self.controller.project_path)
@@ -858,6 +915,9 @@ class MainWindow(QMainWindow):
         # Refresh DAQ filename preview now that sensor keys are populated
         if hasattr(self, "daq_window"):
             self.daq_window.filename_preview.setText(self.daq_window._get_preview())
+
+        if hasattr(self, "action_bar"):
+            self.action_bar.sync_fire_sequence_state()
         
 
     def toggle_dark_mode(self):
@@ -874,8 +934,10 @@ class MainWindow(QMainWindow):
         
         self.telemetry_page.panel_a.table._apply_theme()
         self.telemetry_page.panel_b.table._apply_theme()
-        self.telemetry_page.panel_a.graph.set_dark_mode(self.dark_mode)
-        self.telemetry_page.panel_b.graph.set_dark_mode(self.dark_mode)
+        if hasattr(self.telemetry_page.panel_a.graph, "set_dark_mode"):
+            self.telemetry_page.panel_a.graph.set_dark_mode(self.dark_mode)
+        if hasattr(self.telemetry_page.panel_b.graph, "set_dark_mode"):
+            self.telemetry_page.panel_b.graph.set_dark_mode(self.dark_mode)
 
     def change_text_size(self):
         cycle = {12: (16, "Small Text"), 16: (8, "Medium Text"), 8: (12, "Large Text")}

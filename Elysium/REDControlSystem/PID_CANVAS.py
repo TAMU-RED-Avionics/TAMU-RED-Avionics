@@ -44,27 +44,55 @@ C_REDUCER_FILL  = QColor("#2a2a2a")
 
 FLUID_QC = {k: QColor(v) for k, v in FLUID_COLORS.items()}
 
+
+def _blend_color(start: QColor, end: QColor, amount: float) -> QColor:
+    amount = max(0.0, min(1.0, amount))
+    return QColor(
+        int(start.red()   + (end.red()   - start.red())   * amount),
+        int(start.green() + (end.green() - start.green()) * amount),
+        int(start.blue()  + (end.blue()  - start.blue())  * amount),
+        int(start.alpha() + (end.alpha() - start.alpha()) * amount),
+    )
+
 def snap(x: float, y: float, grid: float = GRID_SPACING):
     return (round(x / grid) * grid, round(y / grid) * grid)
 
 
-def world_rect(pos: LayoutPoint, ctype: str) -> QRectF:
+def _component_scale(comp: Component) -> tuple[float, float]:
+    def _read(name: str) -> float:
+        try:
+            return max(0.2, float(comp.extras.get(name, 1.0)))
+        except (TypeError, ValueError):
+            return 1.0
+
+    return _read("scale_x"), _read("scale_y")
+
+
+def world_rect(pos: LayoutPoint, ctype: str, comp: Component | None = None) -> QRectF:
     x, y = pos.x, pos.y
+    scale_x, scale_y = (1.0, 1.0)
+    if comp is not None:
+        scale_x, scale_y = _component_scale(comp)
+
+    half_w = 20 * scale_x
+    half_h = 14 * scale_y
     if ctype in (COMP_VALVE, COMP_CHECK_VALVE,
                  COMP_RELIEF_VALVE, COMP_REGULATOR, COMP_BALL_VALVE,
                  COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_PSV, COMP_PRV):
-        return QRectF(x - VLV_HW, y - VLV_HH, VLV_HW * 2, VLV_HH * 2)
+        return QRectF(x - VLV_HW * scale_x, y - VLV_HH * scale_y, VLV_HW * 2 * scale_x, VLV_HH * 2 * scale_y)
     if ctype in (COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL):
-        return QRectF(x - SNS_R, y - SNS_R, SNS_R * 2, SNS_R * 2)
+        r = SNS_R * max(scale_x, scale_y)
+        return QRectF(x - r, y - r, r * 2, r * 2)
     if ctype == COMP_TANK:
-        return QRectF(x - TNK_HW, y - TNK_HH, TNK_HW * 2, TNK_HH * 2)
+        return QRectF(x - TNK_HW * scale_x, y - TNK_HH * scale_y, TNK_HW * 2 * scale_x, TNK_HH * 2 * scale_y)
     if ctype == COMP_REDUCER:
-        return QRectF(x - VLV_HW, y - VLV_HH, VLV_HW * 2, VLV_HH * 2)
+        return QRectF(x - VLV_HW * scale_x, y - VLV_HH * scale_y, VLV_HW * 2 * scale_x, VLV_HH * 2 * scale_y)
     if ctype == COMP_INJECTOR:
-        return QRectF(x - 22, y - 28, 44, 56)
+        return QRectF(x - 22 * scale_x, y - 28 * scale_y, 44 * scale_x, 56 * scale_y)
     if ctype == COMP_JUNCTION:
-        return QRectF(x - JCT_R, y - JCT_R, JCT_R * 2, JCT_R * 2)
-    return QRectF(x - 20, y - 14, 40, 28)
+        r = JCT_R * max(scale_x, scale_y)
+        return QRectF(x - r, y - r, r * 2, r * 2)
+    return QRectF(x - half_w, y - half_h, half_w * 2, half_h * 2)
 
 class Renderer:
 
@@ -76,6 +104,7 @@ class Renderer:
 
         t   = comp.type
         lbl = comp.label or comp.id
+        scale_x, scale_y = _component_scale(comp)
 
         p.save()
         p.translate(pos.x, pos.y)
@@ -83,47 +112,47 @@ class Renderer:
         p.translate(-pos.x, -pos.y)
 
         if t == COMP_VALVE:
-            Renderer._valve(p, pos, state, zoom)
+            Renderer._valve(p, pos, state, zoom, scale_x, scale_y)
         elif t == COMP_CHECK_VALVE:
-            Renderer._check_valve(p, pos, zoom)
+            Renderer._check_valve(p, pos, zoom, scale_x, scale_y)
         elif t == COMP_RELIEF_VALVE:
-            Renderer._relief_valve(p, pos, state, zoom)
+            Renderer._relief_valve(p, pos, state, zoom, scale_x, scale_y)
         elif t == COMP_PRESSURE:
-            Renderer._sensor(p, pos, "PT",  value, zoom)
+            Renderer._sensor(p, pos, "PT",  value, zoom, scale_x, scale_y)
         elif t == COMP_TEMPERATURE:
-            Renderer._sensor(p, pos, "TC",  value, zoom)
+            Renderer._sensor(p, pos, "TC",  value, zoom, scale_x, scale_y)
         elif t == COMP_LOAD_CELL:
-            Renderer._sensor(p, pos, "LC", value, zoom)
+            Renderer._sensor(p, pos, "LC", value, zoom, scale_x, scale_y)
         elif t == COMP_TANK:
-            Renderer._tank(p, pos, zoom)
+            Renderer._tank(p, pos, zoom, scale_x, scale_y)
         elif t == COMP_INJECTOR:
-            Renderer._injector(p, pos, zoom)
+            Renderer._injector(p, pos, zoom, scale_x, scale_y)
         elif t == COMP_REGULATOR:
-            Renderer._regulator(p, pos, zoom)
+            Renderer._regulator(p, pos, zoom, scale_x, scale_y)
         elif t == COMP_JUNCTION:
-            Renderer._junction(p, pos)
+            Renderer._junction(p, pos, scale_x, scale_y)
         elif t == COMP_LABEL:
             Renderer._free_label(p, pos, "", zoom)
         elif t == COMP_BALL_VALVE:
-            Renderer._ball_valve(p, pos, state, zoom)
+            Renderer._ball_valve(p, pos, state, zoom, scale_x, scale_y)
         elif t == COMP_SOLENOID:
-            Renderer._solenoid_valve(p, pos, state, zoom)
+            Renderer._solenoid_valve(p, pos, state, zoom, scale_x, scale_y)
         elif t == COMP_GLOBE_VALVE:
-            Renderer._globe_valve(p, pos, state, value, zoom)
+            Renderer._globe_valve(p, pos, state, value, zoom, scale_x, scale_y)
         elif t == COMP_PSV:
-            Renderer._psv(p, pos, state, zoom)
+            Renderer._psv(p, pos, state, zoom, scale_x, scale_y)
         elif t == COMP_PRV:
-            Renderer._prv(p, pos, state, zoom)
+            Renderer._prv(p, pos, state, zoom, scale_x, scale_y)
         elif t == COMP_REDUCER:
-            Renderer._reducer(p, pos, zoom)
+            Renderer._reducer(p, pos, zoom, scale_x, scale_y)
         
         p.restore()
         lbl = comp.label or comp.id
-        offset = VLV_HH + 20
+        offset = (VLV_HH + 20) * max(scale_y, 0.8)
         Renderer._lbl(p, pos, lbl, zoom, offset, comp)
 
         if selected or hovered:
-            r = world_rect(pos, t).adjusted(-6, -6, 6, 6)
+            r = world_rect(pos, t, comp).adjusted(-6, -6, 6, 6)
             c = C_SELECT if selected else C_HOVER
             p.setPen(QPen(c, 1.5 / zoom, Qt.DashLine))
             p.setBrush(Qt.NoBrush)
@@ -146,9 +175,9 @@ class Renderer:
     # Drawing Methods (this is how we draw icons, could be replaced with image assets)
     
     @staticmethod
-    def _valve(p, pos, state, zoom):
+    def _valve(p, pos, state, zoom, scale_x=1.0, scale_y=1.0):
         x, y = pos.x, pos.y
-        hw, hh = VLV_HW, VLV_HH
+        hw, hh = VLV_HW * scale_x, VLV_HH * scale_y
 
         fill = (C_FILL_OPEN if state == "OPEN"
                 else C_FILL_PEND if state == "PENDING"
@@ -169,9 +198,9 @@ class Renderer:
         p.drawLine(QPointF(x - 8, y - hh - 10), QPointF(x + 8, y - hh - 10))
 
     @staticmethod
-    def _check_valve(p, pos, zoom):
+    def _check_valve(p, pos, zoom, scale_x=1.0, scale_y=1.0):
         x, y = pos.x, pos.y
-        hw, hh = VLV_HW, VLV_HH
+        hw, hh = VLV_HW * scale_x, VLV_HH * scale_y
 
         p.setBrush(Qt.NoBrush)
         p.setPen(QPen(C_SYMBOL, 1.8 / zoom))
@@ -191,18 +220,18 @@ class Renderer:
 
 
     @staticmethod
-    def _relief_valve(p, pos, state, zoom):
-        Renderer._valve(p, pos, state, zoom)
+    def _relief_valve(p, pos, state, zoom, scale_x=1.0, scale_y=1.0):
+        Renderer._valve(p, pos, state, zoom, scale_x, scale_y)
         x, y = pos.x, pos.y
         p.setPen(QPen(C_SYMBOL, 1.2 / zoom))
-        p.drawArc(QRectF(x + VLV_HW - 2, y - 8, 10, 8),  0,  180 * 16)
-        p.drawArc(QRectF(x + VLV_HW - 2, y,     10, 8),  0, -180 * 16)
+        p.drawArc(QRectF(x + VLV_HW * scale_x - 2, y - 8 * scale_y, 10 * scale_x, 8 * scale_y),  0,  180 * 16)
+        p.drawArc(QRectF(x + VLV_HW * scale_x - 2, y,     10 * scale_x, 8 * scale_y),  0, -180 * 16)
 
 
     @staticmethod
-    def _sensor(p, pos, symbol, value, zoom):
+    def _sensor(p, pos, symbol, value, zoom, scale_x=1.0, scale_y=1.0):
         x, y = pos.x, pos.y
-        r = SNS_R
+        r = SNS_R * max(scale_x, scale_y)
 
         p.setBrush(QBrush(C_SENSOR_FILL))
         p.setPen(QPen(C_SYMBOL, 1.5 / zoom))
@@ -218,10 +247,10 @@ class Renderer:
         p.drawText(QPointF(x - tw / 2, y + fm.ascent() / 2 - 1 / zoom), symbol)
 
     @staticmethod
-    def _tank(p, pos, zoom):
+    def _tank(p, pos, zoom, scale_x=1.0, scale_y=1.0):
         x, y = pos.x, pos.y
-        hw, hh = TNK_HW, TNK_HH
-        dome = 12
+        hw, hh = TNK_HW * scale_x, TNK_HH * scale_y
+        dome = 12 * scale_y
 
         p.setBrush(QBrush(C_TANK_FILL))
         p.setPen(QPen(C_SYMBOL, 1.5 / zoom))
@@ -231,9 +260,9 @@ class Renderer:
 
 
     @staticmethod
-    def _injector(p, pos, zoom):
+    def _injector(p, pos, zoom, scale_x=1.0, scale_y=1.0):
         x, y = pos.x, pos.y
-        tw, th, bw = 32, 44, 18
+        tw, th, bw = 32 * scale_x, 44 * scale_y, 18 * scale_x
 
         path = QPainterPath()
         path.moveTo(x - tw / 2, y - th / 2)
@@ -255,9 +284,9 @@ class Renderer:
         p.drawText(QPointF(x - tw2 / 2, y + fm.ascent() / 2 - 4 / zoom), t)
 
     @staticmethod
-    def _regulator(p, pos, zoom):
+    def _regulator(p, pos, zoom, scale_x=1.0, scale_y=1.0):
         x, y = pos.x, pos.y
-        size = VLV_HW * 1.2
+        size = VLV_HW * 1.2 * max(scale_x, scale_y)
         
         p.setBrush(Qt.NoBrush)
         pen = QPen(C_SYMBOL, 1.8 / zoom)
@@ -294,10 +323,10 @@ class Renderer:
         
 
     @staticmethod
-    def _junction(p, pos):
+    def _junction(p, pos, scale_x=1.0, scale_y=1.0):
         p.setBrush(QBrush(C_SYMBOL))
         p.setPen(Qt.NoPen)
-        p.drawEllipse(QPointF(pos.x, pos.y), JCT_R, JCT_R)
+        p.drawEllipse(QPointF(pos.x, pos.y), JCT_R * max(scale_x, scale_y), JCT_R * max(scale_x, scale_y))
 
     @staticmethod
     def _free_label(p, pos, text, zoom):
@@ -308,9 +337,9 @@ class Renderer:
 
     
     @staticmethod
-    def _ball_valve(p, pos, state, zoom):
+    def _ball_valve(p, pos, state, zoom, scale_x=1.0, scale_y=1.0):
         x, y = pos.x, pos.y
-        r = VLV_HW
+        r = VLV_HW * max(scale_x, scale_y)
         
         fill = (C_FILL_OPEN if state == "OPEN"
                 else C_FILL_PEND if state == "PENDING"
@@ -345,9 +374,9 @@ class Renderer:
 
 
     @staticmethod
-    def _solenoid_valve(p, pos, state, zoom):
+    def _solenoid_valve(p, pos, state, zoom, scale_x=1.0, scale_y=1.0):
         x, y = pos.x, pos.y
-        hw, hh = VLV_HW, VLV_HH
+        hw, hh = VLV_HW * scale_x, VLV_HH * scale_y
         
         fill = (C_FILL_OPEN if state == "OPEN"
                 else C_FILL_PEND if state == "PENDING"
@@ -372,9 +401,9 @@ class Renderer:
         p.drawPolygon(right_tri)
 
     @staticmethod
-    def _globe_valve(p, pos, state, value, zoom):
+    def _globe_valve(p, pos, state, value, zoom, scale_x=1.0, scale_y=1.0):
         x, y = pos.x, pos.y
-        r = VLV_HW
+        r = VLV_HW * max(scale_x, scale_y)
         
         fill = (C_FILL_OPEN if state == "OPEN"
                 else C_FILL_PEND if state == "PENDING"
@@ -402,9 +431,9 @@ class Renderer:
             p.drawText(QPointF(x - tw / 2, y + r + 8), pct)
 
     @staticmethod
-    def _psv(p, pos, state, zoom):
+    def _psv(p, pos, state, zoom, scale_x=1.0, scale_y=1.0):
         x, y = pos.x, pos.y
-        hw, hh = VLV_HW, VLV_HH
+        hw, hh = VLV_HW * scale_x, VLV_HH * scale_y
         
         p.setBrush(QBrush(C_PSV_FILL))
         p.setPen(QPen(C_SYMBOL, 1.8 / zoom))
@@ -437,9 +466,9 @@ class Renderer:
 
 
     @staticmethod
-    def _prv(p, pos, state, zoom):
+    def _prv(p, pos, state, zoom, scale_x=1.0, scale_y=1.0):
         x, y = pos.x, pos.y
-        hh = VLV_HH
+        hh = VLV_HH * scale_y
         
         p.setBrush(Qt.NoBrush)
         p.setPen(QPen(C_SYMBOL, 1.8 / zoom))
@@ -466,10 +495,10 @@ class Renderer:
         
 
     @staticmethod
-    def _reducer(p, pos, zoom):
+    def _reducer(p, pos, zoom, scale_x=1.0, scale_y=1.0):
         x, y = pos.x, pos.y
-        w = VLV_HW * 1.5
-        h = VLV_HH * 2
+        w = VLV_HW * 1.5 * scale_x
+        h = VLV_HH * 2 * scale_y
         
         p.setBrush(QBrush(C_REDUCER_FILL))
         p.setPen(QPen(C_SYMBOL, 1.8 / zoom))
@@ -697,6 +726,43 @@ class PIDCanvas(QWidget):
         self.live_sensor_values[cid] = value
         self.update()
 
+    def _line_pressure_values(self) -> dict:
+        if not self.project:
+            return {}
+
+        line_values: dict[str, float] = {}
+        for cid, comp in self.project.components.items():
+            if comp.type != COMP_PRESSURE:
+                continue
+
+            line_id = str(comp.extras.get("line_id", "")).strip()
+            if not line_id:
+                continue
+
+            value = self.live_sensor_values.get(cid)
+            if value is None:
+                continue
+
+            previous = line_values.get(line_id)
+            if previous is None or value > previous:
+                line_values[line_id] = value
+
+        return line_values
+
+    def _pressure_line_color(self, base_color: QColor, pressure: float, max_pressure: float) -> QColor:
+        if pressure is None:
+            return base_color
+
+        if max_pressure <= 0:
+            max_pressure = 50.0
+
+        pressure = max(0.0, float(pressure))
+        if pressure <= 0.0:
+            return base_color
+
+        ramp = min(pressure / max_pressure, 1.0)
+        return _blend_color(base_color, QColor("#ff3b30"), ramp)
+
     def update_throttle(self, cid: str, pct: float):
         self.live_throttle_pcts[cid] = pct
         self.update()
@@ -775,16 +841,30 @@ class PIDCanvas(QWidget):
     def _line_at(self, world: QPointF, thr: float = 8.0) -> "str | None":
         if not self.project:
             return None
-        best_id, best_d = None, thr
+
+        best_id = None
+        best_d = float("inf")
+
         for line in self.project.lines:
             pts = line.points
+            if len(pts) < 2:
+                continue
+
+            line_best = float("inf")
             for i in range(len(pts) - 1):
-                d = _seg_dist(world,
-                            QPointF(pts[i].x,   pts[i].y),
-                            QPointF(pts[i+1].x, pts[i+1].y))
-                if d < best_d:
-                    best_d, best_id = d, line.id
-        return best_id
+                d = _seg_dist(
+                    world,
+                    QPointF(pts[i].x, pts[i].y),
+                    QPointF(pts[i + 1].x, pts[i + 1].y),
+                )
+                if d < line_best:
+                    line_best = d
+
+            if line_best < best_d:
+                best_d = line_best
+                best_id = line.id
+
+        return best_id if best_d <= thr else None
 
     def paintEvent(self, _):
         p = QPainter(self)
@@ -943,11 +1023,27 @@ class PIDCanvas(QWidget):
             x += GRID_SPACING
 
     def _paint_lines(self, p):
+        pressure_values = self._line_pressure_values()
         for line in self.project.lines:
             pts = line.points
             if len(pts) < 2:
                 continue
             color = FLUID_QC.get(line.fluid, QColor("#c8c8c8"))
+
+            pressure = pressure_values.get(line.id)
+            if pressure is not None:
+                max_pressure = 50.0
+                for comp in self.project.components.values():
+                    if comp.type != COMP_PRESSURE:
+                        continue
+                    if str(comp.extras.get("line_id", "")).strip() != line.id:
+                        continue
+                    try:
+                        max_pressure = float(comp.extras.get("line_pressure_max", max_pressure))
+                    except (TypeError, ValueError):
+                        max_pressure = 50.0
+                    break
+                color = self._pressure_line_color(color, pressure, max_pressure)
 
             is_selected = line.id in self._selected_lines
             is_hovered  = line.id == self._hovered_line
@@ -1194,14 +1290,34 @@ class PIDCanvas(QWidget):
             self.setCursor(Qt.ArrowCursor)
 
     def wheelEvent(self, event):
-        factor   = 1.15 if event.angleDelta().y() > 0 else 1 / 1.15
-        old_zoom = self._zoom
-        self._zoom = max(0.05, min(self._zoom * factor, 10.0))
-        cx = event.x(); cy = event.y()
-        wx = cx / old_zoom - self._pan.x()
-        wy = cy / old_zoom - self._pan.y()
-        self._pan = QPointF(cx / self._zoom - wx, cy / self._zoom - wy)
+        delta = event.pixelDelta().y()
+        if delta == 0:
+            delta = event.angleDelta().y()
+        if delta == 0:
+            event.ignore()
+            return
+
+        # Trackpads often emit very small deltas; use a continuous curve so
+        # the zoom feels smooth instead of jumping in coarse wheel steps.
+        factor = math.exp((delta / 120.0) * math.log(1.15))
+        self._zoom_at(event.pos().x(), event.pos().y(), factor)
+        event.accept()
         self.update()
+
+    def _zoom_at(self, screen_x: float, screen_y: float, factor: float):
+        old_zoom = self._zoom
+        new_zoom = max(0.05, min(old_zoom * factor, 10.0))
+        if new_zoom == old_zoom:
+            return
+
+        world_x = screen_x / old_zoom - self._pan.x()
+        world_y = screen_y / old_zoom - self._pan.y()
+
+        self._zoom = new_zoom
+        self._pan = QPointF(
+            screen_x / self._zoom - world_x,
+            screen_y / self._zoom - world_y,
+        )
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:
