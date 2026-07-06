@@ -21,6 +21,15 @@ def _hsep():
     return f
 
 
+def _card() -> tuple:
+    f = QFrame()
+    f.setObjectName("config_card")
+    lay = QVBoxLayout(f)
+    lay.setContentsMargins(16, 12, 16, 14)
+    lay.setSpacing(8)
+    return f, lay
+
+
 def _section_title(text: str) -> QLabel:
     lbl = QLabel(text)
     lbl.setObjectName("panel_section_title")
@@ -153,7 +162,7 @@ class _SensorThresholdWidget(QWidget):
             grid.addWidget(lbl, 0, col)
 
         rows = [
-            ("mawp",   "MAWP   (abort limit)",    "mawp_action"),
+            ("mawp",   "High   (abort limit)",    "mawp_action"),
             ("meop",   "MEOP   (expected max)",    "meop_action"),
             ("relief", "Relief (auto-vent limit)", "relief_action"),
         ]
@@ -175,7 +184,7 @@ class _SensorThresholdWidget(QWidget):
             grid.addWidget(action_combo, row_idx, 2)
 
             target_combo = QComboBox()
-            target_combo.addItem("— none —", "")
+            target_combo.addItem("- none -", "")
             for vid, vlabel in valve_options:
                 target_combo.addItem(vlabel, vid)
 
@@ -188,12 +197,19 @@ class _SensorThresholdWidget(QWidget):
             close_widget.set_value(th_data.get(f"{band}_close_below"))
             grid.addWidget(close_widget, row_idx, 4)
 
+            msg_edit = QLineEdit(th_data.get(f"{band}_message", ""))
+            msg_edit.setPlaceholderText(
+                f"Default wording. Customize with {{{comp_label or comp_id}}} "
+                "for its value, plus {value} {threshold} {soak_ms} {hw_id} - "
+                'e.g. "{hw_id} over {threshold} for {soak_ms}ms"')
+
             self._fields[band] = {
                 "val":         val_widget,
                 "action":      action_combo,
                 "target":      target_combo,
                 "close_below": close_widget,
                 "action_key":  action_key,
+                "message":     msg_edit,
             }
 
         soak_row = QHBoxLayout()
@@ -208,17 +224,100 @@ class _SensorThresholdWidget(QWidget):
         outer.addLayout(grid)
         outer.addLayout(soak_row)
 
+        msg_form = QGridLayout()
+        msg_form.setSpacing(4)
+        msg_form.setContentsMargins(0, 4, 0, 0)
+        for row_idx, (band, label, _) in enumerate(rows):
+            tag = QLabel(f"{label.split()[0]} message:")
+            tag.setObjectName("sensor_unit_label")
+            msg_form.addWidget(tag, row_idx, 0)
+            msg_form.addWidget(self._fields[band]["message"], row_idx, 1)
+        outer.addLayout(msg_form)
+
     def flush(self):
         d = {}
         for band, f in self._fields.items():
             d[band]               = f["val"].value()
             d[f"{band}_action"]   = f["action"].current_action()
+            d[f"{band}_message"]  = f["message"].text().strip()
             target = f["target"].currentData()
             d[f"{band}_target"]   = target or ""
             close_val = f["close_below"].value()
             d[f"{band}_close_below"] = close_val
         d["soak_ms"] = int(self._soak_sb.value())
         self._extras["thresholds"] = d
+
+
+class _SystemLimitsSection(QWidget):
+    """System-wide pressure backstop, independent of the per-sensor
+    thresholds below: applies across every PT at once."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._project = None
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 8)
+        outer.setSpacing(6)
+
+        outer.addWidget(_section_title("SYSTEM PRESSURE LIMITS"))
+        outer.addWidget(_hsep())
+
+        desc = QLabel(
+            "Optional system-wide backstop applied across all PT sensors, "
+            "independent of the per-sensor thresholds above. A warning fires "
+            "on any PT at or above System MEOP; an abort fires at 95% of "
+            "System MAWP."
+        )
+        desc.setWordWrap(True)
+        desc.setObjectName("sensor_unit_label")
+        outer.addWidget(desc)
+
+        row = QHBoxLayout()
+        row.addWidget(QLabel("System MAWP:"))
+        self._mawp = _OptionalSpinBox("psi")
+        row.addWidget(self._mawp)
+        row.addSpacing(24)
+        row.addWidget(QLabel("System MEOP:"))
+        self._meop = _OptionalSpinBox("psi")
+        row.addWidget(self._meop)
+        row.addStretch()
+        outer.addLayout(row)
+
+        msg_grid = QGridLayout()
+        msg_grid.setSpacing(4)
+        msg_grid.setContentsMargins(0, 4, 0, 0)
+        msg_grid.addWidget(QLabel("MAWP message:"), 0, 0)
+        self._mawp_msg = QLineEdit()
+        self._mawp_msg.setPlaceholderText(
+            'Blank = auto. Use {SENSOR} for its value, {mawp} {limit} for the '
+            'configured limits - e.g. "{P1} over 95% of MAWP ({mawp} psi)"')
+        msg_grid.addWidget(self._mawp_msg, 0, 1)
+        msg_grid.addWidget(QLabel("MEOP message:"), 1, 0)
+        self._meop_msg = QLineEdit()
+        self._meop_msg.setPlaceholderText(
+            'Blank = auto. Use {SENSOR} for its value, {limit} for the MEOP '
+            'value - e.g. "{P1} above MEOP ({limit} psi)"')
+        msg_grid.addWidget(self._meop_msg, 1, 1)
+        outer.addLayout(msg_grid)
+
+    def load_project(self, project):
+        self._project = project
+        if project is None:
+            return
+        params = project.parameters
+        self._mawp.set_value(getattr(params, "system_mawp", None))
+        self._meop.set_value(getattr(params, "system_meop", None))
+        self._mawp_msg.setText(getattr(params, "system_mawp_message", ""))
+        self._meop_msg.setText(getattr(params, "system_meop_message", ""))
+
+    def flush(self):
+        if not self._project:
+            return
+        self._project.parameters.system_mawp = self._mawp.value()
+        self._project.parameters.system_meop = self._meop.value()
+        self._project.parameters.system_mawp_message = self._mawp_msg.text().strip()
+        self._project.parameters.system_meop_message = self._meop_msg.text().strip()
 
 
 class _SensorThresholdsSection(QWidget):
@@ -281,7 +380,6 @@ class _SensorThresholdsSection(QWidget):
                                        comp.extras, valve_options)
             block.add_widget(w)
             self._container_layout.addWidget(block)
-            self._container_layout.addWidget(_hsep())
             self._widgets[cid] = w
 
         if not sensor_comps:
@@ -342,6 +440,18 @@ class _LogicRuleRow(QWidget):
         self._expr_edit.textChanged.connect(lambda t: setattr(self._rule, "expression", t))
         expr_row.addWidget(self._expr_edit)
         outer.addLayout(expr_row)
+
+        msg_row = QHBoxLayout()
+        msg_row.addWidget(QLabel("Message:"))
+        self._message_edit = QLineEdit(rule.message_template)
+        self._message_edit.setPlaceholderText(
+            'Blank = auto (e.g. "P5 (600.00) > P3 (595.00) for 150ms"). '
+            'Customize with {SENSOR} for its value, {soak_ms} for the soak - '
+            'e.g. "P5 ({P5}) > P3 ({P3}) for {soak_ms}ms"')
+        self._message_edit.textChanged.connect(
+            lambda t: setattr(self._rule, "message_template", t))
+        msg_row.addWidget(self._message_edit)
+        outer.addLayout(msg_row)
 
         extra_row = QHBoxLayout()
         extra_row.addWidget(QLabel("Target valve (open_valve):"))
@@ -432,7 +542,6 @@ class _LogicRulesSection(QWidget):
         row = _LogicRuleRow(rule, on_delete=self._delete_row)
         self._rows.append(row)
         self._rows_layout.addWidget(row)
-        self._rows_layout.addWidget(_hsep())
 
     def _add_rule(self):
         if self._project is None:
@@ -467,10 +576,6 @@ class _LogicRulesSection(QWidget):
         idx = self._rows_layout.indexOf(row_widget)
         if idx >= 0:
             self._rows_layout.takeAt(idx).widget().deleteLater()
-            if idx < self._rows_layout.count():
-                sep = self._rows_layout.takeAt(idx)
-                if sep and sep.widget():
-                    sep.widget().deleteLater()
 
     def flush(self):
         for row in self._rows:
@@ -489,9 +594,11 @@ class AbortConfigPage(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         inner = QWidget()
+        inner.setMaximumWidth(1100)
+        inner.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
         self._main_layout = QVBoxLayout(inner)
-        self._main_layout.setContentsMargins(10, 8, 10, 10)
-        self._main_layout.setSpacing(10)
+        self._main_layout.setContentsMargins(16, 14, 16, 16)
+        self._main_layout.setSpacing(12)
 
         header = QLabel("Abort Configuration")
         header.setObjectName("panel_section_title")
@@ -505,30 +612,40 @@ class AbortConfigPage(QWidget):
         intro.setObjectName("sensor_unit_label")
         self._main_layout.addWidget(intro)
 
+        limits_card, limits_card_layout = _card()
+        self._system_limits_section = _SystemLimitsSection()
+        limits_card_layout.addWidget(self._system_limits_section)
+        self._main_layout.addWidget(limits_card)
+
+        sensor_card, sensor_card_layout = _card()
         self._sensor_section = _SensorThresholdsSection()
-        self._main_layout.addWidget(self._sensor_section)
+        sensor_card_layout.addWidget(self._sensor_section)
+        self._main_layout.addWidget(sensor_card)
 
-        self._main_layout.addWidget(_hsep())
-
+        logic_card, logic_card_layout = _card()
         self._logic_section = _LogicRulesSection()
-        self._main_layout.addWidget(self._logic_section)
-
-        self._main_layout.addWidget(_hsep())
+        logic_card_layout.addWidget(self._logic_section)
+        self._main_layout.addWidget(logic_card)
 
         save_row = QHBoxLayout()
         save_row.addStretch()
-        self._save_btn = QPushButton("Save All Abort Configuration to Project")
-        self._save_btn.setFixedHeight(32)
-        self._save_btn.setFixedWidth(260)
-        self._save_btn.setStyleSheet(
-            "background-color: #b33a3a; color: white; font-weight: bold; border-radius: 6px;"
-        )
+        self._save_btn = QPushButton("Save Abort Configuration to Project")
+        self._save_btn.setObjectName("primary_btn")
+        self._save_btn.setMinimumHeight(34)
         self._save_btn.clicked.connect(self._save_all)
         save_row.addWidget(self._save_btn)
         self._main_layout.addLayout(save_row)
 
         self._main_layout.addStretch()
-        scroll.setWidget(inner)
+
+        # Centre the capped-width column in the scroll viewport
+        wrap = QWidget()
+        wrap_layout = QHBoxLayout(wrap)
+        wrap_layout.setContentsMargins(0, 0, 0, 0)
+        wrap_layout.addStretch(1)
+        wrap_layout.addWidget(inner, stretch=4)
+        wrap_layout.addStretch(1)
+        scroll.setWidget(wrap)
 
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
@@ -536,6 +653,7 @@ class AbortConfigPage(QWidget):
 
     def load_project(self, project):
         self._project = project
+        self._system_limits_section.load_project(project)
         self._sensor_section.load_project(project)
         self._logic_section.load_project(project)
 
@@ -547,6 +665,7 @@ class AbortConfigPage(QWidget):
             QMessageBox.warning(self, "No Project", "No project is currently loaded.")
             return
 
+        self._system_limits_section.flush()
         self._sensor_section.flush()
         self._logic_section.flush()
 
@@ -627,19 +746,22 @@ class AbortWindow(QWidget):
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(10)
+        layout.setSpacing(0)
 
         self.manual_abort_btn = QPushButton("MANUAL ABORT")
         self.manual_abort_btn.setObjectName("manual_abort_btn")
         self.manual_abort_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.manual_abort_btn.setStyleSheet("""
             QPushButton {
-                background-color: red;
+                background-color: #c62828;
                 color: white;
-                min-height: 80px;
+                border: 1px solid #8e0000;
+                border-radius: 8px;
+                font-weight: bold;
+                letter-spacing: 1px;
             }
-            QPushButton:hover { background-color: #700000; }
-            QPushButton:pressed { background-color: #500000; }
+            QPushButton:hover { background-color: #e53935; }
+            QPushButton:pressed { background-color: #8e0000; }
             QPushButton:disabled { background-color: #700000; }
         """)
 
@@ -653,12 +775,16 @@ class AbortWindow(QWidget):
         self.safe_state_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.safe_state_btn.setStyleSheet("""
             QPushButton {
-                background-color: #009900;
+                background-color: #1e8e3e;
                 color: white;
+                border: 1px solid #0d652d;
+                border-radius: 8px;
+                font-weight: bold;
+                letter-spacing: 1px;
             }
-            QPushButton:hover { background-color: #006600; }
-            QPushButton:pressed { background-color: #005500; }
-            QPushButton:disabled { background-color: #005500; }
+            QPushButton:hover { background-color: #28a24a; }
+            QPushButton:pressed { background-color: #0d652d; }
+            QPushButton:disabled { background-color: #145c2c; color: #a9c9b2; }
         """)
 
         self.safe_state_btn.clicked.connect(self.controller.confirm_safe_state)

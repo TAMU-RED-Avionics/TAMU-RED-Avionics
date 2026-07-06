@@ -51,10 +51,10 @@ class VirtualTeensy(QMainWindow):
             label.setFixedWidth(40)
             
             slider = QSlider(Qt.Horizontal)
-            slider.setRange(0, 1500)
+            slider.setRange(0, 2000)
             
             spinbox = QDoubleSpinBox()
-            spinbox.setRange(-1500, 1500)
+            spinbox.setRange(-2000, 2000)
             spinbox.setFixedWidth(80)
 
             null_check = QCheckBox("NULL")

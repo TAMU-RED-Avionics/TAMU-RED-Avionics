@@ -7,7 +7,9 @@
       "type": "tank",
       "label": "N20",
       "hardware": {},
-      "extras": {},
+      "extras": {
+        "scale_y": 2.0
+      },
       "rotation": 0,
       "hide_lbl": false
     },
@@ -80,14 +82,17 @@
         "thresholds": {
           "mawp": null,
           "mawp_action": "abort",
+          "mawp_message": "",
           "mawp_target": "",
           "mawp_close_below": null,
           "meop": null,
           "meop_action": "open_valve",
+          "meop_message": "",
           "meop_target": "",
           "meop_close_below": null,
           "relief": null,
           "relief_action": "open_valve",
+          "relief_message": "",
           "relief_target": "",
           "relief_close_below": null,
           "soak_ms": 0
@@ -107,14 +112,17 @@
         "thresholds": {
           "mawp": null,
           "mawp_action": "abort",
+          "mawp_message": "",
           "mawp_target": "",
           "mawp_close_below": null,
           "meop": null,
           "meop_action": "open_valve",
+          "meop_message": "",
           "meop_target": "",
           "meop_close_below": null,
           "relief": null,
           "relief_action": "open_valve",
+          "relief_message": "",
           "relief_target": "",
           "relief_close_below": null,
           "soak_ms": 0
@@ -134,14 +142,17 @@
         "thresholds": {
           "mawp": null,
           "mawp_action": "abort",
+          "mawp_message": "",
           "mawp_target": "",
           "mawp_close_below": null,
           "meop": null,
           "meop_action": "open_valve",
+          "meop_message": "",
           "meop_target": "",
           "meop_close_below": null,
           "relief": null,
           "relief_action": "open_valve",
+          "relief_message": "",
           "relief_target": "",
           "relief_close_below": null,
           "soak_ms": 0
@@ -170,14 +181,17 @@
         "thresholds": {
           "mawp": null,
           "mawp_action": "abort",
+          "mawp_message": "",
           "mawp_target": "",
           "mawp_close_below": null,
           "meop": null,
           "meop_action": "open_valve",
+          "meop_message": "",
           "meop_target": "",
           "meop_close_below": null,
           "relief": null,
           "relief_action": "open_valve",
+          "relief_message": "",
           "relief_target": "",
           "relief_close_below": null,
           "soak_ms": 0
@@ -226,14 +240,17 @@
         "thresholds": {
           "mawp": null,
           "mawp_action": "abort",
+          "mawp_message": "",
           "mawp_target": "",
           "mawp_close_below": null,
           "meop": null,
           "meop_action": "open_valve",
+          "meop_message": "",
           "meop_target": "",
           "meop_close_below": null,
           "relief": null,
           "relief_action": "open_valve",
+          "relief_message": "",
           "relief_target": "",
           "relief_close_below": null,
           "soak_ms": 0
@@ -422,21 +439,24 @@
         "thresholds": {
           "mawp": null,
           "mawp_action": "abort",
+          "mawp_message": "",
           "mawp_target": "",
           "mawp_close_below": null,
           "meop": null,
           "meop_action": "open_valve",
+          "meop_message": "",
           "meop_target": "",
           "meop_close_below": null,
           "relief": null,
           "relief_action": "open_valve",
+          "relief_message": "",
           "relief_target": "",
           "relief_close_below": null,
           "soak_ms": 0
         }
       },
       "rotation": 0,
-      "hide_lbl": false
+      "hide_lbl": true
     },
     {
       "id": "GV_2",
@@ -469,14 +489,17 @@
         "thresholds": {
           "mawp": null,
           "mawp_action": "abort",
+          "mawp_message": "",
           "mawp_target": "",
           "mawp_close_below": null,
           "meop": null,
           "meop_action": "open_valve",
+          "meop_message": "",
           "meop_target": "",
           "meop_close_below": null,
           "relief": null,
           "relief_action": "open_valve",
+          "relief_message": "",
           "relief_target": "",
           "relief_close_below": null,
           "soak_ms": 0
@@ -496,14 +519,17 @@
         "thresholds": {
           "mawp": null,
           "mawp_action": "abort",
+          "mawp_message": "",
           "mawp_target": "",
           "mawp_close_below": null,
           "meop": null,
           "meop_action": "open_valve",
+          "meop_message": "",
           "meop_target": "",
           "meop_close_below": null,
           "relief": null,
           "relief_action": "open_valve",
+          "relief_message": "",
           "relief_target": "",
           "relief_close_below": null,
           "soak_ms": 0
@@ -546,7 +572,26 @@
       "hardware": {
         "adc": 12
       },
-      "extras": {},
+      "extras": {
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "soak_ms": 0
+        }
+      },
       "rotation": 0,
       "hide_lbl": false
     },
@@ -557,7 +602,26 @@
       "hardware": {
         "adc": 13
       },
-      "extras": {},
+      "extras": {
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "soak_ms": 0
+        }
+      },
       "rotation": 0,
       "hide_lbl": false
     },
@@ -568,7 +632,26 @@
       "hardware": {
         "adc": 14
       },
-      "extras": {},
+      "extras": {
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "soak_ms": 0
+        }
+      },
       "rotation": 0,
       "hide_lbl": false
     },
@@ -579,28 +662,92 @@
       "hardware": {
         "adc": 9
       },
-      "extras": {},
+      "extras": {
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "soak_ms": 0
+        }
+      },
       "rotation": 0,
       "hide_lbl": false
     },
     {
-      "id": "TC_2",
-      "type": "temperature",
-      "label": "TC_2",
+      "id": "IGN_1",
+      "type": "igniter",
+      "label": "IGN_1",
       "hardware": {
-        "adc": 10
+        "relay": 48
       },
       "extras": {},
       "rotation": 0,
       "hide_lbl": false
     },
     {
-      "id": "TC_3",
-      "type": "temperature",
-      "label": "TC_3",
+      "id": "IGN_2",
+      "type": "igniter",
+      "label": "IGN_2",
       "hardware": {
-        "adc": 11
+        "relay": 49
       },
+      "extras": {},
+      "rotation": 0,
+      "hide_lbl": false
+    },
+    {
+      "id": "LAB_12",
+      "type": "label",
+      "label": "Fuel",
+      "hardware": {},
+      "extras": {},
+      "rotation": 0,
+      "hide_lbl": false
+    },
+    {
+      "id": "LAB_13",
+      "type": "label",
+      "label": "     ----------------",
+      "hardware": {},
+      "extras": {},
+      "rotation": 0,
+      "hide_lbl": false
+    },
+    {
+      "id": "LOA_4",
+      "type": "load_cell",
+      "label": "LC4",
+      "hardware": {},
+      "extras": {},
+      "rotation": 0,
+      "hide_lbl": false
+    },
+    {
+      "id": "LOA_5",
+      "type": "load_cell",
+      "label": "LC5",
+      "hardware": {},
+      "extras": {},
+      "rotation": 0,
+      "hide_lbl": false
+    },
+    {
+      "id": "LOA_6",
+      "type": "load_cell",
+      "label": "LC6",
+      "hardware": {},
       "extras": {},
       "rotation": 0,
       "hide_lbl": false
@@ -610,7 +757,7 @@
   "layout": {
     "TK_1": {
       "x": 640.0,
-      "y": 240.0
+      "y": 190.0
     },
     "TK_2": {
       "x": 200.0,
@@ -673,8 +820,8 @@
       "y": 520.0
     },
     "VAL_1": {
-      "x": 1000,
-      "y": 440
+      "x": 1000.0,
+      "y": 440.0
     },
     "CV_2": {
       "x": 960.0,
@@ -702,11 +849,11 @@
     },
     "LAB_3": {
       "x": 690.0,
-      "y": 50.0
+      "y": -30.0
     },
     "LAB_4": {
       "x": 690.0,
-      "y": -30.0
+      "y": -120.0
     },
     "VAL_4": {
       "x": 850.0,
@@ -714,11 +861,11 @@
     },
     "VAL_5": {
       "x": 640.0,
-      "y": 80.0
+      "y": 0.0
     },
     "VAL_6": {
       "x": 640.0,
-      "y": 0.0
+      "y": -90.0
     },
     "LAB_5": {
       "x": 610.0,
@@ -730,11 +877,11 @@
     },
     "BV_3": {
       "x": 710.0,
-      "y": 220.0
+      "y": 170.0
     },
     "LAB_7": {
       "x": 760.0,
-      "y": 190.0
+      "y": 150.0
     },
     "LAB_8": {
       "x": 550.0,
@@ -773,175 +920,51 @@
       "y": 560.0
     },
     "LOA_1": {
-      "x": 240.0,
-      "y": 650.0
+      "x": 80.0,
+      "y": 620.0
     },
     "LOA_2": {
-      "x": 240.0,
-      "y": 710.0
+      "x": 80.0,
+      "y": 700.0
     },
     "LOA_3": {
-      "x": 240.0,
-      "y": 770.0
+      "x": 80.0,
+      "y": 780.0
     },
     "TC_1": {
-      "x": 80.0,
-      "y": 650.0
+      "x": 220.0,
+      "y": 620.0
     },
-    "TC_2": {
-      "x": 80.0,
-      "y": 710.0
+    "IGN_1": {
+      "x": 220.0,
+      "y": 700.0
     },
-    "TC_3": {
-      "x": 80.0,
-      "y": 770.0
+    "IGN_2": {
+      "x": 220.0,
+      "y": 780.0
+    },
+    "LAB_12": {
+      "x": 640.0,
+      "y": 100.0
+    },
+    "LAB_13": {
+      "x": 640.0,
+      "y": 120.0
+    },
+    "LOA_4": {
+      "x": 150.0,
+      "y": 620.0
+    },
+    "LOA_5": {
+      "x": 150.0,
+      "y": 700.0
+    },
+    "LOA_6": {
+      "x": 150.0,
+      "y": 780.0
     }
   },
   "lines": [
-    {
-      "id": "line_0",
-      "points": [
-        {
-          "x": 200.0,
-          "y": 440.0
-        },
-        {
-          "x": 200.0,
-          "y": 360.0
-        },
-        {
-          "x": 360.0,
-          "y": 360.0
-        },
-        {
-          "x": 360.0,
-          "y": 360.0
-        }
-      ],
-      "fluid": "generic",
-      "connects": [],
-      "dotted": false
-    },
-    {
-      "id": "line_1",
-      "points": [
-        {
-          "x": 280.0,
-          "y": 440.0
-        },
-        {
-          "x": 280.0,
-          "y": 360.0
-        },
-        {
-          "x": 360.0,
-          "y": 360.0
-        }
-      ],
-      "fluid": "generic",
-      "connects": [],
-      "dotted": false
-    },
-    {
-      "id": "line_3",
-      "points": [
-        {
-          "x": 640.0,
-          "y": 360.0
-        },
-        {
-          "x": 640.0,
-          "y": 460.0
-        },
-        {
-          "x": 640.0,
-          "y": 410.0
-        },
-        {
-          "x": 600.0,
-          "y": 410.0
-        },
-        {
-          "x": 640.0,
-          "y": 410.0
-        },
-        {
-          "x": 640.0,
-          "y": 520.0
-        },
-        {
-          "x": 600.0,
-          "y": 520.0
-        },
-        {
-          "x": 640.0,
-          "y": 520.0
-        },
-        {
-          "x": 640.0,
-          "y": 580.0
-        },
-        {
-          "x": 610.0,
-          "y": 580.0
-        },
-        {
-          "x": 610.0,
-          "y": 610.0
-        },
-        {
-          "x": 610.0,
-          "y": 580.0
-        },
-        {
-          "x": 670.0,
-          "y": 580.0
-        },
-        {
-          "x": 670.0,
-          "y": 610.0
-        },
-        {
-          "x": 710.0,
-          "y": 610.0
-        },
-        {
-          "x": 570.0,
-          "y": 610.0
-        },
-        {
-          "x": 570.0,
-          "y": 650.0
-        },
-        {
-          "x": 710.0,
-          "y": 650.0
-        },
-        {
-          "x": 710.0,
-          "y": 610.0
-        },
-        {
-          "x": 710.0,
-          "y": 650.0
-        },
-        {
-          "x": 680.0,
-          "y": 720.0
-        },
-        {
-          "x": 600.0,
-          "y": 720.0
-        },
-        {
-          "x": 570.0,
-          "y": 650.0
-        }
-      ],
-      "fluid": "generic",
-      "connects": [],
-      "dotted": false
-    },
     {
       "id": "line_4",
       "points": [
@@ -983,22 +1006,6 @@
       "dotted": false
     },
     {
-      "id": "line_6",
-      "points": [
-        {
-          "x": 540.0,
-          "y": 330.0
-        },
-        {
-          "x": 540.0,
-          "y": 360.0
-        }
-      ],
-      "fluid": "generic",
-      "connects": [],
-      "dotted": false
-    },
-    {
       "id": "line_8",
       "points": [
         {
@@ -1008,26 +1015,6 @@
         {
           "x": 740.0,
           "y": 630.0
-        }
-      ],
-      "fluid": "generic",
-      "connects": [],
-      "dotted": false
-    },
-    {
-      "id": "line_10",
-      "points": [
-        {
-          "x": 620.0,
-          "y": 360.0
-        },
-        {
-          "x": 640.0,
-          "y": 360.0
-        },
-        {
-          "x": 640.0,
-          "y": 250.0
         }
       ],
       "fluid": "generic",
@@ -1051,15 +1038,71 @@
       "dotted": false
     },
     {
-      "id": "line_11",
+      "id": "line_0",
       "points": [
         {
-          "x": 360.0,
+          "x": 200.0,
+          "y": 480.0
+        },
+        {
+          "x": 200.0,
           "y": 360.0
         },
         {
-          "x": 580.0,
+          "x": 280.0,
           "y": 360.0
+        },
+        {
+          "x": 280.0,
+          "y": 480.0
+        },
+        {
+          "x": 280.0,
+          "y": 360.0
+        },
+        {
+          "x": 360.0,
+          "y": 360.0
+        }
+      ],
+      "fluid": "oxidizer",
+      "connects": [],
+      "dotted": false
+    },
+    {
+      "id": "line_1",
+      "points": [
+        {
+          "x": 570.0,
+          "y": 650.0
+        },
+        {
+          "x": 600.0,
+          "y": 720.0
+        },
+        {
+          "x": 680.0,
+          "y": 720.0
+        },
+        {
+          "x": 710.0,
+          "y": 650.0
+        },
+        {
+          "x": 570.0,
+          "y": 650.0
+        },
+        {
+          "x": 570.0,
+          "y": 610.0
+        },
+        {
+          "x": 710.0,
+          "y": 610.0
+        },
+        {
+          "x": 710.0,
+          "y": 650.0
         }
       ],
       "fluid": "generic",
@@ -1067,11 +1110,123 @@
       "dotted": false
     },
     {
-      "id": "line_11",
+      "id": "line_2",
+      "points": [
+        {
+          "x": 360.0,
+          "y": 360.0
+        },
+        {
+          "x": 540.0,
+          "y": 360.0
+        },
+        {
+          "x": 540.0,
+          "y": 320.0
+        },
+        {
+          "x": 540.0,
+          "y": 360.0
+        },
+        {
+          "x": 600.0,
+          "y": 360.0
+        },
+        {
+          "x": 640.0,
+          "y": 360.0
+        },
+        {
+          "x": 640.0,
+          "y": 270.0
+        },
+        {
+          "x": 640.0,
+          "y": 410.0
+        },
+        {
+          "x": 590.0,
+          "y": 410.0
+        },
+        {
+          "x": 640.0,
+          "y": 410.0
+        },
+        {
+          "x": 640.0,
+          "y": 460.0
+        }
+      ],
+      "fluid": "oxidizer",
+      "connects": [],
+      "dotted": false
+    },
+    {
+      "id": "line_3",
+      "points": [
+        {
+          "x": 640.0,
+          "y": 460.0
+        },
+        {
+          "x": 640.0,
+          "y": 520.0
+        },
+        {
+          "x": 590.0,
+          "y": 520.0
+        },
+        {
+          "x": 640.0,
+          "y": 520.0
+        },
+        {
+          "x": 640.0,
+          "y": 580.0
+        },
+        {
+          "x": 610.0,
+          "y": 580.0
+        },
+        {
+          "x": 610.0,
+          "y": 610.0
+        },
+        {
+          "x": 610.0,
+          "y": 580.0
+        },
+        {
+          "x": 640.0,
+          "y": 580.0
+        },
+        {
+          "x": 670.0,
+          "y": 580.0
+        },
+        {
+          "x": 670.0,
+          "y": 610.0
+        },
+        {
+          "x": 670.0,
+          "y": 580.0
+        },
+        {
+          "x": 640.0,
+          "y": 580.0
+        }
+      ],
+      "fluid": "oxidizer",
+      "connects": [],
+      "dotted": false
+    },
+    {
+      "id": "line_6",
       "points": [
         {
           "x": 480.0,
-          "y": 240.0
+          "y": 230.0
         },
         {
           "x": 480.0,
@@ -1079,26 +1234,38 @@
         },
         {
           "x": 480.0,
-          "y": 40.0
+          "y": -50.0
         },
         {
           "x": 640.0,
-          "y": 40.0
+          "y": -50.0
         },
+        {
+          "x": 640.0,
+          "y": -90.0
+        },
+        {
+          "x": 640.0,
+          "y": 0.0
+        }
+      ],
+      "fluid": "fuel",
+      "connects": [],
+      "dotted": false
+    },
+    {
+      "id": "line_7",
+      "points": [
         {
           "x": 640.0,
           "y": 0.0
         },
         {
           "x": 640.0,
-          "y": 80.0
-        },
-        {
-          "x": 640.0,
-          "y": 240.0
+          "y": 140.0
         }
       ],
-      "fluid": "generic",
+      "fluid": "fuel",
       "connects": [],
       "dotted": false
     },
@@ -1107,20 +1274,44 @@
       "points": [
         {
           "x": 640.0,
-          "y": 160.0
+          "y": 60.0
         },
         {
           "x": 710.0,
-          "y": 160.0
+          "y": 60.0
         },
         {
           "x": 710.0,
-          "y": 220.0
+          "y": 170.0
+        }
+      ],
+      "fluid": "fuel",
+      "connects": [],
+      "dotted": true
+    },
+    {
+      "id": "line_13",
+      "points": [
+        {
+          "x": 710.0,
+          "y": 170.0
         },
         {
           "x": 710.0,
-          "y": 420.0
+          "y": 410.0
         },
+        {
+          "x": 710.0,
+          "y": 460.0
+        }
+      ],
+      "fluid": "fuel",
+      "connects": [],
+      "dotted": true
+    },
+    {
+      "id": "line_10",
+      "points": [
         {
           "x": 710.0,
           "y": 460.0
@@ -1131,38 +1322,62 @@
         },
         {
           "x": 710.0,
-          "y": 540.0
-        }
-      ],
-      "fluid": "generic",
-      "connects": [],
-      "dotted": true
-    },
-    {
-      "id": "line_13",
-      "points": [
+          "y": 560.0
+        },
         {
           "x": 640.0,
           "y": 610.0
-        },
-        {
-          "x": 710.0,
-          "y": 580.0
         }
       ],
-      "fluid": "generic",
+      "fluid": "fuel",
       "connects": [],
       "dotted": true
     },
     {
-      "id": "line_13",
+      "id": "line_14",
       "points": [
         {
-          "x": 650.0,
-          "y": 250.0
+          "x": 1000.0,
+          "y": 660.0
         },
         {
-          "x": 650.0,
+          "x": 1000.0,
+          "y": 590.0
+        },
+        {
+          "x": 1000.0,
+          "y": 490.0
+        },
+        {
+          "x": 1050.0,
+          "y": 490.0
+        },
+        {
+          "x": 1000.0,
+          "y": 490.0
+        },
+        {
+          "x": 1000.0,
+          "y": 440.0
+        }
+      ],
+      "fluid": "pressurant",
+      "connects": [],
+      "dotted": false
+    },
+    {
+      "id": "line_9",
+      "points": [
+        {
+          "x": 1000.0,
+          "y": 440.0
+        },
+        {
+          "x": 1000.0,
+          "y": 360.0
+        },
+        {
+          "x": 960.0,
           "y": 360.0
         },
         {
@@ -1182,62 +1397,27 @@
           "y": 360.0
         },
         {
-          "x": 940.0,
+          "x": 650.0,
           "y": 360.0
+        },
+        {
+          "x": 650.0,
+          "y": 250.0
         }
       ],
-      "fluid": "generic",
-      "connects": [],
-      "dotted": false
-    },
-    {
-      "id": "line_14",
-      "points": [
-        {
-          "x": 1000.0,
-          "y": 650.0
-        },
-        {
-          "x": 1000.0,
-          "y": 590.0
-        },
-        {
-          "x": 1000.0,
-          "y": 560.0
-        },
-        {
-          "x": 1000.0,
-          "y": 490.0
-        },
-        {
-          "x": 1040.0,
-          "y": 490.0
-        },
-        {
-          "x": 1000.0,
-          "y": 490.0
-        },
-        {
-          "x": 1000.0,
-          "y": 440.0
-        },
-        {
-          "x": 1000.0,
-          "y": 360.0
-        },
-        {
-          "x": 980.0,
-          "y": 360.0
-        }
-      ],
-      "fluid": "generic",
+      "fluid": "pressurant",
       "connects": [],
       "dotted": false
     }
   ],
   "parameters": {
     "tank_volume": 0.0,
-    "notes": ""
+    "notes": "",
+    "system_mawp": 1600.0,
+    "system_meop": 1300.0,
+    "system_mawp_message": "",
+    "system_meop_message": "",
+    "terminal_count_s": 9.5
   },
   "rules": [
     {
@@ -1248,6 +1428,7 @@
       "sensor_id": "",
       "expression": "P8 > 700",
       "description": "high chamber pressure",
+      "message_template": "P8 ({P8}) > 700",
       "target_valve": "",
       "close_valve_below": null,
       "soak_ms": 0
@@ -1260,6 +1441,7 @@
       "sensor_id": "",
       "expression": "P8 > P7",
       "description": "reverse flow",
+      "message_template": "P8 ({P8}) > P7 ({P7})",
       "target_valve": "",
       "close_valve_below": null,
       "soak_ms": 0
@@ -1272,6 +1454,7 @@
       "sensor_id": "",
       "expression": "P5 - P3 >= 5",
       "description": "high upstream pressure",
+      "message_template": "P5 ({P5}) > P3 ({P3}) by 5 PSI for > {soak_ms}ms",
       "target_valve": "",
       "close_valve_below": null,
       "soak_ms": 150
@@ -1284,6 +1467,7 @@
       "sensor_id": "",
       "expression": "P6 - P4 >= 5",
       "description": "high upstream pressure",
+      "message_template": "P6 ({P6}) > P4 ({P4}) by 5 PSI for > {soak_ms}ms",
       "target_valve": "",
       "close_valve_below": null,
       "soak_ms": 150
@@ -1296,6 +1480,7 @@
       "sensor_id": "",
       "expression": "P2 > 1375",
       "description": "high p2",
+      "message_template": "",
       "target_valve": "NCS3",
       "close_valve_below": 1250.0,
       "soak_ms": 0
@@ -1308,36 +1493,125 @@
       "sensor_id": "",
       "expression": "P2 > 1375",
       "description": "Warning: P2 > 1375. Opening NCS3...",
+      "message_template": "",
       "target_valve": "",
       "close_valve_below": null,
       "soak_ms": 0
     }
   ],
-  "sequence": [
+  "sequence": [],
+  "sequences": [
     {
-      "name": "Pressurization",
-      "time_offset": 0.0,
-      "open_valves": []
-    },
-    {
-      "name": "Fire",
-      "time_offset": 5.0,
-      "open_valves": [
-        "GV_1",
-        "GV_2",
-        "BV_3",
-        "VAL_1"
+      "id": "seq_default",
+      "name": "15 Second Fire",
+      "steps": [
+        {
+          "name": "Terminal Count",
+          "time_offset": 0.0,
+          "open_valves": [],
+          "is_terminal_count": true
+        },
+        {
+          "name": "Ignition 1",
+          "time_offset": 9.5,
+          "open_valves": [
+            "IGN_1",
+            "GV_1"
+          ],
+          "is_terminal_count": false
+        },
+        {
+          "name": "Main Valves",
+          "time_offset": 10.0,
+          "open_valves": [
+            "BV_3",
+            "GV_2",
+            "GV_1",
+            "IGN_1"
+          ],
+          "is_terminal_count": false
+        },
+        {
+          "name": "Ignition 2",
+          "time_offset": 10.4,
+          "open_valves": [
+            "IGN_2",
+            "IGN_1",
+            "GV_1",
+            "GV_2",
+            "BV_3"
+          ],
+          "is_terminal_count": false
+        },
+        {
+          "name": "Shutdown",
+          "time_offset": 15.0,
+          "open_valves": [],
+          "is_terminal_count": false
+        }
       ]
     },
     {
-      "name": "Kill and Vent",
-      "time_offset": 20.0,
-      "open_valves": [
-        "VAL_3",
-        "BV_3",
-        "GV_1",
-        "GV_2"
+      "id": "seq_d74eca00",
+      "name": "5 Second Fire",
+      "steps": [
+        {
+          "name": "Terminal Count",
+          "time_offset": 0.0,
+          "open_valves": [],
+          "is_terminal_count": true
+        },
+        {
+          "name": "Ignition 1",
+          "time_offset": 9.5,
+          "open_valves": [
+            "IGN_1",
+            "GV_1"
+          ],
+          "is_terminal_count": false
+        },
+        {
+          "name": "Main Valves",
+          "time_offset": 10.0,
+          "open_valves": [
+            "GV_1",
+            "GV_2",
+            "BV_3",
+            "IGN_1"
+          ],
+          "is_terminal_count": false
+        },
+        {
+          "name": "Ignition 2",
+          "time_offset": 10.4,
+          "open_valves": [
+            "IGN_1",
+            "IGN_2",
+            "GV_1",
+            "GV_2",
+            "BV_3"
+          ],
+          "is_terminal_count": false
+        },
+        {
+          "name": "Shutdown",
+          "time_offset": 15.0,
+          "open_valves": [],
+          "is_terminal_count": false
+        }
       ]
+    }
+  ],
+  "active_sequence_id": "seq_default",
+  "calc_channels": [
+    {
+      "id": "calc_57e94c77",
+      "label": "Thrust",
+      "role": "thrust",
+      "unit": "lbf",
+      "expression": "abs(LC1) + abs(LC2) + abs(LC3)",
+      "constants": {},
+      "enabled": true
     }
   ]
 }

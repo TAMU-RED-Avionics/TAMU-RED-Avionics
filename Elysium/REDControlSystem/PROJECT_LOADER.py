@@ -46,7 +46,7 @@ def _project_from_dict(d: dict, path: str) -> "PIDProject":
     import os as _os
     from PID_SCHEMA import (
         Component, Connection, LayoutPoint,
-        PipeLine, SystemParameters, AbortRule,
+        PipeLine, SystemParameters, AbortRule, CalcChannel, NamedSequence,
     )
     from PROJECT_SEQUENCE_EDITOR import SequenceStep
     proj = PIDProject(name=d.get("name", _os.path.basename(path)))
@@ -63,8 +63,21 @@ def _project_from_dict(d: dict, path: str) -> "PIDProject":
     proj.parameters = SystemParameters.from_dict(d.get("parameters", {}))
     for rd in d.get("rules", []):
         proj.rules.append(AbortRule.from_dict(rd))
-    for sd in d.get("sequence", []):
-        proj.sequence.append(SequenceStep.from_dict(sd))
+    for chd in d.get("calc_channels", []):
+        proj.calc_channels.append(CalcChannel.from_dict(chd))
+
+    if "sequences" in d:
+        proj.sequences = [NamedSequence.from_dict(sd) for sd in d.get("sequences", [])]
+        if not proj.sequences:
+            proj.sequences = [NamedSequence(id="seq_default", name="Default")]
+        proj.active_sequence_id = d.get("active_sequence_id", proj.sequences[0].id)
+        if proj.get_active_sequence() is None:
+            proj.active_sequence_id = proj.sequences[0].id
+    else:
+        legacy_steps = [SequenceStep.from_dict(sd) for sd in d.get("sequence", [])]
+        proj.sequences = [NamedSequence(id="seq_default", name="Default", steps=legacy_steps)]
+        proj.active_sequence_id = "seq_default"
+
     return proj
 
 def project_summary(project: PIDProject) -> str:
@@ -80,4 +93,4 @@ def project_summary(project: PIDProject) -> str:
     if n_steps:
         parts.append(f"{n_steps} sequence step{'s' if n_steps != 1 else ''}")
 
-    return f"{project.name}  v{project.version}  –  {', '.join(parts)}"
+    return f"{project.name}  v{project.version}  -  {', '.join(parts)}"

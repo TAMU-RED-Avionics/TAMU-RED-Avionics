@@ -1,15 +1,44 @@
 import os
+import re
+import math
+from collections import deque
 from datetime import datetime
 from typing import Optional
 
 import openpyxl
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QDialog, QLabel, QDialogButtonBox, QCheckBox, QMessageBox, QGroupBox
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QDialog, QLabel, QDialogButtonBox, QCheckBox, QMessageBox, QGroupBox, QComboBox
 from PyQt5.QtCore import QDate, Qt, QTimer, QDateTime
 from PyQt5.QtGui import QFont
 from PyQt5.QtCore import QObject, pyqtSignal
 from GUI_COMMS import EthernetClient
+
+_TEMPLATE_TOKEN_RE = re.compile(r"\{([A-Za-z0-9_]+)\}")
+
+
+def render_message_template(template: str, context: dict) -> str:
+    """Substitute {TOKEN} placeholders in a user-authored abort/warn message.
+
+    `context` maps both special keywords (e.g. "soak_ms", "threshold",
+    "value") and sensor names (e.g. "P5") to their current values. Lookup is
+    case-sensitive first (so a lowercase keyword like {soak_ms} isn't shadowed
+    by an unrelated sensor), then falls back to an upper-cased match so sensor
+    tokens work regardless of the case the user typed. Unknown tokens are left
+    as literal text (e.g. "{TYPO}") so a mistake is visible rather than silently
+    dropped.
+    """
+    def _repl(m: "re.Match") -> str:
+        key = m.group(1)
+        value = context.get(key)
+        if value is None:
+            value = context.get(key.upper())
+        if value is None:
+            return m.group(0)
+        return f"{value:.2f}" if isinstance(value, float) else str(value)
+
+    return _TEMPLATE_TOKEN_RE.sub(_repl, template)
+
 
 # This may be necessary for ongoing refactors but currently has no use
 class Signals(QObject):
@@ -22,7 +51,13 @@ class Signals(QObject):
     valve_updated = pyqtSignal(str, str)     # can be open, closed, or pending a response from the MCU
     sensor_updated = pyqtSignal(str, float, float)      # sensor_name, val, timestamp
     system_status = pyqtSignal(str)
-    
+
+    # Calculated performance channels (Mdot, Thrust, ...) recomputed whenever
+    # a sensor value changes. Payload is {channel_id: value_or_None} plus the
+    # two synthesized totals under the reserved keys "__mdot_total__" and
+    # "__isp__".
+    calc_values_changed = pyqtSignal(dict)
+
     # Auto-abort countdown signals (for thread-safe dialog creation)
     countdown_start = pyqtSignal(int, str, str)  # initial_seconds, valve_name, cmd_type
     countdown_update = pyqtSignal(int)  # remaining_seconds
@@ -64,7 +99,7 @@ class GUIController:
         # in a separate thread, therefore we must use a signal that pops out of it and back in here
         # to safely change things in the main thread as a result
         # self.signals.connected.connect(self.handle_connect)
-        self.signals.disconnected.connect(lambda reason: self.signals.abort_triggered.emit("DISCONNECTED", reason))
+        self.signals.disconnected.connect(self._on_disconnected)
         self.signals.abort_triggered.connect(self.handle_abort)
         self.signals.valve_updated.connect(self.update_valve_state)
         
@@ -78,13 +113,25 @@ class GUIController:
         self._ws = None                              # active Sheet
         self._xlsx_path: str = ""                   # full path of open file
 
-        # Sensor columns — rebuilt from project on load_project(); fallback to empty lists
+        # Sensor columns - rebuilt from project on load_project(); fallback to empty lists
         self.pt_keys:    list = []   # pressure transducers
         self.tc_keys:    list = []   # thermocouples
         self.lc_keys:    list = []   # load cells
 
         self.current_batch_sensors: set = set()
         self.latest_teensy_ts = ""
+
+        # Sensor pipeline:  wire value → calibration (gain·x + offset) → tare.
+        # raw_sensor_values holds calibrated-but-untared values (tare math
+        # works on top of calibration).
+        self.raw_sensor_values: dict = {}
+        self.tare_offsets: dict = {}
+        self.calibrations: dict = {}        # name -> (gain, offset)
+
+        # Health tracking: last receive time + recent uncalibrated samples
+        # (used for stale / flatline detection and the calibration wizard)
+        self.sensor_last_rx: dict = {}      # name -> unix seconds
+        self.sensor_recent: dict = {}       # name -> deque of wire values
 
         # These are constants and dictionaries that the UI needs to be tracked
         self.lockout = True                     # default to lockout until a connection starts
@@ -124,7 +171,7 @@ class GUIController:
         self.retry_timer.start(100) # Check every 100ms
 
         # Initial valve states: False = closed (red), True = open (green)
-        self.valve_states: Dict[str, bool] = {
+        self.valve_states: dict[str, bool] = {
             "NCS1": False,
             "NCS2": False,
             "NCS3": False,
@@ -135,9 +182,19 @@ class GUIController:
             "GV-2": False
         }
 
+        # hw_ids that are igniters, not valves - kept out of any automated
+        # cycling (health-check valve checkout). They still live in
+        # valve_states (so "Fully Closed" can safe one left firing).
+        self.igniter_hw_ids: set = set()
+
         # Sequence execution runtime state
         self._sequence_timers: list[QTimer] = []   # kept alive during a fire sequence run
-        
+
+        # Calculated performance channels (Mdot, Thrust, Isp, ...) - recomputed
+        # any time a sensor value updates.
+        self.calc_values: dict = {}
+        self.signals.sensor_updated.connect(lambda *_args: self._recompute_calc_channels())
+
         self.setup_abort_monitor()
     
 
@@ -156,9 +213,28 @@ class GUIController:
             return "Permission Denied"
         return "Connection Failed"
     
+    def _on_disconnected(self, reason: str):
+        """A dropped link is treated as an abort; an operator-requested
+        disconnect (graceful_disconnect) just returns to the idle state."""
+        if self.ethernet_client.intentional_disconnect:
+            self.ethernet_client.intentional_disconnect = False
+            self.lockout = True   # same as pre-connection: nothing commandable
+            self.signals.system_status.emit("Disconnected (safe)")
+            return
+        self.signals.abort_triggered.emit("DISCONNECTED", reason)
+
+    def request_safe_disconnect(self):
+        """Operator disconnect: notify the MCU (SFE) and tear the link down
+        without the abort path firing."""
+        self.log_event("OPERATOR_DISCONNECT", "Safe disconnect requested")
+        self.ethernet_client.graceful_disconnect()
+
     def handle_connect(self, success: bool):
         if success:
             self.ethernet_client.set_system_state("CONNECTED")
+            # Clear any stale status text left over from a prior disconnect
+            # (e.g. "Disconnected (safe)") so it doesn't linger after reconnect.
+            self.signals.system_status.emit("")
             self.signals.connected.emit()
         else:
             detailed_reason = self.ethernet_client.last_connection_error or "Connection failed"
@@ -176,20 +252,27 @@ class GUIController:
             self.project_path = path
         self._rebuild_sensor_keys(project)
         self._rebuild_valve_states(project)
+        self.load_calibrations_from_project(project)
         self.reload_abort_rules(project)
         self.ethernet_client.load_project_maps(project)
         self._emit_warnings()
+        self._recompute_calc_channels()
 
     def _rebuild_valve_states(self, project):
         """Rebuild valve_states from project valve components (hw_id -> bool).
         Existing states are preserved for valves that carry over; new valves start closed."""
-        from PID_SCHEMA import COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE, COMP_GLOBE_VALVE, COMP_SOLENOID
-        VALVE_TYPES = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE, COMP_GLOBE_VALVE, COMP_SOLENOID)
+        from PID_SCHEMA import (
+            COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE, COMP_GLOBE_VALVE,
+            COMP_SOLENOID, COMP_IGNITER,
+        )
+        VALVE_TYPES = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
+                       COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER)
 
         if not project:
             return
 
-        new_states: Dict[str, bool] = {}
+        new_states: dict[str, bool] = {}
+        new_igniters: set = set()
         for comp in project.components.values():
             if comp.type not in VALVE_TYPES:
                 continue
@@ -198,8 +281,11 @@ class GUIController:
                 continue
             # Preserve state if valve was already known, default to closed
             new_states[hw_id] = self.valve_states.get(hw_id, False)
+            if comp.type == COMP_IGNITER:
+                new_igniters.add(hw_id)
 
         self.valve_states = new_states
+        self.igniter_hw_ids = new_igniters
 
     def _rebuild_sensor_keys(self, project):
         from PID_SCHEMA import COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL
@@ -292,6 +378,9 @@ class GUIController:
                     "close_below":  close_below,
                     "soak_ms":      th.soak_ms,
                     "above":        True,
+                    # Optional custom {TOKEN} message template for this band -
+                    # blank means fall back to the built-in default wording.
+                    "message":      th_dict.get(f"{band}_message", ""),
                 })
 
         for rule in project.rules:
@@ -337,6 +426,63 @@ class GUIController:
             return "BLUE"
         return "DEFAULT"
 
+    # ── Calculated performance channels (Mdot / Thrust / Isp) ──────────────
+    # Standard gravity, used for Isp(s) = Thrust(lbf) / (Mdot(lbm/s) * G0).
+    # Exposed inside channel expressions too (as G0) for anyone writing a
+    # custom formula that needs it.
+    G0 = 32.174
+
+    _CALC_SAFE_FUNCS = {
+        "sqrt": math.sqrt, "abs": abs, "min": min, "max": max, "pow": pow,
+        "G0": G0,
+    }
+
+    def _recompute_calc_channels(self):
+        """Evaluate every CalcChannel against the current sensor values and
+        each channel's own constants, the same Python-safe-expression
+        approach already used for abort-rule expressions. Also synthesizes
+        Total Mdot (sum of mdot_fuel + mdot_ox roles) and Isp
+        (thrust / (total_mdot * G0))."""
+        values: dict = {}
+        channels = list(getattr(self.project, "calc_channels", []) or []) if self.project else []
+
+        for ch in channels:
+            if not ch.enabled or not ch.expression.strip():
+                values[ch.id] = None
+                continue
+            ctx = dict(self._CALC_SAFE_FUNCS)
+            ctx.update(self.current_sensor_values)
+            ctx.update(ch.constants)
+            try:
+                values[ch.id] = float(eval(ch.expression, {"__builtins__": {}}, ctx))
+            except Exception:
+                values[ch.id] = None
+
+        mdot_total = 0.0
+        have_mdot = False
+        thrust_total = 0.0
+        have_thrust = False
+        for ch in channels:
+            v = values.get(ch.id)
+            if v is None:
+                continue
+            if ch.role in ("mdot_fuel", "mdot_ox"):
+                mdot_total += v
+                have_mdot = True
+            elif ch.role == "thrust":
+                thrust_total += v
+                have_thrust = True
+
+        values["__mdot_total__"] = mdot_total if have_mdot else None
+        values["__thrust_total__"] = thrust_total if have_thrust else None
+        if have_thrust and have_mdot and mdot_total > 0:
+            values["__isp__"] = thrust_total / (mdot_total * self.G0)
+        else:
+            values["__isp__"] = None
+
+        self.calc_values = values
+        self.signals.calc_values_changed.emit(values)
+
 
     def check_abort_conditions(self):
         if not self.current_sensor_values:
@@ -345,6 +491,8 @@ class GUIController:
         locked_out = self.lockout
 
         current_time = QDateTime.currentMSecsSinceEpoch()
+
+        self._check_system_pressure_limits(locked_out)
 
         for sr in self._sensor_rules:
             hw_id = sr["hw_id"].upper()
@@ -369,7 +517,7 @@ class GUIController:
                         self._rule_valve_open[sr["id"]] = False
                 continue
 
-            # Violation detected — handle soak time
+            # Violation detected - handle soak time
             soak = sr["soak_ms"]
             if soak > 0:
                 if sr["id"] not in self._rule_violation_start:
@@ -383,19 +531,80 @@ class GUIController:
         for rule in self._logic_rules:
             self._check_logic_rule(rule, current_time, locked_out)
 
+    # Per-sensor threshold band -> display word. Internal dict keys/extras
+    # stay "mawp" for backward file compatibility; only the shown text changed.
+    _BAND_DISPLAY = {"mawp": "HIGH", "meop": "MEOP", "relief": "RELIEF"}
+
+    def _check_system_pressure_limits(self, locked_out: bool):
+        """System-wide backstop across all PTs, independent of (and in
+        addition to) the per-sensor thresholds: warn above system MEOP,
+        abort at 95% of system MAWP."""
+        params = getattr(self.project, "parameters", None) if self.project else None
+        if not params:
+            return
+
+        mawp = getattr(params, "system_mawp", None)
+        meop = getattr(params, "system_meop", None)
+        if mawp is None and meop is None:
+            return
+
+        abort_limit = 0.95 * mawp if mawp is not None else None
+
+        for hw_id in self.pt_keys:
+            key = hw_id.upper()
+            value = self.current_sensor_values.get(key)
+            if value is None:
+                continue
+
+            if abort_limit is not None and value >= abort_limit:
+                self._clear_warning(f"system_meop__{key}")
+                if not locked_out:
+                    ctx = self._sensor_message_context(value=value, threshold=abort_limit,
+                                                       limit=abort_limit, mawp=mawp)
+                    template = (params.system_mawp_message.strip() if params.system_mawp_message
+                               else f"{key} ({{{key}}}) exceeds 95% of system MAWP "
+                                    "({mawp} psi -> limit {limit} psi)")
+                    detail = render_message_template(template, ctx)
+                    self.signals.abort_triggered.emit("system_mawp", detail)
+                continue
+
+            if meop is not None and value >= meop:
+                ctx = self._sensor_message_context(value=value, threshold=meop, limit=meop)
+                template = (params.system_meop_message.strip() if params.system_meop_message
+                           else f"{key} ({{{key}}}) is above system MEOP (limit {{limit}} psi)")
+                self._set_warning(f"system_meop__{key}", render_message_template(template, ctx))
+            else:
+                self._clear_warning(f"system_meop__{key}")
+
+    def _sensor_message_context(self, **extra) -> dict:
+        """Base context for message templates: every live sensor value plus
+        whatever special keywords (value/threshold/soak_ms/...) the caller
+        supplies for this specific rule."""
+        ctx = dict(self.current_sensor_values)
+        ctx.update(extra)
+        return ctx
+
     def _fire_sensor_rule(self, sr: dict, hw_id: str, value: float, locked_out: bool = False):
         action  = sr["action"]
         band    = sr["band"]
         rule_id = sr["id"]
-        message = f"{hw_id} {band.upper()} threshold exceeded: {value:.2f}"
+        band_disp = self._BAND_DISPLAY.get(band, band.upper())
+
+        ctx = self._sensor_message_context(
+            value=value, threshold=sr["threshold"], soak_ms=sr["soak_ms"],
+            hw_id=hw_id, band=band_disp,
+        )
+        template = sr["message"].strip() if sr.get("message") else (
+            "{hw_id} {band} threshold exceeded: {value} (limit {threshold})")
+        message = render_message_template(template, ctx)
 
         if action == "abort":
             if locked_out:
                 return
-            self.signals.abort_triggered.emit(
-                rule_id,
-                message
-            )
+            # Show "P1 HIGH" (derived from the sensor's own hw_id/band), never
+            # the internal rule_id ("PT_1__mawp") - nothing here is hardcoded,
+            # it's built from this sensor's own configuration.
+            self.signals.abort_triggered.emit(f"{hw_id} {band_disp}", message)
 
         elif action == "warn":
             # Keep a persistent UI warning without escalating to abort.
@@ -446,10 +655,13 @@ class GUIController:
         if rule.action == "abort":
             if locked_out:
                 return
-            self.signals.abort_triggered.emit(
-                rule_id,
-                rule.description or rule.expression
-            )
+            message = self._render_logic_rule_message(rule)
+            # Show the rule's own description ("high chamber pressure"), set
+            # by the operator in Abort Config - never the auto-generated
+            # rule_id ("logic_rule_3"). Falls back to the expression, then
+            # the id, only if the operator left description blank.
+            label = rule.description.strip() or rule.expression.strip() or rule_id
+            self.signals.abort_triggered.emit(label, message)
         elif rule.action == "open_valve":
             if locked_out:
                 return
@@ -460,9 +672,30 @@ class GUIController:
                 self.log_event("AUTO_VALVE_OPEN",
                                f"Rule {rule_id}: opened {rule.target_valve}")
         elif rule.action == "warn":
-            msg = rule.description or rule.expression
+            msg = self._render_logic_rule_message(rule)
             self._set_warning(rule_id, msg)
             self.log_event("WARN", f"Rule {rule_id}: {msg}")
+
+    def _auto_template_from_expression(self, expression: str) -> str:
+        """Best-effort default template for a logic rule with no custom
+        message: wraps each referenced sensor name with its live value, e.g.
+        'P5 > P3' -> 'P5 ({P5}) > P3 ({P3})'."""
+        def _repl(m: "re.Match") -> str:
+            name = m.group(0)
+            return f"{name} ({{{name}}})" if name in self.current_sensor_values else name
+        return re.sub(r"[A-Za-z_][A-Za-z0-9_]*", _repl, expression)
+
+    def _render_logic_rule_message(self, rule) -> str:
+        """Custom {TOKEN} message_template if the user configured one in Abort
+        Config, else an auto-generated 'P5 (600) > P3 (595) for 150ms'-style
+        message from the expression - never a blanket dump of every sensor."""
+        ctx = self._sensor_message_context(soak_ms=rule.soak_ms, expression=rule.expression)
+        template = rule.message_template.strip()
+        if not template:
+            template = rule.description.strip() or self._auto_template_from_expression(rule.expression)
+            if rule.soak_ms > 0 and "{soak_ms}" not in template:
+                template += " for {soak_ms}ms"
+        return render_message_template(template, ctx)
 
     def trigger_manual_abort(self):
         """Manual abort button handler (Req 11)"""
@@ -482,7 +715,7 @@ class GUIController:
         )
 
     def toggle_abort_mode(self, mode, state):
-        """Legacy stub — abort modes are now stored in project rules."""
+        """Legacy stub - abort modes are now stored in project rules."""
         pass
 
 
@@ -502,10 +735,16 @@ class GUIController:
         for valve in self.valve_states.keys():
             self.toggle_valve(valve, False)
 
-        # Show abort popup (Req 20)
+        # `reason` is already a specific, relevant message by this point -
+        # sensor-threshold and logic-rule aborts render it from a (customizable,
+        # see Abort Config) {TOKEN} template naming exactly the sensors
+        # involved, e.g. "P5 (600.00) > P3 (595.00) for 150ms". Triggers with
+        # no sensor context (manual abort, comms loss, disconnect) just show
+        # their reason as-is. Dumping every PT's value on every abort regardless
+        # of relevance was more noise than signal, so that's gone.
         QMessageBox.critical(
             self.parent, # has to bind to a real widget
-            "ABORT TRIGGERED", 
+            "ABORT TRIGGERED",
             f"Abort Type: {abort_type}\nReason: {reason}"
         )
 
@@ -737,7 +976,18 @@ class GUIController:
                 try:
                     parts = reading.split(':', 1)
                     sensor_name = parts[0].strip().upper()
-                    value = float(parts[1].strip())
+                    wire = float(parts[1].strip())
+
+                    self.sensor_last_rx[sensor_name] = timestamp
+                    recent = self.sensor_recent.get(sensor_name)
+                    if recent is None:
+                        recent = self.sensor_recent[sensor_name] = deque(maxlen=20)
+                    recent.append(wire)
+
+                    gain, offset = self.calibrations.get(sensor_name, (1.0, 0.0))
+                    raw = wire * gain + offset
+                    self.raw_sensor_values[sensor_name] = raw
+                    value = raw - self.tare_offsets.get(sensor_name, 0.0)
                     self.current_sensor_values[sensor_name] = value
                     self.signals.sensor_updated.emit(sensor_name, value, timestamp)
                     
@@ -756,6 +1006,83 @@ class GUIController:
         if teensy_ts:
             self.latest_teensy_ts = teensy_ts
 
+    def tare_sensor(self, sensor_name: str, target: float) -> bool:
+        """Tare so the sensor's current raw reading displays as `target`.
+        Returns False when no reading has been received yet."""
+        name = sensor_name.upper()
+        raw = self.raw_sensor_values.get(name)
+        if raw is None:
+            return False
+        self.tare_offsets[name] = raw - target
+        self.current_sensor_values[name] = target
+        timestamp = QDateTime.currentMSecsSinceEpoch() / 1000.0
+        self.signals.sensor_updated.emit(name, target, timestamp)
+        self.log_event("TARE", f"{name}:{target:g} (offset {raw - target:+.4f})")
+        return True
+
+    def clear_tare(self, sensor_name: str):
+        name = sensor_name.upper()
+        if name not in self.tare_offsets:
+            return
+        del self.tare_offsets[name]
+        raw = self.raw_sensor_values.get(name)
+        if raw is not None:
+            self.current_sensor_values[name] = raw
+            timestamp = QDateTime.currentMSecsSinceEpoch() / 1000.0
+            self.signals.sensor_updated.emit(name, raw, timestamp)
+        self.log_event("TARE_CLEARED", name)
+
+    def set_calibration(self, sensor_name: str, gain: float, offset: float):
+        """Install a linear calibration (display = gain·wire + offset) and
+        refresh the sensor's displayed value from its latest wire sample."""
+        name = sensor_name.upper()
+        self.calibrations[name] = (gain, offset)
+        recent = self.sensor_recent.get(name)
+        if recent:
+            raw = recent[-1] * gain + offset
+            self.raw_sensor_values[name] = raw
+            value = raw - self.tare_offsets.get(name, 0.0)
+            self.current_sensor_values[name] = value
+            self.signals.sensor_updated.emit(
+                name, value, QDateTime.currentMSecsSinceEpoch() / 1000.0)
+        self.log_event("CALIBRATION", f"{name}: gain={gain:.6g} offset={offset:.6g}")
+
+    def clear_calibrations(self):
+        self.calibrations.clear()
+        self.log_event("CALIBRATION", "All calibrations cleared")
+
+    def load_calibrations_from_project(self, project):
+        """Pick up per-sensor cal_gain / cal_offset stored in component extras."""
+        if not project:
+            return
+        for comp in project.components.values():
+            hw_id = (comp.extras.get("hw_id") or comp.label or comp.id)
+            try:
+                gain = float(comp.extras["cal_gain"])
+                offset = float(comp.extras.get("cal_offset", 0.0))
+            except (KeyError, TypeError, ValueError):
+                continue
+            self.calibrations[str(hw_id).upper()] = (gain, offset)
+
+    def project_lock_required(self) -> bool:
+        """Whether project selection / Open P&ID should be locked right now.
+
+        Locked once the operator has confirmed safe state (the system is
+        live) or while any valve is open. Unlocked again once back in a
+        not-yet-confirmed, fully-closed state - e.g. freshly connected but
+        before Confirm Safe State, or after an abort once everything has
+        actually closed.
+        """
+        return (not self.lockout) or any(self.valve_states.values())
+
+    def close_all_valves(self):
+        """Return the system to fully closed without aborting."""
+        open_valves = [v for v, is_open in self.valve_states.items() if is_open]
+        for v in open_valves:
+            self.toggle_valve(v, False)
+        if open_valves:
+            self.log_event("FULLY_CLOSED", f"Closed: {', '.join(open_valves)}")
+
     def toggle_throttling(self):
         self.throttling_enabled = not self.throttling_enabled
 
@@ -773,7 +1100,11 @@ class GUIController:
             QMessageBox.warning(self.parent, "Abort Active", "Auto fire sequence cannot be activated during an abort")
             return
 
-        if not self.project or not getattr(self.project, "sequence", None):
+        # ── Resolve available sequences ──────────────────────────────────────
+        named_sequences = getattr(self.project, "sequences", []) if self.project else []
+        legacy_steps    = getattr(self.project, "sequence",  []) if self.project else []
+
+        if not named_sequences and not legacy_steps:
             QMessageBox.warning(
                 self.parent, "No Sequence",
                 "The loaded project has no auto-fire sequence defined.\n"
@@ -781,15 +1112,36 @@ class GUIController:
             )
             return
 
-        steps = self.project.sequence
-
         # ── Confirmation dialog ──────────────────────────────────────────────
         confirm_dialog = QDialog(self.parent)
         confirm_dialog.setWindowTitle("Confirm Auto-Fire Sequence")
         c_layout = QVBoxLayout(confirm_dialog)
-        c_layout.addWidget(QLabel(f"Execute auto-fire sequence?\n\n"
-                                  f"Steps: {len(steps)}\n"
-                                  f"Total duration: {steps[-1].time_offset:.1f} s"))
+
+        # Resolve the active sequence steps and name
+        steps = legacy_steps
+        seq_name = "Legacy Sequence"
+        active_id = getattr(self.project, "active_sequence_id", "")
+        if named_sequences and active_id:
+            for ns in named_sequences:
+                if ns.id == active_id:
+                    steps = ns.steps
+                    seq_name = ns.name
+                    break
+        elif named_sequences:
+            steps = named_sequences[0].steps
+            seq_name = named_sequences[0].name
+
+        if not steps:
+            QMessageBox.warning(self.parent, "Empty Sequence", "The selected sequence has no steps.")
+            return
+
+        info_label = QLabel(
+            f"Execute auto-fire sequence: {seq_name}?\n\n"
+            f"Steps: {len(steps)}\n"
+            f"Total duration: {steps[-1].time_offset:.1f} s"
+        )
+        c_layout.addWidget(info_label)
+
         buttons = QDialogButtonBox(QDialogButtonBox.Yes | QDialogButtonBox.Cancel)
         buttons.accepted.connect(confirm_dialog.accept)
         buttons.rejected.connect(confirm_dialog.reject)
@@ -797,45 +1149,23 @@ class GUIController:
         if confirm_dialog.exec_() != QDialog.Accepted:
             return
 
-        # ── Pre-ignition countdown (10 s) ────────────────────────────────────
-        countdown_dialog = QDialog(self.parent)
-        countdown_dialog.setWindowTitle("Auto-Fire Sequence")
-        countdown_dialog.setMinimumSize(300, 150)
-        cd_layout = QVBoxLayout(countdown_dialog)
-
-        self.countdown_label = QLabel("Sequence starts in 10 seconds…")
-        self.countdown_label.setAlignment(Qt.AlignCenter)
-        cd_layout.addWidget(self.countdown_label)
-
-        cancel_btn = QPushButton("CANCEL")
-        cancel_btn.setStyleSheet("background-color: red; color: white;")
-        cd_layout.addWidget(cancel_btn)
-
-        self.countdown_value = 10
-        self.countdown_timer = QTimer()
-        self.countdown_timer.setInterval(1000)
-
-        def update_countdown():
-            self.countdown_value -= 1
-            if self.countdown_value > 0:
-                self.countdown_label.setText(f"Sequence starts in {self.countdown_value} seconds…")
-            else:
-                self.countdown_timer.stop()
-                countdown_dialog.accept()
-
-        def cancel_sequence():
-            self.countdown_timer.stop()
-            countdown_dialog.reject()
-
-        self.countdown_timer.timeout.connect(update_countdown)
-        cancel_btn.clicked.connect(cancel_sequence)
-        self.countdown_timer.start()
-
-        if countdown_dialog.exec_() != QDialog.Accepted:
+        if not any(getattr(s, "is_terminal_count", False) for s in steps):
+            QMessageBox.warning(
+                self.parent, "No Terminal Count State",
+                "The sequence must include a state marked as 'Terminal Count' "
+                "before it can be auto-fired.\n\n"
+                "Open the Sequencing tab, select the hold state, and check "
+                "'This is the Terminal Count state'."
+            )
             return
 
         # ── Schedule each sequence step as a QTimer shot ────────────────────
-        # Cancel any previously running sequence first
+        # No artificial pre-delay here: the terminal-count hold IS one of the
+        # steps below, scheduled at its own time_offset like any other step.
+        # A live "TERMINAL COUNT" overlay (see _execute_sequence_step) shows
+        # its countdown in real time instead of blocking beforehand - so the
+        # operator sees exactly one countdown, not a generic wait stacked on
+        # top of the step's own hold.
         self._cancel_sequence()
 
         for step in steps:
@@ -846,7 +1176,8 @@ class GUIController:
             t.start(delay_ms)
             self._sequence_timers.append(t)
 
-        self.log_event("SEQUENCE:START", f"{len(steps)} steps")
+        self.log_event("SEQUENCE:START", f"{len(steps)} steps ({seq_name})")
+
 
     def _execute_sequence_step(self, step):
         """Apply one sequence step: set every known valve to its desired state.
@@ -874,6 +1205,60 @@ class GUIController:
         self.ethernet_client.set_system_state(step.name)
         self.signals.system_status.emit(step.name)
         self.log_event("SEQUENCE:STEP", step.name)
+
+        if getattr(step, "is_terminal_count", False):
+            tc_length = getattr(self.project.parameters, "terminal_count_s", 10.0)
+            self._show_terminal_count_overlay(step.name, tc_length)
+
+    def _show_terminal_count_overlay(self, step_name: str, seconds: float):
+        """Live, non-blocking T-minus display for the terminal-count hold.
+
+        This is purely a visual/cancel affordance - it does not delay or
+        reschedule anything. The step's own position in the sequence (its
+        time_offset relative to the next step) is what actually determines
+        how long the hold lasts; this overlay just counts down alongside it.
+        """
+        length = max(int(round(seconds)), 1)
+
+        dlg = QDialog(self.parent)
+        dlg.setWindowTitle("Terminal Count")
+        dlg.setMinimumSize(300, 150)
+        dlg.setModal(False)
+        lay = QVBoxLayout(dlg)
+
+        label = QLabel(f"{step_name}\nT-{length}")
+        label.setAlignment(Qt.AlignCenter)
+        font = label.font(); font.setPointSize(14); font.setBold(True)
+        label.setFont(font)
+        lay.addWidget(label)
+
+        cancel_btn = QPushButton("CANCEL SEQUENCE")
+        cancel_btn.setStyleSheet("background-color: red; color: white;")
+        lay.addWidget(cancel_btn)
+
+        remaining = [length]
+        timer = QTimer(dlg)
+        timer.setInterval(1000)
+
+        def tick():
+            remaining[0] -= 1
+            if remaining[0] <= 0:
+                timer.stop()
+                dlg.close()
+            else:
+                label.setText(f"{step_name}\nT-{remaining[0]}")
+
+        def do_cancel():
+            timer.stop()
+            self._cancel_sequence()
+            self.close_all_valves()
+            self.log_event("SEQUENCE:CANCELED", f"Canceled during terminal count ({step_name})")
+            dlg.close()
+
+        timer.timeout.connect(tick)
+        cancel_btn.clicked.connect(do_cancel)
+        timer.start()
+        dlg.show()
 
     def _cancel_sequence(self):
         """Stop all pending sequence timers."""

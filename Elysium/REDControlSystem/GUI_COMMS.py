@@ -112,6 +112,10 @@ class EthernetClient:
         self.ack_timeout: int = 60                          # ms to wait for ACK before retry
         self.max_retries: int = 10                          # Maximum retry attempts
 
+        # Set when the operator requests a clean disconnect so the GUI layer
+        # can tell it apart from a link failure (which triggers an abort).
+        self.intentional_disconnect: bool = False
+
         # System state and auto-abort countdown behavior
         self.system_state: str = "NONE"
         self.auto_abort_countdown_ms: int = 10000            # 10 seconds
@@ -133,12 +137,17 @@ class EthernetClient:
         """
         from PID_SCHEMA import (
             COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
-            COMP_GLOBE_VALVE, COMP_SOLENOID,
+            COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER,
             COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL,
         )
 
+        # Igniters fire through the same PKT_VSO/PKT_VSC relay commands as
+        # valves (confirmed against Virtual_Teensy_3's vt_comms.py, which maps
+        # relay IDs 0x30/0x31 to "IG1"/"IG2" and handles them identically to
+        # every other valve in handle_valve_command) - so they need a relay
+        # mapping here too, or send_valve_command silently no-ops for them.
         VALVE_TYPES  = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
-                        COMP_GLOBE_VALVE, COMP_SOLENOID)
+                        COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER)
         SENSOR_TYPES = (COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL)
 
         new_valve_map:  dict[str, int] = {}
@@ -169,7 +178,7 @@ class EthernetClient:
                 else:
                     ch = int(adc)
                     if ch in new_sensor_map:
-                        print(f"[EthernetClient] WARNING: ADC ch {ch} collision — "
+                        print(f"[EthernetClient] WARNING: ADC ch {ch} collision - "
                               f"'{new_sensor_map[ch]}' vs '{hw_id}'. Keeping first.")
                     else:
                         new_sensor_map[ch] = hw_id
@@ -719,6 +728,30 @@ class EthernetClient:
                     self.log_event_callback(f"VALVE_CMD:{valve_name}:{state_str}")
             except Exception as e:
                 print(f"Valve command error: {e}")
+
+    def graceful_disconnect(self):
+        """Operator-requested disconnect: tell the MCU we are leaving on
+        purpose (PKT_SFE → it enters safe mode and expects us to go away),
+        then tear the link down without the abort path firing."""
+        if not self.connected:
+            return
+
+        self.intentional_disconnect = True
+
+        # UDP gives no delivery guarantee and we're about to stop listening
+        # for ACKs, so send the safe-mode notice a few times.
+        for _ in range(3):
+            try:
+                sfe_packet = EGCPPacket(self._get_next_tx_id(), EGCPPacket.PKT_SFE)
+                self._send_packet(sfe_packet)
+                time.sleep(0.01)
+            except Exception:
+                break
+
+        if self.log_event_callback:
+            self.log_event_callback("SAFE_DISCONNECT", "Operator requested disconnect; SFE sent to MCU")
+
+        self.disconnect("Operator disconnected")
 
     def disconnect(self, reason: str):
         # Bounce if we are already disconnected

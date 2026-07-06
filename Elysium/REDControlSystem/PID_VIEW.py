@@ -11,7 +11,7 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from PID_SCHEMA import (
     PIDProject, Component,
     COMP_VALVE, COMP_THROTTLE_VALVE, COMP_PRESSURE, COMP_TEMPERATURE,
-    COMP_LOAD_CELL, COMP_BALL_VALVE, COMP_GLOBE_VALVE, COMP_SOLENOID,
+    COMP_LOAD_CELL, COMP_BALL_VALVE, COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER,
 )
 from PID_CANVAS import PIDCanvas
 
@@ -73,8 +73,6 @@ class PIDViewWindow(QWidget):
         self._comp_to_valve_hw: dict = {}
         self._sensor_hw_to_comp: dict = {}
 
-        self._lc_values: dict = {}
-
         self._build_ui()
         self._connect_signals()
 
@@ -99,7 +97,8 @@ class PIDViewWindow(QWidget):
             tb_layout.addWidget(b)
             return b
 
-        tb_btn("Open P&ID…", self._open_project)
+        # "&&" renders a literal ampersand (a single "&" becomes a mnemonic underline)
+        self._open_btn = tb_btn("Open P&&ID…", self._open_project)
         tb_btn("Fit View [F]", self._fit_view)
         tb_layout.addWidget(_vsep())
 
@@ -119,18 +118,15 @@ class PIDViewWindow(QWidget):
         self.canvas.component_clicked.connect(self._on_comp_clicked)
         self.canvas.valve_open_requested.connect(self._on_valve_open_requested)
         self.canvas.valve_close_requested.connect(self._on_valve_close_requested)
-        root.addWidget(self.canvas)
+        root.addWidget(self.canvas, stretch=1)
 
         status_row = QWidget()
         status_layout = QHBoxLayout(status_row)
         status_layout.setContentsMargins(8, 2, 8, 2)
+        status_layout.setSpacing(18)
         self._status = QLabel("Open a .red file to display the live P&ID.")
         status_layout.addWidget(self._status)
         status_layout.addStretch()
-
-        self._total_thrust_label = QLabel("Total Thrust: — N")
-        self._total_thrust_label.setStyleSheet("font-weight: bold;")
-        status_layout.addWidget(self._total_thrust_label)
 
         root.addWidget(status_row)
 
@@ -143,6 +139,23 @@ class PIDViewWindow(QWidget):
         c.signals.safe_state.connect(self._on_safe_state)
         c.signals.valve_updated.connect(self._on_valve_updated)
         c.signals.sensor_updated.connect(self._on_sensor_updated)
+
+        # Same lock rule as the project selector: locked once safe state is
+        # confirmed (live) or while any valve is open. See
+        # GUIController.project_lock_required().
+        c.signals.connected.connect(self._refresh_open_lock)
+        c.signals.abort_triggered.connect(lambda *_: self._refresh_open_lock())
+        c.signals.safe_state.connect(self._refresh_open_lock)
+        c.signals.disconnected.connect(lambda _: self._refresh_open_lock())
+        c.signals.valve_updated.connect(lambda *_: self._refresh_open_lock())
+
+    def _refresh_open_lock(self):
+        self._set_open_locked(self.controller.project_lock_required())
+
+    def _set_open_locked(self, locked: bool):
+        self._open_btn.setEnabled(not locked)
+        self._open_btn.setToolTip(
+            "Locked while the system is live or a valve is open" if locked else "")
 
     def _open_project(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -164,7 +177,8 @@ class PIDViewWindow(QWidget):
         self._status.setText(f"Loaded: {project.name}  "
                              f"({len(project.components)} components, "
                              f"{len(project.lines)} pipes)")
-        VALVE_TYPES = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE, COMP_GLOBE_VALVE, COMP_SOLENOID)
+        VALVE_TYPES = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
+                       COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER)
         for cid, comp in project.components.items():
             if comp.type in VALVE_TYPES:
                 self.canvas.update_valve_state(cid, "CLOSED")
@@ -178,8 +192,9 @@ class PIDViewWindow(QWidget):
         if not self._project:
             return
 
-        VALVE_TYPES = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE, COMP_GLOBE_VALVE, COMP_SOLENOID)
-    
+        VALVE_TYPES = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
+                       COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER)
+
         for cid, comp in self._project.components.items():
             if comp.type in VALVE_TYPES:
                 hw_id = comp.extras.get("hw_id", comp.label)
@@ -218,23 +233,19 @@ class PIDViewWindow(QWidget):
             self.canvas.update_valve_state(hw_name, state)
 
     def _on_sensor_updated(self, hw_name: str, value: float, timestamp: float):
+        # Total Thrust / Total Mdot / Isp are computed from the project's own
+        # CalcChannel formulas (see GUI_PERFORMANCE.py's PerformanceBar / gear
+        # icon in the bottom action bar) rather than a hardcoded load-cell sum.
         cid = self._sensor_hw_to_comp.get(hw_name)
         if cid:
-            comp = self._project.components.get(cid)
-            if comp and comp.type == COMP_LOAD_CELL:
-                self._lc_values[cid] = value
-                total = sum(self._lc_values.values())
-                self._total_thrust_label.setText(f"Total Thrust: {total:.1f} N")
-                self.canvas.update_sensor_value(cid, value)
-            else:
-                self.canvas.update_sensor_value(cid, value)
+            self.canvas.update_sensor_value(cid, value)
 
 
     def _on_valve_open_requested(self, cid: str):
         hw_id = self._comp_to_valve_hw.get(cid, cid)
         print(f"HW_ID: {hw_id}")
         if not self._interactive:
-            self._status.setText("Not connected — cannot control valves.")
+            self._status.setText("Not connected - cannot control valves.")
             return
         self.controller.toggle_valve(hw_id, True)
         self._status.setText(f"Opening valve: {hw_id}")
@@ -242,7 +253,7 @@ class PIDViewWindow(QWidget):
     def _on_valve_close_requested(self, cid: str):
         hw_id = self._comp_to_valve_hw.get(cid, cid)
         if not self._interactive:
-            self._status.setText("Not connected — cannot control valves.")
+            self._status.setText("Not connected - cannot control valves.")
             return
         self.controller.toggle_valve(hw_id, False)
         self._status.setText(f"Closing valve: {hw_id}")
@@ -270,7 +281,7 @@ class PIDViewWindow(QWidget):
                 self._status.setText(f"Throttle {comp.label}: {pct:.0f}%")
         else:
             lbl = comp.label or cid
-            state = self.canvas.live_valve_states.get(cid, "—")
+            state = self.canvas.live_valve_states.get(cid, "-")
             self._status.setText(f"{lbl}  |  {state}")
 
 

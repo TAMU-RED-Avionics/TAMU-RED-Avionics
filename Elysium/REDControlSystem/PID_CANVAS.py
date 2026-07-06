@@ -1,10 +1,10 @@
 import math
-from PyQt5.QtWidgets import QWidget, QSizePolicy, QVBoxLayout, QPushButton, QLabel
+from PyQt5.QtWidgets import QWidget, QSizePolicy, QVBoxLayout, QPushButton, QLabel, QMessageBox
 from PyQt5.QtGui import (
     QPainter, QPen, QBrush, QColor, QFont, QFontMetrics,
-    QTransform, QPainterPath, QPolygonF,
+    QTransform, QPainterPath, QPolygonF, QPixmap,
 )
-from PyQt5.QtCore import Qt, QPointF, QRectF, pyqtSignal
+from PyQt5.QtCore import Qt, QPointF, QRectF, pyqtSignal, QTimer
 
 from PID_SCHEMA import (
     PIDProject, Component, PipeLine, LayoutPoint,
@@ -12,7 +12,8 @@ from PID_SCHEMA import (
     COMP_VALVE, COMP_PRESSURE, COMP_TEMPERATURE,
     COMP_LOAD_CELL, COMP_TANK, COMP_INJECTOR,
     COMP_REGULATOR, COMP_CHECK_VALVE, COMP_RELIEF_VALVE, COMP_LABEL, COMP_JUNCTION,
-    COMP_BALL_VALVE, COMP_PSV, COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_REDUCER, COMP_PRV
+    COMP_BALL_VALVE, COMP_PSV, COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_REDUCER, COMP_PRV,
+    COMP_IGNITER,
 )
 
 GRID_SPACING = 10
@@ -80,7 +81,7 @@ def world_rect(pos: LayoutPoint, ctype: str, comp: Component | None = None) -> Q
                  COMP_RELIEF_VALVE, COMP_REGULATOR, COMP_BALL_VALVE,
                  COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_PSV, COMP_PRV):
         return QRectF(x - VLV_HW * scale_x, y - VLV_HH * scale_y, VLV_HW * 2 * scale_x, VLV_HH * 2 * scale_y)
-    if ctype in (COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL):
+    if ctype in (COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL, COMP_IGNITER):
         r = SNS_R * max(scale_x, scale_y)
         return QRectF(x - r, y - r, r * 2, r * 2)
     if ctype == COMP_TANK:
@@ -100,7 +101,7 @@ class Renderer:
     def draw(p: QPainter, comp: Component, pos: LayoutPoint,
              state: str = "CLOSED", value: float = None,
              selected: bool = False, hovered: bool = False,
-             zoom: float = 1.0):
+             zoom: float = 1.0, show_label: bool = True, **kwargs):
 
         t   = comp.type
         lbl = comp.label or comp.id
@@ -118,7 +119,8 @@ class Renderer:
         elif t == COMP_RELIEF_VALVE:
             Renderer._relief_valve(p, pos, state, zoom, scale_x, scale_y)
         elif t == COMP_PRESSURE:
-            Renderer._sensor(p, pos, "PT",  value, zoom, scale_x, scale_y)
+            Renderer._sensor(p, pos, "PT",  value, zoom, scale_x, scale_y,
+                             alert_color=kwargs.get("alert_color"))
         elif t == COMP_TEMPERATURE:
             Renderer._sensor(p, pos, "TC",  value, zoom, scale_x, scale_y)
         elif t == COMP_LOAD_CELL:
@@ -145,11 +147,14 @@ class Renderer:
             Renderer._prv(p, pos, state, zoom, scale_x, scale_y)
         elif t == COMP_REDUCER:
             Renderer._reducer(p, pos, zoom, scale_x, scale_y)
-        
+        elif t == COMP_IGNITER:
+            Renderer._igniter(p, pos, state, zoom, scale_x, scale_y)
+
         p.restore()
-        lbl = comp.label or comp.id
-        offset = (VLV_HH + 20) * max(scale_y, 0.8)
-        Renderer._lbl(p, pos, lbl, zoom, offset, comp)
+        if show_label:
+            lbl = comp.label or comp.id
+            offset = (VLV_HH + 20) * max(scale_y, 0.8)
+            Renderer._lbl(p, pos, lbl, zoom, offset, comp)
 
         if selected or hovered:
             r = world_rect(pos, t, comp).adjusted(-6, -6, 6, 6)
@@ -229,12 +234,23 @@ class Renderer:
 
 
     @staticmethod
-    def _sensor(p, pos, symbol, value, zoom, scale_x=1.0, scale_y=1.0):
+    def _sensor(p, pos, symbol, value, zoom, scale_x=1.0, scale_y=1.0,
+                alert_color: QColor = None):
         x, y = pos.x, pos.y
         r = SNS_R * max(scale_x, scale_y)
 
+        # Alert glow ring (MEOP/MAWP over-pressure on a PT)
+        if alert_color is not None:
+            glow = QColor(alert_color)
+            glow.setAlpha(160)
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(glow, (r * 0.55) / zoom, Qt.SolidLine, Qt.RoundCap))
+            p.drawEllipse(QPointF(x, y), r + r * 0.35, r + r * 0.35)
+
         p.setBrush(QBrush(C_SENSOR_FILL))
-        p.setPen(QPen(C_SYMBOL, 1.5 / zoom))
+        # Sensor circle border takes the alert color when pressurized above MEOP
+        border_color = alert_color if alert_color is not None else C_SYMBOL
+        p.setPen(QPen(border_color, 1.5 / zoom))
         p.drawEllipse(QPointF(x, y), r, r)
 
         fsz = max(int(9 / zoom), 6)
@@ -245,6 +261,33 @@ class Renderer:
         fm  = QFontMetrics(f)
         tw  = fm.horizontalAdvance(symbol)
         p.drawText(QPointF(x - tw / 2, y + fm.ascent() / 2 - 1 / zoom), symbol)
+
+
+    @staticmethod
+    def _igniter(p, pos, state, zoom, scale_x=1.0, scale_y=1.0):
+        """Circle like a sensor, but it's an actuated output: dark/grey when
+        idle, green when firing - never a live reading."""
+        x, y = pos.x, pos.y
+        r = SNS_R * max(scale_x, scale_y)
+
+        fill = (C_FILL_OPEN if state == "OPEN"
+                else C_FILL_PEND if state == "PENDING"
+                else C_FILL_CLOSED)
+
+        p.setBrush(QBrush(fill))
+        p.setPen(QPen(C_SYMBOL, 1.5 / zoom))
+        p.drawEllipse(QPointF(x, y), r, r)
+
+        fsz = max(int(8 / zoom), 6)
+        f = QFont("Courier New", fsz)
+        f.setBold(True)
+        p.setFont(f)
+        # Dark text reads better over the bright green "firing" fill
+        p.setPen(QPen(QColor("#0a2a12") if state == "OPEN" else C_LABEL))
+        fm = QFontMetrics(f)
+        text = "IGN"
+        tw = fm.horizontalAdvance(text)
+        p.drawText(QPointF(x - tw / 2, y + fm.ascent() / 2 - 1 / zoom), text)
 
     @staticmethod
     def _tank(p, pos, zoom, scale_x=1.0, scale_y=1.0):
@@ -339,33 +382,33 @@ class Renderer:
     @staticmethod
     def _ball_valve(p, pos, state, zoom, scale_x=1.0, scale_y=1.0):
         x, y = pos.x, pos.y
-        r = VLV_HW * max(scale_x, scale_y)
-        
+        hw, hh = VLV_HW * scale_x, VLV_HH * scale_y
+
         fill = (C_FILL_OPEN if state == "OPEN"
                 else C_FILL_PEND if state == "PENDING"
                 else C_FILL_CLOSED)
-        
+
         p.setBrush(QBrush(fill))
         p.setPen(QPen(C_SYMBOL, 1.8 / zoom))
 
         left_tri = QPolygonF([
-            QPointF(x - r, y - r),
-            QPointF(x - r, y + r),
+            QPointF(x - hw, y - hh),
+            QPointF(x - hw, y + hh),
             QPointF(x, y)
         ])
 
         right_tri = QPolygonF([
-            QPointF(x + r, y - r), 
-            QPointF(x + r, y + r),
+            QPointF(x + hw, y - hh),
+            QPointF(x + hw, y + hh),
             QPointF(x, y)
         ])
-        
+
         p.drawPolygon(left_tri)
         p.drawPolygon(right_tri)
 
-        ball_r = r * 0.6 
+        ball_r = min(hw, hh) * 0.75
         p.drawEllipse(QPointF(x, y), ball_r, ball_r)
-        
+
         # internal indicator, if open, draw horizontal; if closed, draw vertical
         if state == "OPEN":
             p.drawLine(QPointF(x - ball_r + 2, y), QPointF(x + ball_r - 2, y))
@@ -403,32 +446,35 @@ class Renderer:
     @staticmethod
     def _globe_valve(p, pos, state, value, zoom, scale_x=1.0, scale_y=1.0):
         x, y = pos.x, pos.y
-        r = VLV_HW * max(scale_x, scale_y)
-        
+        hw, hh = VLV_HW * scale_x, VLV_HH * scale_y
+
         fill = (C_FILL_OPEN if state == "OPEN"
                 else C_FILL_PEND if state == "PENDING"
                 else C_FILL_CLOSED)
-        
+
         p.setBrush(QBrush(fill))
         p.setPen(QPen(C_SYMBOL, 1.8 / zoom))
 
-        pts_l = [QPointF(x - r, y - r), QPointF(x - r, y + r), QPointF(x, y)]
-        pts_r = [QPointF(x + r, y - r), QPointF(x + r, y + r), QPointF(x, y)]
-        
+        pts_l = [QPointF(x - hw, y - hh), QPointF(x - hw, y + hh), QPointF(x, y)]
+        pts_r = [QPointF(x + hw, y - hh), QPointF(x + hw, y + hh), QPointF(x, y)]
+
         p.drawPolygon(QPolygonF(pts_l))
         p.drawPolygon(QPolygonF(pts_r))
 
-        globe_r = r * 0.5
-        p.setBrush(QBrush(C_SYMBOL))
+        # Globe body: outlined disc filled like the valve (ISA style), not a
+        # solid white blob
+        globe_r = min(hw, hh) * 0.65
+        p.setBrush(QBrush(fill))
         p.drawEllipse(QPointF(x, y), globe_r, globe_r)
-        
+        p.drawLine(QPointF(x - globe_r, y), QPointF(x + globe_r, y))
+
         if value is not None:
             pct = f"{int(value)}%"
             f = QFont("Courier New", max(int(6 / zoom), 4))
             p.setFont(f)
             p.setPen(QPen(C_LABEL))
             tw = QFontMetrics(f).horizontalAdvance(pct)
-            p.drawText(QPointF(x - tw / 2, y + r + 8), pct)
+            p.drawText(QPointF(x - tw / 2, y + hh + 8), pct)
 
     @staticmethod
     def _psv(p, pos, state, zoom, scale_x=1.0, scale_y=1.0):
@@ -517,6 +563,7 @@ class Renderer:
 VALVE_TYPES = {
     COMP_VALVE, COMP_BALL_VALVE, COMP_SOLENOID, COMP_GLOBE_VALVE,
     COMP_PSV, COMP_PRV, COMP_RELIEF_VALVE, COMP_CHECK_VALVE,
+    COMP_IGNITER,
 }
 
 SENSOR_TYPES = {COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL}
@@ -538,6 +585,25 @@ SENSOR_UNIT = {
     COMP_LOAD_CELL:   "lbf",
 }
 
+# ── Line pressurization inference ────────────────────────────────────────
+# Topology is derived geometrically from the drawing, so existing .red files
+# work unchanged: a PT "watches" the pipe it is drawn next to; pipes that
+# touch end-to-end flow freely. Valve OPEN/CLOSED state is intentionally
+# NOT used to gate pressurization propagation: closing a valve does not
+# depressurize a line the PT still reads high, and opening a valve does not
+# pressurize the far side until a real PT there confirms it.
+PRESSURIZED_MIN_PSI = 25.0   # PT at/above this marks its pipe pressurized
+SENSOR_ATTACH_DIST  = 30.0   # world units: PT → nearest pipe attachment
+VALVE_LINK_DIST     = 30.0   # world units: valve → pipe linking radius
+ENDPOINT_JOIN_DIST  = 12.0   # world units: pipe endpoint → pipe join radius
+
+
+# Over-pressure indication (MEOP/MAWP). Kept visually distinct from both the
+# ordinary fluid colours (e.g. oxidizer/fuel red) and the normal pressurized
+# glow, so a real over-pressure condition never blends in.
+OVERPRESSURE_MEOP = QColor("#ff9500")   # orange - at/above MEOP
+OVERPRESSURE_MAWP = QColor("#5c0f0f")   # dark maroon red - at/near MAWP
+
 
 class ValvePopup(QWidget):
     """
@@ -554,12 +620,13 @@ class ValvePopup(QWidget):
         super().__init__(parent)
         self.setFixedWidth(self._W)
         self._cid: str = None
+        self._is_igniter: bool = False
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(4)
 
-        self._state_lbl = QLabel("—")
+        self._state_lbl = QLabel("-")
         self._state_lbl.setAlignment(Qt.AlignCenter)
         self._state_lbl.setStyleSheet(
             "font-weight: bold; font-size: 9pt; color: #cccccc;")
@@ -567,9 +634,6 @@ class ValvePopup(QWidget):
 
         self._open_btn = QPushButton("▶  OPEN")
         self._open_btn.setFixedHeight(self._BTN_H)
-        self._open_btn.setStyleSheet(
-            "background:#1a4a1a; color:#00dd55; border:1px solid #00aa44;"
-            "border-radius:4px; font-weight:bold;")
         self._open_btn.clicked.connect(self._on_open)
         layout.addWidget(self._open_btn)
 
@@ -590,9 +654,24 @@ class ValvePopup(QWidget):
             "border-radius:8px; }")
         self.setAttribute(Qt.WA_StyledBackground, True)
 
-    def show_for(self, cid: str, state: str, screen_pos: QPointF):
+    def show_for(self, cid: str, state: str, screen_pos: QPointF, is_igniter: bool = False):
         """Position and show the popup near screen_pos."""
         self._cid = cid
+        self._is_igniter = is_igniter
+
+        if is_igniter:
+            self._open_btn.setText("FIRE")
+            self._open_btn.setStyleSheet(
+                "background:#4a2a00; color:#ff8800; border:1px solid #cc5500;"
+                "border-radius:4px; font-weight:bold;")
+            self._close_btn.setText("SAFE")
+        else:
+            self._open_btn.setText("▶  OPEN")
+            self._open_btn.setStyleSheet(
+                "background:#1a4a1a; color:#00dd55; border:1px solid #00aa44;"
+                "border-radius:4px; font-weight:bold;")
+            self._close_btn.setText("■  CLOSE")
+
         self._update_state(state)
 
         # Keep within parent bounds
@@ -613,17 +692,30 @@ class ValvePopup(QWidget):
             self._update_state(state)
 
     def _update_state(self, state: str):
-        colours = {"OPEN": "#00dd55", "CLOSED": "#ff5544", "PENDING": "#ff9900"}
-        self._state_lbl.setText(state)
+        labels = ({"OPEN": "ACTIVE", "CLOSED": "SAFE", "PENDING": "PENDING"}
+                  if self._is_igniter else
+                  {"OPEN": "OPEN", "CLOSED": "CLOSED", "PENDING": "PENDING"})
+        colours = {"OPEN": "#ff8800" if self._is_igniter else "#00dd55",
+                  "CLOSED": "#5599ff" if self._is_igniter else "#ff5544",
+                  "PENDING": "#ff9900"}
+        self._state_lbl.setText(labels.get(state, state))
         self._state_lbl.setStyleSheet(
             f"font-weight:bold; font-size:9pt; color:{colours.get(state,'#aaa')};")
         self._open_btn.setEnabled(state != "OPEN")
         self._close_btn.setEnabled(state != "CLOSED")
 
     def _on_open(self):
-        if self._cid:
-            self.open_requested.emit(self._cid)
-            self.hide()
+        if not self._cid:
+            return
+        if self._is_igniter:
+            reply = QMessageBox.warning(
+                self, "Confirm Ignition",
+                "Fire this igniter now?\n\nThis sends a live command to the hardware.",
+                QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel)
+            if reply != QMessageBox.Yes:
+                return
+        self.open_requested.emit(self._cid)
+        self.hide()
 
     def _on_close(self):
         if self._cid:
@@ -671,6 +763,7 @@ class PIDCanvas(QWidget):
         # Callout anchor offsets (per comp_id, in world units relative to comp centre).
         # Users can drag the callout label to reposition it.
         self._callout_offsets: dict = {}   # cid -> (dx, dy)  world units
+        self._callout_rects:   dict = {}   # cid -> QRectF, screen space, cached at paint time
 
         self._zoom = 1.0
         self._pan  = QPointF(0, 0)
@@ -693,6 +786,19 @@ class PIDCanvas(QWidget):
         self._line_points: list = []
         self._line_cursor: QPointF = None
 
+        # Line-pressurization topology (built once per project load)
+        self._line_sensor_map:  dict = {}   # line_id -> [PT comp_ids]
+        self._line_static_adj:  dict = {}   # line_id -> set(line_id)
+        self._valve_line_links: list = []   # (valve_cid, set(line_ids))
+
+        # Repaint coalescing for high-rate telemetry (sensor/valve updates
+        # request a repaint; at most ~30 repaints/s actually happen)
+        self._repaint_pending = False
+
+        # Cached background grid (regenerated on zoom/resize, blitted on pan)
+        self._grid_pixmap = None
+        self._grid_cache_key = None
+
         # Valve popup (child widget, always present, hidden until needed)
         self._valve_popup = ValvePopup(self)
         self._valve_popup.open_requested.connect(self.valve_open_requested)
@@ -710,13 +816,35 @@ class PIDCanvas(QWidget):
         self.live_throttle_pcts.clear()
         self._callout_offsets.clear()
         self._valve_popup.hide()
+        self._build_line_topology()
         self.fit_view()
+        # The widget usually hasn't been laid out yet when a project loads -
+        # re-fit once it gets its real size.
+        self._needs_fit = True
+        self.update()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        if getattr(self, "_needs_fit", False) and self.width() > 400:
+            self._needs_fit = False
+            self.fit_view()
+
+    def _request_repaint(self):
+        """Coalesce repaints caused by telemetry so a burst of sensor packets
+        results in one paint, not one paint per packet."""
+        if self._repaint_pending:
+            return
+        self._repaint_pending = True
+        QTimer.singleShot(33, self._flush_repaint)
+
+    def _flush_repaint(self):
+        self._repaint_pending = False
         self.update()
 
     def update_valve_state(self, cid: str, state: str):
         self.live_valve_states[cid] = state
         self._valve_popup.update_state(cid, state)
-        self.update()
+        self._request_repaint()
 
     def reset_callout_offset(self, cid: str):
         self._callout_offsets.pop(cid, None)
@@ -724,28 +852,173 @@ class PIDCanvas(QWidget):
 
     def update_sensor_value(self, cid: str, value: float):
         self.live_sensor_values[cid] = value
-        self.update()
+        self._request_repaint()
+
+    # ── Line pressurization ──────────────────────────────────────────────
+
+    def _build_line_topology(self):
+        """Derive pipe connectivity from the drawing geometry."""
+        self._line_sensor_map = {}
+        self._line_static_adj = {}
+        self._valve_line_links = []
+        if not self.project:
+            return
+
+        lines = [l for l in self.project.lines if len(l.points) >= 2]
+
+        def dist_to_line(pt: QPointF, line) -> float:
+            best = float("inf")
+            for i in range(len(line.points) - 1):
+                a = QPointF(line.points[i].x,     line.points[i].y)
+                b = QPointF(line.points[i + 1].x, line.points[i + 1].y)
+                best = min(best, _seg_dist(pt, a, b))
+            return best
+
+        valve_positions = []
+        for cid, comp in self.project.components.items():
+            if comp.type in VALVE_TYPES:
+                pos = self.project.layout.get(cid)
+                if pos:
+                    valve_positions.append((cid, QPointF(pos.x, pos.y)))
+
+        # PTs attach to their closest pipe within radius
+        for cid, comp in self.project.components.items():
+            if comp.type != COMP_PRESSURE:
+                continue
+            pos = self.project.layout.get(cid)
+            if not pos:
+                continue
+            pt = QPointF(pos.x, pos.y)
+            best_line, best_d = None, SENSOR_ATTACH_DIST
+            for line in lines:
+                d = dist_to_line(pt, line)
+                if d < best_d:
+                    best_line, best_d = line.id, d
+            if best_line:
+                self._line_sensor_map.setdefault(best_line, []).append(cid)
+
+        def near_valve(pt: QPointF) -> bool:
+            return any(math.hypot(pt.x() - vp.x(), pt.y() - vp.y()) <= VALVE_LINK_DIST
+                       for _, vp in valve_positions)
+
+        def fluids_compatible(la, lb) -> bool:
+            # Free-flow joins only within one fluid system (generic bridges
+            # anything). Different fluids meeting without a valve is almost
+            # always drawing coincidence (e.g. pressurant entering a tank the
+            # oxidizer line leaves), not a real connection.
+            return (la.fluid == lb.fluid
+                    or la.fluid == FLUID_GENERIC or lb.fluid == FLUID_GENERIC)
+
+        # Pipes joined end-to-end flow freely - unless the joint sits at a
+        # valve, in which case the valve governs it (handled below).
+        for i, la in enumerate(lines):
+            self._line_static_adj.setdefault(la.id, set())
+            for lb in lines[i + 1:]:
+                if not fluids_compatible(la, lb):
+                    continue
+                joined = False
+                for line_a, line_b in ((la, lb), (lb, la)):
+                    for lp in (line_a.points[0], line_a.points[-1]):
+                        end = QPointF(lp.x, lp.y)
+                        if dist_to_line(end, line_b) <= ENDPOINT_JOIN_DIST and not near_valve(end):
+                            joined = True
+                            break
+                    if joined:
+                        break
+                if joined:
+                    self._line_static_adj.setdefault(la.id, set()).add(lb.id)
+                    self._line_static_adj.setdefault(lb.id, set()).add(la.id)
+
+        # A valve links the pipes drawn up to it; flow crosses only when OPEN
+        for cid, vp in valve_positions:
+            linked = {line.id for line in lines
+                      if dist_to_line(vp, line) <= VALVE_LINK_DIST}
+            if len(linked) >= 2:
+                self._valve_line_links.append((cid, linked))
+
+    def _pressurized_line_ids(self) -> set:
+        """Pipes currently holding pressure: seeded by live PT readings and
+        propagated through physically-touching pipes (static adjacency only).
+
+        Valve state is intentionally excluded from this calculation:
+          - Closing a valve does not depressurize a line whose PT still reads
+            high (gas is still trapped on that side).
+          - Opening a valve does not pressurize the far side until a real PT
+            there actually reads above the threshold.
+        Propagation therefore travels only through direct pipe-endpoint joins,
+        never through valve-adjacency links.
+        """
+        pressurized = set()
+        frontier = []
+        for line_id, cids in self._line_sensor_map.items():
+            for cid in cids:
+                value = self.live_sensor_values.get(cid)
+                if value is not None and value >= PRESSURIZED_MIN_PSI:
+                    pressurized.add(line_id)
+                    frontier.append(line_id)
+                    break
+
+        while frontier:
+            cur = frontier.pop()
+            for nxt in self._line_static_adj.get(cur, ()):
+                if nxt not in pressurized:
+                    pressurized.add(nxt)
+                    frontier.append(nxt)
+        return pressurized
+
 
     def _line_pressure_values(self) -> dict:
+        """Highest live PT reading attached to each line - used for both the
+        pressure-ramp fill and the MEOP/MAWP overpressure glow.
+
+        A PT counts as "attached" to a line the same way the ordinary
+        pressurized-glow feature decides it (drawing-proximity, via
+        _line_sensor_map from _build_line_topology()) so the overpressure
+        glow lights up the same pipes the normal glow already does - no
+        separate manual setup needed. An explicit "Linked Line ID" on the PT
+        (extras["line_id"]) is honoured too, for the rare case a PT is drawn
+        away from its line and proximity detection misses it.
+        """
         if not self.project:
             return {}
 
         line_values: dict[str, float] = {}
-        for cid, comp in self.project.components.items():
-            if comp.type != COMP_PRESSURE:
-                continue
 
-            line_id = str(comp.extras.get("line_id", "")).strip()
-            if not line_id:
-                continue
-
+        def _consider(cid: str, line_id: str):
             value = self.live_sensor_values.get(cid)
             if value is None:
-                continue
-
+                return
             previous = line_values.get(line_id)
             if previous is None or value > previous:
                 line_values[line_id] = value
+
+        for line_id, cids in self._line_sensor_map.items():
+            for cid in cids:
+                _consider(cid, line_id)
+
+        for cid, comp in self.project.components.items():
+            if comp.type != COMP_PRESSURE:
+                continue
+            line_id = str(comp.extras.get("line_id", "")).strip()
+            if line_id:
+                _consider(cid, line_id)
+
+        # Propagate to pipes with no PT of their own but physically joined
+        # (same static-join-only rule as _pressurized_line_ids) to a pipe
+        # that does - they're at the same real pressure. Never overwrite a
+        # line that has its own direct reading; that PT's word is final for
+        # its own pipe even if a neighbour's differs.
+        directly_sensed = set(line_values.keys())
+        frontier = list(directly_sensed)
+        while frontier:
+            cur = frontier.pop()
+            cur_val = line_values[cur]
+            for nxt in self._line_static_adj.get(cur, ()):
+                if nxt in directly_sensed:
+                    continue
+                if line_values.get(nxt, -1.0) < cur_val:
+                    line_values[nxt] = cur_val
+                    frontier.append(nxt)
 
         return line_values
 
@@ -763,9 +1036,43 @@ class PIDCanvas(QWidget):
         ramp = min(pressure / max_pressure, 1.0)
         return _blend_color(base_color, QColor("#ff3b30"), ramp)
 
+    def _overpressure_line_color(self, pressure: float, meop, mawp):
+        """Colour for a line whose sensor is at/above MEOP.
+
+        Glows orange at MEOP, gradients toward a dark maroon red as the
+        reading approaches MAWP. Deliberately a different hue/value from
+        both the normal fluid-pressurization glow and the fluid colours
+        themselves (e.g. oxidizer/fuel red) so an over-pressure condition
+        is never confused with an ordinary pressurized line.
+
+        Returns None if the reading is below MEOP (or MEOP isn't set) -
+        meaning the caller should fall back to normal line colouring.
+        """
+        if meop is None or pressure is None:
+            return None
+        try:
+            meop = float(meop)
+        except (TypeError, ValueError):
+            return None
+        if pressure < meop:
+            return None
+
+        try:
+            mawp = float(mawp) if mawp is not None else None
+        except (TypeError, ValueError):
+            mawp = None
+
+        if mawp is not None and mawp > meop:
+            ramp = min(max((pressure - meop) / (mawp - meop), 0.0), 1.0)
+        else:
+            # No usable MAWP to ramp against - just flag the MEOP exceedance.
+            ramp = 0.0
+
+        return _blend_color(OVERPRESSURE_MEOP, OVERPRESSURE_MAWP, ramp)
+
     def update_throttle(self, cid: str, pct: float):
         self.live_throttle_pcts[cid] = pct
-        self.update()
+        self._request_repaint()
 
     def set_selected(self, comp_ids):
         self._selected_comps = set(comp_ids)
@@ -878,13 +1185,16 @@ class PIDCanvas(QWidget):
                        "No project loaded.")
             return
 
+        # Grid is blitted in screen space from a cached pixmap (regenerated
+        # only on zoom/resize) - much cheaper than per-point drawing.
+        self._paint_grid_screen(p)
+
         p.setTransform(
             QTransform()
             .translate(self._pan.x() * self._zoom, self._pan.y() * self._zoom)
             .scale(self._zoom, self._zoom)
         )
 
-        self._paint_grid(p)
         self._paint_lines(p)
         self._paint_components(p)
         if self._drawing_line:
@@ -894,24 +1204,30 @@ class PIDCanvas(QWidget):
         p.resetTransform()
         self._paint_sensor_callouts(p)
 
+    # Default anchor: directly below the sensor circle so the readout feels
+    # like part of the symbol. Users can still drag it anywhere.
+    _CALLOUT_DEFAULT_OFFSET = (0.0, SNS_R + 8.0)
+
     def _callout_screen_pos(self, cid: str, comp_pos) -> QPointF:
         """Return the screen position for a sensor callout anchor."""
-        dx, dy = self._callout_offsets.get(cid, (SNS_R + 10, -SNS_R - 10))
+        dx, dy = self._callout_offsets.get(cid, self._CALLOUT_DEFAULT_OFFSET)
         wx = comp_pos.x + dx
         wy = comp_pos.y + dy
         return QPointF((wx + self._pan.x()) * self._zoom,
                        (wy + self._pan.y()) * self._zoom)
 
-    def _callout_rect_at(self, sx: float, sy: float) -> QRectF:
-        """Return the bounding rect (screen-space) for a callout box at (sx,sy)."""
-        return QRectF(sx, sy - 24, 90, 30)
-
     def _paint_sensor_callouts(self, p: QPainter):
-        if not self.project:
+        self._callout_rects.clear()
+        if not self.project or self.interactive:
             return
 
-        if self.interactive:
-            return
+        pad_x, pad_y, gap = 6, 3, 6
+        f_lbl = QFont("Courier New", 7)
+        f_lbl.setBold(True)
+        f_val = QFont("Courier New", 9)
+        f_val.setBold(True)
+        fm_lbl = QFontMetrics(f_lbl)
+        fm_val = QFontMetrics(f_val)
 
         for cid, comp in self.project.components.items():
             if comp.type not in SENSOR_TYPES:
@@ -930,100 +1246,138 @@ class PIDCanvas(QWidget):
             unit = SENSOR_UNIT.get(comp.type, "")
             lbl  = comp.label or cid
 
-            sp = self._callout_screen_pos(cid, pos)
-            sx, sy = sp.x(), sp.y()
+            # Compact single-line pill:  P1  512.30 psi
+            lbl_w  = fm_lbl.horizontalAdvance(lbl)
+            val_w  = fm_val.horizontalAdvance(val_str)
+            unit_w = fm_lbl.horizontalAdvance(unit)
+            box_w  = pad_x * 2 + lbl_w + gap + val_w + (gap - 2 + unit_w if unit else 0)
+            box_h  = fm_val.height() + pad_y * 2
 
-            pad_x, pad_y = 8, 5
-            f_lbl = QFont("Courier New", 8)
-            f_lbl.setBold(True)
-            f_val = QFont("Courier New", 11)
-            f_val.setBold(True)
-            fm_lbl = QFontMetrics(f_lbl)
-            fm_val = QFontMetrics(f_val)
+            # Anchor sits below the sensor; box is centred on it
+            sp  = self._callout_screen_pos(cid, pos)
+            box = QRectF(sp.x() - box_w / 2, sp.y(), box_w, box_h)
 
-            lbl_w = fm_lbl.horizontalAdvance(lbl)
-            val_w = fm_val.horizontalAdvance(f"{val_str} {unit}")
-            box_w = max(lbl_w, val_w) + pad_x * 2
-            box_h = fm_lbl.height() + fm_val.height() + pad_y * 2 + 2
+            if box.right()  > self.width():  box.moveRight(self.width() - 2)
+            if box.bottom() > self.height(): box.moveBottom(self.height() - 2)
+            if box.left()   < 0:             box.moveLeft(2)
+            if box.top()    < 0:             box.moveTop(2)
 
-            box = QRectF(sx, sy, box_w, box_h)
-
-            if box.right()  > self.width():
-                box.moveRight(self.width() - 2)
-            if box.bottom() > self.height():
-                box.moveBottom(self.height() - 2)
-            if box.left() < 0:
-                box.moveLeft(2)
-            if box.top() < 0:
-                box.moveTop(2)
+            self._callout_rects[cid] = QRectF(box)
 
             bg     = SENSOR_CALLOUT_BG.get(comp.type,     QColor(20, 30, 50, 220))
             border = SENSOR_CALLOUT_BORDER.get(comp.type, QColor("#4488ff"))
 
-            sensor_screen = QPointF(
-                (pos.x + self._pan.x()) * self._zoom,
-                (pos.y + self._pan.y()) * self._zoom,
-            )
-            p.setPen(QPen(border.darker(130), 1.0, Qt.DashLine))
-            p.drawLine(sensor_screen, QPointF(box.left() + 4, box.center().y()))
+            # Override border with MEOP/MAWP alert color for pressure sensors
+            if comp.type == COMP_PRESSURE and value is not None:
+                alert = self._sensor_alert_color(cid, value)
+                if alert is not None:
+                    border = alert
+                    # Also tint the background slightly toward the alert hue
+                    tinted = QColor(alert)
+                    tinted.setAlpha(60)
+                    bg = tinted
+            # Leader line only when the callout was dragged away from its sensor
+            if cid in self._callout_offsets:
+                sensor_screen = QPointF(
+                    (pos.x + self._pan.x()) * self._zoom,
+                    (pos.y + self._pan.y()) * self._zoom,
+                )
+                if not box.adjusted(-8, -8, 8, 8).contains(sensor_screen):
+                    p.setPen(QPen(border.darker(130), 1.0, Qt.DashLine))
+                    p.drawLine(sensor_screen, box.center())
 
             p.setBrush(QBrush(bg))
-            p.setPen(QPen(border, 1.5))
-            p.drawRoundedRect(box, 5, 5)
+            p.setPen(QPen(border, 1.2))
+            p.drawRoundedRect(box, box_h / 2, box_h / 2)
+
+            baseline = box.top() + pad_y + fm_val.ascent()
+            x = box.left() + pad_x
 
             p.setFont(f_lbl)
             p.setPen(QPen(border.lighter(160)))
-            p.drawText(QRectF(box.left() + pad_x, box.top() + pad_y,
-                              box.width() - pad_x*2, fm_lbl.height()),
-                       Qt.AlignLeft | Qt.AlignVCenter, lbl)
+            p.drawText(QPointF(x, baseline - 1), lbl)
+            x += lbl_w + gap
 
-            value_color = QColor("#ffffff")
-            if value is not None:
-                value_color = self._sensor_value_color(comp.type, value, cid)
             p.setFont(f_val)
-            p.setPen(QPen(value_color))
-            p.drawText(QRectF(box.left() + pad_x,
-                              box.top() + pad_y + fm_lbl.height() + 2,
-                              box.width() - pad_x*2, fm_val.height()),
-                       Qt.AlignLeft | Qt.AlignVCenter, f"{val_str} {unit}")
+            p.setPen(QPen(self._sensor_value_color(comp.type, value, cid)))
+            p.drawText(QPointF(x, baseline), val_str)
+            x += val_w + gap - 2
+
+            if unit:
+                p.setFont(f_lbl)
+                p.setPen(QPen(QColor("#9b9990")))
+                p.drawText(QPointF(x, baseline - 1), unit)
+
+    def _sensor_alert_color(self, cid: str, value: float) -> "QColor | None":
+        if value is None or not self.project:
+            return None
+        comp = self.project.components.get(cid)
+        if not comp:
+            return None
+
+        thresholds = comp.extras.get("thresholds") or {}
+        meop = thresholds.get("meop")
+        mawp = thresholds.get("mawp")
+
+        # Fall back to system-wide limits when per-sensor ones are absent
+        params = getattr(self.project, "parameters", None)
+        if meop is None and params is not None:
+            meop = getattr(params, "system_meop", None)
+        if mawp is None and params is not None:
+            mawp = getattr(params, "system_mawp", None)
+
+        return self._overpressure_line_color(value, meop, mawp)
 
     def _sensor_value_color(self, ctype: str, value: float, cid: str) -> QColor:
-        """Return a colour for the sensor value (normal / warning / critical)."""
-        # In future this can hook into warning_ranges; for now just white
+        """Return a colour for the sensor value text in the callout box.
+        White normally; transitions to orange then dark maroon as the reading
+        approaches/exceeds MEOP and MAWP."""
+        alert = self._sensor_alert_color(cid, value)
+        if alert is not None:
+            return alert
         return QColor("#ffffff")
 
     def _callout_at(self, screen_pos: QPointF) -> "str | None":
-        if not self.project:
-            return None
-        for cid, comp in self.project.components.items():
-            if comp.type not in SENSOR_TYPES:
-                continue
-            pos = self.project.layout.get(cid)
-            if not pos:
-                continue
-            sp = self._callout_screen_pos(cid, pos)
-
-            hit = QRectF(sp.x(), sp.y() - 30, 100, 36)
-            if hit.contains(screen_pos):
+        for cid, rect in self._callout_rects.items():
+            if rect.adjusted(-2, -2, 2, 2).contains(screen_pos):
                 return cid
         return None
 
-    def _paint_grid(self, p):
-        p.setPen(QPen(C_GRID, 1 / self._zoom))
-        tl = self._to_world(0, 0)
-        br = self._to_world(self.width(), self.height())
-        x0 = int(tl.x() / GRID_SPACING) * GRID_SPACING
-        y0 = int(tl.y() / GRID_SPACING) * GRID_SPACING
-        x = x0
-        while x <= br.x() + GRID_SPACING:
-            y = y0
-            while y <= br.y() + GRID_SPACING:
-                p.drawPoint(QPointF(x, y))
-                y += GRID_SPACING
-            x += GRID_SPACING
+    def _paint_grid_screen(self, p: QPainter):
+        step = GRID_SPACING * self._zoom
+        if step < 6:
+            return  # zoomed far out - dots would be noise, skip for speed
+
+        key = (round(step, 3), self.width(), self.height())
+        if self._grid_cache_key != key:
+            w = self.width() + int(step) + 2
+            h = self.height() + int(step) + 2
+            pm = QPixmap(w, h)
+            pm.fill(Qt.transparent)
+            gp = QPainter(pm)
+            gp.setPen(QPen(C_GRID, 1.5))
+            pts = []
+            y = 0.0
+            while y <= h:
+                x = 0.0
+                while x <= w:
+                    pts.append(QPointF(x, y))
+                    x += step
+                y += step
+            gp.drawPoints(QPolygonF(pts))
+            gp.end()
+            self._grid_pixmap = pm
+            self._grid_cache_key = key
+
+        # Align the tile with world grid coordinates
+        off_x = (self._pan.x() * self._zoom) % step - step
+        off_y = (self._pan.y() * self._zoom) % step - step
+        p.drawPixmap(int(off_x), int(off_y), self._grid_pixmap)
 
     def _paint_lines(self, p):
         pressure_values = self._line_pressure_values()
+        pressurized = self._pressurized_line_ids() if not self.interactive else set()
+
         for line in self.project.lines:
             pts = line.points
             if len(pts) < 2:
@@ -1031,24 +1385,59 @@ class PIDCanvas(QWidget):
             color = FLUID_QC.get(line.fluid, QColor("#c8c8c8"))
 
             pressure = pressure_values.get(line.id)
+            is_overpressure = False
             if pressure is not None:
-                max_pressure = 50.0
-                for comp in self.project.components.values():
-                    if comp.type != COMP_PRESSURE:
-                        continue
-                    if str(comp.extras.get("line_id", "")).strip() != line.id:
+                max_pressure = None
+                meop = mawp = None
+
+                candidate_cids = list(self._line_sensor_map.get(line.id, ()))
+                for cid, comp in self.project.components.items():
+                    if (comp.type == COMP_PRESSURE
+                            and str(comp.extras.get("line_id", "")).strip() == line.id
+                            and cid not in candidate_cids):
+                        candidate_cids.append(cid)
+
+                for cid in candidate_cids:
+                    comp = self.project.components.get(cid)
+                    if not comp or self.live_sensor_values.get(cid) != pressure:
                         continue
                     try:
-                        max_pressure = float(comp.extras.get("line_pressure_max", max_pressure))
-                    except (TypeError, ValueError):
-                        max_pressure = 50.0
+                        max_pressure = float(comp.extras["line_pressure_max"])
+                    except (KeyError, TypeError, ValueError):
+                        max_pressure = None
+                    thresholds = comp.extras.get("thresholds") or {}
+                    meop = thresholds.get("meop")
+                    mawp = thresholds.get("mawp")
                     break
-                color = self._pressure_line_color(color, pressure, max_pressure)
 
-            is_selected = line.id in self._selected_lines
-            is_hovered  = line.id == self._hovered_line
-            is_dotted   = getattr(line, 'dotted', False)
-            pipe_style  = Qt.DashLine if is_dotted else Qt.SolidLine
+                params = getattr(self.project, "parameters", None)
+                if meop is None and params is not None:
+                    meop = getattr(params, "system_meop", None)
+                if mawp is None and params is not None:
+                    mawp = getattr(params, "system_mawp", None)
+
+                overpressure_color = self._overpressure_line_color(pressure, meop, mawp)
+                if overpressure_color is not None:
+                    color = overpressure_color
+                    is_overpressure = True
+                elif max_pressure is not None:
+                    color = self._pressure_line_color(color, pressure, max_pressure)
+
+            is_selected    = line.id in self._selected_lines
+            is_hovered     = line.id == self._hovered_line
+            is_dotted      = getattr(line, 'dotted', False)
+            is_generic     = line.fluid == FLUID_GENERIC
+            is_pressurized = (line.id in pressurized and not is_generic) or is_overpressure
+            pipe_style     = Qt.DashLine if is_dotted else Qt.SolidLine
+
+            if is_pressurized and not (is_selected or is_hovered):
+                glow = QColor(color)
+                glow.setAlpha(150 if is_overpressure else 90)
+                glow_width = (PIPE_W * 5.0 if is_overpressure else PIPE_W * 3.6) / self._zoom
+                p.setPen(QPen(glow, glow_width, Qt.SolidLine, Qt.RoundCap))
+                for i in range(len(pts) - 1):
+                    p.drawLine(QPointF(pts[i].x,   pts[i].y),
+                               QPointF(pts[i+1].x, pts[i+1].y))
 
             if is_selected:
                 pen = QPen(C_SELECT, (PIPE_W + 2) / self._zoom)
@@ -1056,8 +1445,16 @@ class PIDCanvas(QWidget):
             elif is_hovered:
                 pen = QPen(C_HOVER, (PIPE_W + 1) / self._zoom)
                 pen.setStyle(pipe_style)
+            elif is_pressurized:
+                pen = QPen(color.lighter(135), (PIPE_W * 1.5) / self._zoom)
+                pen.setStyle(pipe_style)
             else:
-                pen = QPen(color, PIPE_W / self._zoom)
+                draw_color = color
+                if not self.interactive and not is_generic:
+                    # Live view: recede unpressurized fluid pipes so pressure pops
+                    draw_color = QColor(color)
+                    draw_color.setAlpha(110)
+                pen = QPen(draw_color, PIPE_W / self._zoom)
                 pen.setStyle(pipe_style)
 
             p.setPen(pen)
@@ -1082,12 +1479,20 @@ class PIDCanvas(QWidget):
                 thr = self.live_throttle_pcts.get(cid)
                 if thr is not None:
                     value = thr
+            # skip the world-space label so the two don't overlap.
+            show_label = self.interactive or comp.type not in SENSOR_TYPES
+            # Compute alert color for PT sensors (MEOP/MAWP glow)
+            alert_color = None
+            if comp.type == COMP_PRESSURE and not self.interactive:
+                alert_color = self._sensor_alert_color(cid, value)
             Renderer.draw(p, comp, pos,
-                        state    = state,
-                        value    = value,
-                        selected = cid in self._selected_comps,
-                        hovered  = cid == self._hovered_comp,
-                        zoom     = self._zoom)
+                        state       = state,
+                        value       = value,
+                        selected    = cid in self._selected_comps,
+                        hovered     = cid == self._hovered_comp,
+                        zoom        = self._zoom,
+                        show_label  = show_label,
+                        alert_color = alert_color)
 
     def _paint_line_preview(self, p):
         fluid_color = FLUID_QC.get(self._line_fluid, QColor("#c8c8c8"))
@@ -1149,7 +1554,7 @@ class PIDCanvas(QWidget):
             if callout_cid:
                 self._dragging_callout      = callout_cid
                 self._callout_drag_start_world = world
-                dx, dy = self._callout_offsets.get(callout_cid, (SNS_R + 10, -SNS_R - 10))
+                dx, dy = self._callout_offsets.get(callout_cid, self._CALLOUT_DEFAULT_OFFSET)
                 self._callout_drag_start_off = (dx, dy)
                 self.setCursor(Qt.SizeAllCursor)
                 return
@@ -1176,7 +1581,8 @@ class PIDCanvas(QWidget):
                         (comp_pos.x + self._pan.x()) * self._zoom,
                         (comp_pos.y + self._pan.y()) * self._zoom,
                     )
-                    self._valve_popup.show_for(cid, state, sp)
+                    self._valve_popup.show_for(cid, state, sp,
+                                               is_igniter=(comp.type == COMP_IGNITER))
 
                 if self.interactive:
                     self._dragging_comp    = cid

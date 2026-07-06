@@ -1,4 +1,7 @@
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QLineEdit
+from PyQt5.QtWidgets import (
+    QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QLineEdit,
+    QMessageBox,
+)
 from PyQt5.QtGui import QColor
 from PyQt5.QtCore import Qt
 from pyqtspinner import WaitingSpinner          # pip install pyqtspinner (later on we should have install scripts that do this automatically)
@@ -67,16 +70,23 @@ class ConnectionWindow(QWidget):
         eth_input_layout.setSpacing(10)
         
         self.ip_input = QLineEdit("192.168.1.174")
+        self.ip_input.setMinimumWidth(165)
         self.port_input = QLineEdit("8888")
+        self.port_input.setMinimumWidth(60)
         
         self.connect_btn = QPushButton("Connect")
         self.connect_btn.clicked.connect(self.connect_ethernet)
+
+        self.disconnect_btn = QPushButton("Disconnect")
+        self.disconnect_btn.clicked.connect(self._confirm_disconnect)
+        self.disconnect_btn.setVisible(False)
 
         eth_input_layout.addWidget(QLabel("IP Address:"))
         eth_input_layout.addWidget(self.ip_input)
         eth_input_layout.addWidget(QLabel("Port:"))
         eth_input_layout.addWidget(self.port_input)
         eth_input_layout.addWidget(self.connect_btn)
+        eth_input_layout.addWidget(self.disconnect_btn)
         eth_layout.addLayout(eth_input_layout)
 
         self.setLayout(eth_layout)
@@ -87,12 +97,29 @@ class ConnectionWindow(QWidget):
 
         self.conn_status_label.setText("Connected Successfully")
         self.connect_btn.setEnabled(False)
+        self.connect_btn.setVisible(False)
+        self.disconnect_btn.setVisible(True)
+
+    def _confirm_disconnect(self):
+        reply = QMessageBox.question(
+            self, "Safe Disconnect",
+            "Disconnect from the controller?\n\n"
+            "A safe-mode notice (SFE) will be sent to the MCU first, so the "
+            "hardware knows the ground station is leaving on purpose and can "
+            "be powered down or serviced.",
+            QMessageBox.Yes | QMessageBox.Cancel,
+            QMessageBox.Cancel,
+        )
+        if reply == QMessageBox.Yes:
+            self.controller.request_safe_disconnect()
 
     def disconnect_action(self, reason=""):
         self.spinner.stop()
         self.spinner_container.setVisible(False)
 
         self.connect_btn.setEnabled(True)
+        self.connect_btn.setVisible(True)
+        self.disconnect_btn.setVisible(False)
 
         if self.conn_status_label.text() == "Connecting...":
             message = "Connection Failed"

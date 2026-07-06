@@ -19,6 +19,8 @@ matplotlib.use("Qt5Agg")
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
 
+from GUI_GRAPHS import SERIES_COLORS_DARK, SERIES_COLORS_LIGHT, sensor_category
+
 DATA_DIR = "Data"
 
 def _discover_files(root: str) -> list[tuple[str, str]]:
@@ -185,6 +187,13 @@ class SpreadsheetTable(QTableWidget):
     HEADER_FG = "#ffffff"
     ALT_ROW   = "#2a2a32"
 
+    # Rows whose "Event Type" column starts with "SEQUENCE" (SEQUENCE:START,
+    # SEQUENCE:STEP, SEQUENCE:CANCELED - the same prefix GUIController already
+    # logs sequence events under) get bolded + tinted so they stand out from
+    # the surrounding numeric telemetry.
+    SEQUENCE_ROW_BG_DARK  = QColor("#4a3a12")
+    SEQUENCE_ROW_BG_LIGHT = QColor("#fff3cd")
+
     def __init__(self, controller=None, parent=None):
         super().__init__(parent)
 
@@ -323,11 +332,25 @@ class SpreadsheetTable(QTableWidget):
         self.setColumnCount(len(headers))
         self.setHorizontalHeaderLabels(headers)
 
+        event_col = next((i for i, h in enumerate(headers)
+                          if h.strip().lower() == "event type"), None)
+        dark_mode = bool(self.controller and getattr(self.controller, "dark_mode", True))
+        highlight_bg = self.SEQUENCE_ROW_BG_DARK if dark_mode else self.SEQUENCE_ROW_BG_LIGHT
+
         for r, row in enumerate(rows):
+            is_sequence_row = (event_col is not None and event_col < len(row)
+                              and row[event_col].strip().upper().startswith("SEQUENCE"))
+
             for c, val in enumerate(row):
 
                 item = QTableWidgetItem(val)
                 item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+
+                if is_sequence_row:
+                    font = item.font()
+                    font.setBold(True)
+                    item.setFont(font)
+                    item.setBackground(highlight_bg)
 
                 self.setItem(r, c, item)
 
@@ -466,7 +489,8 @@ def _extract_sensor_data(headers: list[str], rows: list[list]) -> dict:
     Parse loaded xlsx data into a dict:
         {
             "t": [float, ...],          # seconds from first row
-            "sensors": {col_name: [float|None, ...], ...}
+            "sensors": {col_name: [float|None, ...], ...},
+            "events":  [(t, event_type, event_details), ...]
         }
     Skips blank header columns and non-sensor columns (Control State, Event Type etc).
     """
@@ -476,6 +500,10 @@ def _extract_sensor_data(headers: list[str], rows: list[list]) -> dict:
 
     time_col = next((i for i, h in enumerate(headers)
                      if "local time" in h.lower()), None)
+    ev_type_col = next((i for i, h in enumerate(headers)
+                        if h.strip().lower() == "event type"), None)
+    ev_det_col = next((i for i, h in enumerate(headers)
+                       if h.strip().lower() == "event details"), None)
 
     sensor_cols = {i: h for i, h in enumerate(headers)
                    if h and h not in NON_SENSOR}
@@ -506,17 +534,24 @@ def _extract_sensor_data(headers: list[str], rows: list[list]) -> dict:
         else:
             t_seconds.append(None)
 
+    # Collect logged events (rows with a non-empty Event Type)
+    events: list[tuple[float, str, str]] = []
+    if ev_type_col is not None:
+        for row, t in zip(rows, t_seconds):
+            if t is None or ev_type_col >= len(row):
+                continue
+            ev_type = str(row[ev_type_col]).strip()
+            if not ev_type:
+                continue
+            ev_det = str(row[ev_det_col]).strip() \
+                if ev_det_col is not None and ev_det_col < len(row) else ""
+            events.append((t, ev_type, ev_det))
+
     return {
         "t": t_seconds,
         "sensors": {sensor_cols[i]: sensor_rows[i] for i in sensor_cols},
+        "events": events,
     }
-
-
-# Colour cycle for multi-sensor plots — matches the maroon/dark theme
-_PLOT_COLORS = [
-    "#e05c5c", "#5c9ee0", "#5ce07a", "#e0c45c",
-    "#c45ce0", "#5ce0d4", "#e07a5c", "#a0a0ff",
-]
 
 
 class SensorGraphPanel(QWidget):
@@ -578,6 +613,22 @@ class SensorGraphPanel(QWidget):
         self._reset_btn.setEnabled(False)
         tb.addWidget(self._reset_btn)
 
+        sep2 = QFrame()
+        sep2.setFrameShape(QFrame.VLine)
+        tb.addWidget(sep2)
+
+        tb.addWidget(QLabel("Markers:"))
+
+        # Vertical event lines on the plot: sequence operations (default),
+        # individual valve open/close commands, or none.
+        self._marker_combo = QComboBox()
+        self._marker_combo.addItem("Sequence ops", "sequence")
+        self._marker_combo.addItem("Valve ops", "valve")
+        self._marker_combo.addItem("Off", "off")
+        self._marker_combo.currentIndexChanged.connect(
+            lambda _: self._draw() if self._data else None)
+        tb.addWidget(self._marker_combo)
+
         tb.addStretch()
 
         layout.addWidget(toolbar_row)
@@ -605,12 +656,18 @@ class SensorGraphPanel(QWidget):
 
         self._sensor_list.clear()
 
-        for name in sorted(self._data["sensors"].keys()):
+        # Group by category (pressure first); check only the first category by
+        # default so the initial plot isn't a mixed-unit wall of lines.
+        cat_rank = {"Pressure Transducers": 0, "Thermocouples": 1, "Load Cells": 2}
+        names = sorted(self._data["sensors"].keys(),
+                       key=lambda n: (cat_rank.get(sensor_category(n), 9), len(n), n))
+        default_cat = sensor_category(names[0]) if names else None
 
+        for name in names:
             item = QListWidgetItem(name)
             item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsUserCheckable)
-            item.setCheckState(Qt.Checked)
-
+            item.setCheckState(
+                Qt.Checked if sensor_category(name) == default_cat else Qt.Unchecked)
             self._sensor_list.addItem(item)
 
         self._plot_btn.setEnabled(True)
@@ -707,7 +764,8 @@ class SensorGraphPanel(QWidget):
                     t_plot.append(t)
                     v_plot.append(v)
 
-            color = _PLOT_COLORS[idx % len(_PLOT_COLORS)]
+            palette = SERIES_COLORS_DARK if self._dark else SERIES_COLORS_LIGHT
+            color = palette[idx % len(palette)]
 
             line, = ax.plot(
                 t_plot,
@@ -749,21 +807,24 @@ class SensorGraphPanel(QWidget):
             spine.set_edgecolor(grid)
 
         legend = ax.legend(
-            fontsize=14,
+            fontsize=9,
             loc="upper right",
+            ncol=2 if len(selected) > 8 else 1,
             facecolor=bg,
             edgecolor=grid,
             labelcolor=fg,
-            framealpha=0.95,
-            borderpad=1.0,
-            labelspacing=0.8,
-            handlelength=3.0,
+            framealpha=0.85,
+            borderpad=0.6,
+            labelspacing=0.4,
+            handlelength=2.0,
         )
 
         for text in legend.get_texts():
             text.set_fontfamily("monospace")
 
         ax.set_xlim(t_start, t_end)
+
+        self._draw_event_markers(ax, t_start, t_end)
 
         annot_bg = "#2a2a38" if self._dark else "#ffffff"
         annot_fg = "#e8e6e0" if self._dark else "#1a1a1a"
@@ -794,6 +855,58 @@ class SensorGraphPanel(QWidget):
         )
 
         self._canvas.draw_idle()
+
+    # Event types that count as "sequence operations"
+    _SEQ_EVENT_TYPES = ("SEQUENCE:START", "SEQUENCE:STEP", "OPERATION",
+                        "ABORT", "SAFE_STATE")
+    # Valve-level events
+    _VALVE_EVENT_TYPES = ("VALVE_CHANGED", "AUTO_VALVE_OPEN")
+
+    def _marker_for_event(self, ev_type: str, ev_det: str, mode: str):
+        """Return (label, color) if this event should be marked in the given
+        mode, else None. Aborts are shown in both modes - they matter."""
+        good = "#199e70" if self._dark else "#1baf7a"
+        bad  = "#e66767" if self._dark else "#e34948"
+        neutral = "#9b9990" if self._dark else "#6b6963"
+
+        if ev_type == "ABORT":
+            reason = ev_det.split(":", 1)[0]
+            return (f"ABORT {reason}".strip()[:30], bad)
+
+        if mode == "sequence":
+            if ev_type in self._SEQ_EVENT_TYPES or ev_type.startswith("SEQUENCE"):
+                return (ev_det or ev_type, neutral)
+        elif mode == "valve":
+            if ev_type in self._VALVE_EVENT_TYPES:
+                # VALVE_CHANGED details look like "NCS1:True"
+                name, _, state = ev_det.partition(":")
+                if state.strip() in ("True", "1", "OPEN"):
+                    return (f"{name} open", good)
+                if state.strip() in ("False", "0", "CLOSED"):
+                    return (f"{name} close", bad)
+                return (ev_det or ev_type, neutral)
+        return None
+
+    def _draw_event_markers(self, ax, t_start: float, t_end: float):
+        mode = self._marker_combo.currentData()
+        if mode == "off" or not self._data:
+            return
+
+        trans = ax.get_xaxis_transform()   # x = data coords, y = axes fraction
+        for t, ev_type, ev_det in self._data.get("events", []):
+            if not (t_start <= t <= t_end):
+                continue
+            marker = self._marker_for_event(ev_type, ev_det, mode)
+            if marker is None:
+                continue
+            label, color = marker
+
+            ax.axvline(t, color=color, linestyle="--", linewidth=1.0,
+                       alpha=0.65, zorder=5)
+            ax.text(t, 0.99, f" {label}", transform=trans,
+                    rotation=90, ha="right", va="top",
+                    fontsize=7, fontfamily="monospace",
+                    color=color, alpha=0.95, zorder=6, clip_on=True)
 
     def _on_hover(self, event):
 
