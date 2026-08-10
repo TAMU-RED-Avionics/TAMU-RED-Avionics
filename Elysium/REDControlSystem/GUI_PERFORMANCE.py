@@ -3,9 +3,8 @@ import uuid
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QLineEdit,
     QComboBox, QCheckBox, QDialog, QDialogButtonBox, QScrollArea, QFrame,
-    QToolButton, QMessageBox, QSizePolicy,
+    QToolButton, QMessageBox,
 )
-from PyQt5.QtCore import Qt
 
 from PID_SCHEMA import CalcChannel
 
@@ -84,7 +83,9 @@ class _ChannelCard(QFrame):
         self.expr_edit = QLineEdit(channel.expression)
         self.expr_edit.setPlaceholderText(
             "Expression - sensor names (P1, P8, TC1, LC1...), your constants below, "
-            "and sqrt/abs/min/max/pow/G0. e.g. 500 * CV * sqrt((P1 - P2) * SG)")
+            "sqrt/abs/min/max/pow/G0, and PropsSI(output, in1, val1, in2, val2, fluid) for "
+            "CoolProp fluid properties. e.g. 500 * CV * sqrt((P1 - P2) * SG) or "
+            "LC1 * PropsSI('D','T',TC1+273.15,'P',P1*6894.76+101325,'N2O')")
         outer.addWidget(self.expr_edit)
 
         const_row = QHBoxLayout()

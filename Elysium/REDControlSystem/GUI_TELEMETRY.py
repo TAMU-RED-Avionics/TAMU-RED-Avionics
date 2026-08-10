@@ -9,10 +9,10 @@ from PyQt5.QtWidgets import (
     QHeaderView, QFrame, QPushButton, QAbstractItemView,
     QSizePolicy, QToolButton, QStackedWidget, QComboBox,
     QLineEdit, QMessageBox, QListWidget, QListWidgetItem,
-    QDoubleSpinBox, QScrollArea, QGroupBox, QCheckBox,
+    QDoubleSpinBox,
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QSortFilterProxyModel, QThread, pyqtSlot
-from PyQt5.QtGui import QColor, QFont, QPalette
+from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtGui import QColor
 
 import matplotlib
 matplotlib.use("Qt5Agg")

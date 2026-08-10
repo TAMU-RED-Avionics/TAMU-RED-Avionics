@@ -1,21 +1,18 @@
 import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QFileDialog, QDialog, QDialogButtonBox, QFormLayout,
-    QLineEdit, QComboBox, QDoubleSpinBox, QCheckBox,
-    QSplitter, QMessageBox, QFrame, QSizePolicy, QTextEdit,
-    QTableWidget, QTableWidgetItem, QHeaderView, QSpinBox,
+    QFileDialog, QFormLayout, QLineEdit, QCheckBox,
+    QSplitter, QMessageBox, QFrame, QSizePolicy,
     QToolButton, QScrollArea,
 )
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QFont, QColor, QFontMetrics
 
 from PID_SCHEMA import (
-    PIDProject, Component, PipeLine, LayoutPoint, Connection, HardwareBinding,
-    COMPONENT_TYPES, FLUID_COLORS, FLUID_GENERIC,
+    PIDProject, Component, PipeLine,
+    FLUID_COLORS, FLUID_GENERIC,
     COMP_VALVE, COMP_THROTTLE_VALVE, COMP_PRESSURE, COMP_TEMPERATURE,
-    COMP_LOAD_CELL, COMP_TANK, COMP_INJECTOR, COMP_ORIFICE, COMP_FILTER,
-    COMP_REGULATOR, COMP_CHECK_VALVE, COMP_RELIEF_VALVE, COMP_LABEL, COMP_JUNCTION,
+    COMP_LOAD_CELL, COMP_TANK, COMP_INJECTOR,
+    COMP_REGULATOR, COMP_CHECK_VALVE, COMP_LABEL, COMP_JUNCTION,
     FLUID_OXIDIZER, FLUID_FUEL, FLUID_PRESSURANT, FLUID_PURGE, COMP_BALL_VALVE, COMP_PSV,
     COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_REDUCER, COMP_PRV, COMP_IGNITER,
 )
@@ -337,9 +334,6 @@ class PropertyPanel(QWidget):
         self.form.addRow(label + ":", le)
         self._fields[key or label] = le
 
-    def _on_changed(self, key, value):
-        self.property_changed.emit(key, value)
-
 class PIDEditorWindow(QWidget):
     project_saved = pyqtSignal(str)
 
@@ -502,15 +496,12 @@ class PIDEditorWindow(QWidget):
         self.canvas.update()
 
     def _rotate_selected(self):
-        selected_ids = self.canvas._selected_comps
-        if not selected_ids:
+        if not self.canvas._selected_comps:
             return
-        for cid in selected_ids:
+        for cid in self.canvas._selected_comps:
             comp = self._project.components.get(cid)
             if comp:
-                current_rot = getattr(comp, 'rotation', 0)
-                comp.rotation = (current_rot + 90) % 360
-
+                comp.rotation = (comp.rotation + 90) % 360
         self.canvas.update()
 
     def _on_palette_comp(self, comp_type: str):
@@ -640,13 +631,7 @@ class PIDEditorWindow(QWidget):
             if self.canvas._drawing_line:
                 self.canvas.finish_line_draw()
         elif event.key() == Qt.Key_R:
-            selected_ids = self.canvas._selected_comps
-            if selected_ids:
-                for cid in selected_ids:
-                    comp = self._project.components.get(cid)
-                    if comp:
-                        comp.rotation = (comp.rotation + 90) % 360
-                self.canvas.update()
+            self._rotate_selected()
         else:
             super().keyPressEvent(event)
 

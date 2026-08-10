@@ -547,29 +547,24 @@ class PIDProject:
             json.dump(self.to_dict(), f, indent=2)
 
     @staticmethod
-    def load(path: str) -> "PIDProject":
-        try:
-            with open(path, encoding="utf-8-sig") as f:
-                d = json.load(f)
-        except UnicodeDecodeError:
-            with open(path, encoding="latin-1") as f:
-                d = json.load(f)
-        proj = PIDProject(name=d.get("name", os.path.basename(path)))
+    def from_dict(d: dict, name_fallback: str = "Untitled Project") -> "PIDProject":
+        proj = PIDProject(name=d.get("name", name_fallback))
         proj.version = d.get("version", "1.0")
- 
+
         for cd in d.get("components", []):
             c = Component.from_dict(cd)
             proj.components[c.id] = c
- 
+
         for conn in d.get("connections", []):
             proj.connections.append(Connection.from_dict(conn))
- 
+
         for cid, pt in d.get("layout", {}).items():
             proj.layout[cid] = LayoutPoint.from_dict(pt)
- 
+
         for ld in d.get("lines", []):
             proj.lines.append(PipeLine.from_dict(ld))
 
+        # De-duplicate pipe line ids (older files could carry collisions)
         seen_ids = set()
         for line in proj.lines:
             if line.id not in seen_ids:
@@ -580,43 +575,47 @@ class PIDProject:
                 next_idx += 1
             line.id = f"line_{next_idx}"
             seen_ids.add(line.id)
- 
+
         proj.parameters = SystemParameters.from_dict(d.get("parameters", {}))
- 
+
         for rd in d.get("rules", []):
             proj.rules.append(AbortRule.from_dict(rd))
- 
-        # Legacy flat sequence list
-        for sd in d.get("sequence", []):
-            proj.sequence.append(SequenceStep.from_dict(sd))
 
-        # Named sequences (new format)
-        for seqd in d.get("sequences", []):
-            proj.sequences.append(NamedSequence.from_dict(seqd))
-
-        # If the file has no named sequences yet but has a legacy flat sequence,
-        # promote it to a single named sequence called "Default" for continuity.
-        if not proj.sequences and proj.sequence:
-            default_seq = NamedSequence(
-                id    = "seq_default",
-                name  = "Default",
-                steps = list(proj.sequence),
-            )
-            proj.sequences.append(default_seq)
-
-        proj.active_sequence_id = d.get("active_sequence_id", "")
-        # Fall back to first sequence if active_sequence_id is missing OR
-        # stale (doesn't match any loaded sequence - e.g. that sequence was
-        # since deleted).
-        if proj.get_active_sequence() is None and proj.sequences:
-            proj.active_sequence_id = proj.sequences[0].id
-
-        # Calculated performance channels
         for cd in d.get("calc_channels", []):
             proj.calc_channels.append(CalcChannel.from_dict(cd))
 
+        # Legacy flat sequence list (kept for backward-compat readers)
+        for sd in d.get("sequence", []):
+            proj.sequence.append(SequenceStep.from_dict(sd))
+
+        # Named sequences (new format); a legacy flat sequence is promoted to
+        # a single "Default" named sequence for continuity.
+        for seqd in d.get("sequences", []):
+            proj.sequences.append(NamedSequence.from_dict(seqd))
+        if not proj.sequences:
+            proj.sequences.append(NamedSequence(
+                id="seq_default", name="Default", steps=list(proj.sequence)))
+
+        proj.active_sequence_id = d.get("active_sequence_id", "")
+        # Fall back to the first sequence if active_sequence_id is missing or
+        # stale (doesn't match any loaded sequence).
+        if proj.get_active_sequence() is None:
+            proj.active_sequence_id = proj.sequences[0].id
+
         return proj
- 
+
+    @staticmethod
+    def load(path: str) -> "PIDProject":
+        raw = open(path, "rb").read()
+        if raw.startswith(b"\xef\xbb\xbf"):
+            raw = raw[3:]
+        try:
+            text = raw.decode("utf-8")
+        except UnicodeDecodeError:
+            text = raw.decode("cp1252")
+        d = json.loads(text)
+        return PIDProject.from_dict(d, name_fallback=os.path.basename(path))
+
     @staticmethod
     def new_empty(name: str = "New Project") -> "PIDProject":
         return PIDProject(name=name)

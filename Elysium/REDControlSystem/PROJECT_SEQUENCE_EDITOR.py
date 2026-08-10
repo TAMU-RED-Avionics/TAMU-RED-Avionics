@@ -1,7 +1,6 @@
-import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QSplitter, QInputDialog, QListWidget, QListWidgetItem, QDoubleSpinBox,
+    QSplitter, QInputDialog, QListWidget, QDoubleSpinBox,
     QCheckBox, QMessageBox, QComboBox,
 )
 from PyQt5.QtCore import Qt
@@ -38,17 +37,13 @@ class SequenceEditorWindow(QWidget):
         self._load_sequence(self._current_seq_id)
 
     def _current_sequence(self) -> "NamedSequence | None":
-        for seq in self._project.sequences:
-            if seq.id == self._current_seq_id:
-                return seq
-        return self._project.sequences[0] if self._project.sequences else None
+        seq = next((s for s in self._project.sequences if s.id == self._current_seq_id), None)
+        if seq is None and self._project.sequences:
+            seq = self._project.sequences[0]
+        return seq
 
     def _load_sequence(self, seq_id: str):
-        seq = None
-        for s in self._project.sequences:
-            if s.id == seq_id:
-                seq = s
-                break
+        seq = next((s for s in self._project.sequences if s.id == seq_id), None)
         if seq is None and self._project.sequences:
             seq = self._project.sequences[0]
         if seq is None:

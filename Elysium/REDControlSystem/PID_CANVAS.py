@@ -27,21 +27,52 @@ TNK_HH = 50
 JCT_R = 5
 PIPE_W = 2.5
 
-C_BG          = QColor("#0d0d0f")
-C_GRID        = QColor("#1c1c22")
-C_SYMBOL      = QColor("#e8e8e8")      # Light gray for outlines
-C_FILL_CLOSED = QColor("#2a2a2a")      # Dark gray for closed valves
-C_FILL_OPEN   = QColor("#00c853")      # Green for open
-C_FILL_PEND   = QColor("#ff9800")      # Orange for pending
-C_SENSOR_FILL = QColor("#1a2a3a")      # Dark blue-gray
-C_TANK_FILL   = QColor("#1a1a2e")      # Dark blue-black
-C_LABEL       = QColor("#d0d0d0")
-C_SELECT      = QColor("#ffd600")
-C_HOVER       = QColor("#64b5f6")
-C_PSV_FILL    = QColor("#2a2a2a")
-C_PRV_FILL    = QColor("#2a2a2a")
-C_SOLENOID_FILL = QColor("#2a2a2a")
-C_REDUCER_FILL  = QColor("#2a2a2a")
+# Canvas colour themes. The C_* module globals below are reassigned by
+# apply_canvas_theme() so every canvas (live view, editor, sequence editor)
+# switches together with the app-wide dark/light toggle. Light mode exists
+# for outdoor use - the palette is chosen for sunlight readability (dark
+# strokes on a bright surface), not just an inverted dark theme.
+_CANVAS_THEMES = {
+    True: dict(   # dark
+        bg="#0d0d0f", grid="#1c1c22", symbol="#e8e8e8", fill_closed="#2a2a2a",
+        fill_open="#00c853", fill_pend="#ff9800", sensor_fill="#1a2a3a",
+        tank_fill="#1a1a2e", label="#d0d0d0", select="#ffd600",
+        hover="#64b5f6", aux_fill="#2a2a2a",
+    ),
+    False: dict(  # light
+        bg="#f4f4f0", grid="#dcdcd4", symbol="#1a1a1a", fill_closed="#d6d6d0",
+        fill_open="#00a344", fill_pend="#e07f00", sensor_fill="#d9e6f2",
+        tank_fill="#e2e2ee", label="#202020", select="#c27b00",
+        hover="#1976d2", aux_fill="#d6d6d0",
+    ),
+}
+
+CANVAS_DARK_MODE = True
+
+def apply_canvas_theme(dark: bool):
+    """Swap the module-level palette between dark and light."""
+    global CANVAS_DARK_MODE, C_BG, C_GRID, C_SYMBOL, C_FILL_CLOSED
+    global C_FILL_OPEN, C_FILL_PEND, C_SENSOR_FILL, C_TANK_FILL, C_LABEL
+    global C_SELECT, C_HOVER, C_PSV_FILL, C_PRV_FILL, C_SOLENOID_FILL, C_REDUCER_FILL
+    CANVAS_DARK_MODE = bool(dark)
+    t = _CANVAS_THEMES[CANVAS_DARK_MODE]
+    C_BG          = QColor(t["bg"])
+    C_GRID        = QColor(t["grid"])
+    C_SYMBOL      = QColor(t["symbol"])
+    C_FILL_CLOSED = QColor(t["fill_closed"])
+    C_FILL_OPEN   = QColor(t["fill_open"])
+    C_FILL_PEND   = QColor(t["fill_pend"])
+    C_SENSOR_FILL = QColor(t["sensor_fill"])
+    C_TANK_FILL   = QColor(t["tank_fill"])
+    C_LABEL       = QColor(t["label"])
+    C_SELECT      = QColor(t["select"])
+    C_HOVER       = QColor(t["hover"])
+    C_PSV_FILL      = QColor(t["aux_fill"])
+    C_PRV_FILL      = QColor(t["aux_fill"])
+    C_SOLENOID_FILL = QColor(t["aux_fill"])
+    C_REDUCER_FILL  = QColor(t["aux_fill"])
+
+apply_canvas_theme(True)
 
 FLUID_QC = {k: QColor(v) for k, v in FLUID_COLORS.items()}
 
@@ -103,8 +134,7 @@ class Renderer:
              selected: bool = False, hovered: bool = False,
              zoom: float = 1.0, show_label: bool = True, **kwargs):
 
-        t   = comp.type
-        lbl = comp.label or comp.id
+        t = comp.type
         scale_x, scale_y = _component_scale(comp)
 
         p.save()
@@ -1098,7 +1128,6 @@ class PIDCanvas(QWidget):
         if not self.project or len(pts) < 2:
             return None
 
-        from PID_SCHEMA import PipeLine
         line_id = f"line_{len(self.project.lines)}"
         line = PipeLine(id=line_id, points=pts, fluid=fluid)
         self.line_finished.emit(line)
@@ -1695,8 +1724,24 @@ class PIDCanvas(QWidget):
             self._dragging_comp = None
             self.setCursor(Qt.ArrowCursor)
 
+    def set_dark_mode(self, dark: bool):
+        """Swap the shared canvas palette (all canvases follow) and repaint."""
+        apply_canvas_theme(dark)
+        self.update()
+
     def wheelEvent(self, event):
-        delta = event.pixelDelta().y()
+        pixel = event.pixelDelta()
+
+        # Trackpad two-finger scroll (Qt reports it via pixelDelta) pans the
+        # view; hold Ctrl to zoom instead. A mouse wheel (angleDelta only)
+        # keeps zooming like it always has.
+        if not pixel.isNull() and not (event.modifiers() & Qt.ControlModifier):
+            self._pan += QPointF(pixel.x() / self._zoom, pixel.y() / self._zoom)
+            event.accept()
+            self.update()
+            return
+
+        delta = pixel.y()
         if delta == 0:
             delta = event.angleDelta().y()
         if delta == 0:

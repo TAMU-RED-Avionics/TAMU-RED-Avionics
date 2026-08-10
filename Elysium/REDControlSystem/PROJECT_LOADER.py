@@ -17,68 +17,17 @@ def discover_projects() -> list[tuple[str, str]]:
     return entries
 
 def load_project(path: str) -> Optional[PIDProject]:
-    import json as _json
-
+    """Load a .red project, returning None (with a console message) on any
+    failure instead of raising - callers show their own error dialog."""
     if not os.path.isfile(path):
         print(f"File not found: {path}")
         return None
 
     try:
-        raw = open(path, "rb").read()
-        if raw.startswith(b"\xef\xbb\xbf"):
-            raw = raw[3:]
-        try:
-            text = raw.decode("utf-8")
-        except UnicodeDecodeError:
-            text = raw.decode("cp1252")
-        d = _json.loads(text)
+        return PIDProject.load(path)
     except Exception as exc:
         print(f"Failed to load '{path}': {exc}")
         return None
-
-    try:
-        return _project_from_dict(d, path)
-    except Exception as exc:
-        print(f"Failed to parse '{path}': {exc}")
-        return None
-
-def _project_from_dict(d: dict, path: str) -> "PIDProject":
-    import os as _os
-    from PID_SCHEMA import (
-        Component, Connection, LayoutPoint,
-        PipeLine, SystemParameters, AbortRule, CalcChannel, NamedSequence,
-    )
-    from PROJECT_SEQUENCE_EDITOR import SequenceStep
-    proj = PIDProject(name=d.get("name", _os.path.basename(path)))
-    proj.version = d.get("version", "1.0")
-    for cd in d.get("components", []):
-        c = Component.from_dict(cd)
-        proj.components[c.id] = c
-    for conn in d.get("connections", []):
-        proj.connections.append(Connection.from_dict(conn))
-    for cid, pt in d.get("layout", {}).items():
-        proj.layout[cid] = LayoutPoint.from_dict(pt)
-    for ld in d.get("lines", []):
-        proj.lines.append(PipeLine.from_dict(ld))
-    proj.parameters = SystemParameters.from_dict(d.get("parameters", {}))
-    for rd in d.get("rules", []):
-        proj.rules.append(AbortRule.from_dict(rd))
-    for chd in d.get("calc_channels", []):
-        proj.calc_channels.append(CalcChannel.from_dict(chd))
-
-    if "sequences" in d:
-        proj.sequences = [NamedSequence.from_dict(sd) for sd in d.get("sequences", [])]
-        if not proj.sequences:
-            proj.sequences = [NamedSequence(id="seq_default", name="Default")]
-        proj.active_sequence_id = d.get("active_sequence_id", proj.sequences[0].id)
-        if proj.get_active_sequence() is None:
-            proj.active_sequence_id = proj.sequences[0].id
-    else:
-        legacy_steps = [SequenceStep.from_dict(sd) for sd in d.get("sequence", [])]
-        proj.sequences = [NamedSequence(id="seq_default", name="Default", steps=legacy_steps)]
-        proj.active_sequence_id = "seq_default"
-
-    return proj
 
 def project_summary(project: PIDProject) -> str:
     n_comp  = len(project.components)

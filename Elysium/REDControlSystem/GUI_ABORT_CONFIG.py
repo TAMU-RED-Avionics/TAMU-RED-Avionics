@@ -2,13 +2,13 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QLabel, QLineEdit, QCheckBox,
     QScrollArea, QFrame, QSizePolicy, QMessageBox,
-    QGroupBox, QDoubleSpinBox, QComboBox, QToolButton,
-    QDialog, QDialogButtonBox, QPlainTextEdit,
+    QDoubleSpinBox, QComboBox, QToolButton,
 )
 from PyQt5.QtCore import Qt
 
+from GUI_CONTROLLER import GUIController
 from PID_SCHEMA import (
-    AbortRule, SensorThresholds,
+    AbortRule,
     COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL,
     COMP_VALVE, COMP_BALL_VALVE, COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_THROTTLE_VALVE,
 )
@@ -689,11 +689,6 @@ class AbortConfigPage(QWidget):
             )
         except Exception as e:
             QMessageBox.critical(self, "Save Failed", str(e))
-
-# pulled from old GUI_ABORT.py 
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QSizePolicy
-
-from GUI_CONTROLLER import GUIController
 
 """
 AbortWindow

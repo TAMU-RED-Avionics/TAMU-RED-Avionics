@@ -1,10 +1,8 @@
-from re import I
 import errno
 from socket import socket, SocketKind, AddressFamily, timeout as SocketTimeout
-from threading import Thread
 import time
 import struct
-from PyQt5.QtCore import QObject, pyqtSignal, QDate, Qt, QTimer, QDateTime, QThread
+from PyQt5.QtCore import QDateTime, QThread
 
 
 class EGCPPacket:
@@ -65,16 +63,17 @@ class EGCPPacket:
 
 class EthernetClient:
 
-    def __init__(self, log_event_callback: (str)=None, receive_callback: (str)=None, connect_callback: (bool)=None, disconnect_callback: (str)=None):
+    def __init__(self, log_event_callback=None, receive_callback=None,
+                 connect_callback=None, disconnect_callback=None):
         # Maps are populated at runtime via load_project_maps(); they start empty so
         # any attempt to control valves or decode sensors before a project is loaded
         # fails loudly rather than silently using stale hardcoded data.
         self.VALVE_MAP:  dict[str, int] = {}   # hw_id  -> relay index  (1-byte actuator ID)
         self.SENSOR_MAP: dict[int, str] = {}   # adc ch -> hw_id name
-        self.log_event_callback: (str) = log_event_callback
-        self.receive_callback: (str) = receive_callback
-        self.connect_callback: (bool) = connect_callback
-        self.disconnect_callback: (str) = disconnect_callback
+        self.log_event_callback = log_event_callback      # (event_type, details="")
+        self.receive_callback = receive_callback          # (data_str)
+        self.connect_callback = connect_callback          # (success: bool)
+        self.disconnect_callback = disconnect_callback    # (reason: str)
         
         self.remote_ip: str = None
         self.remote_port: int = None
@@ -199,6 +198,13 @@ class EthernetClient:
         self.tx_packet_id = (self.tx_packet_id + 1) & 0xFFFFFF  # Keep in 24-bit range
         return packet_id
 
+    def _valve_name_for_id(self, valve_id: int) -> str:
+        """Reverse-lookup a hw_id name from a 1-byte relay/actuator ID."""
+        for name, vid in self.VALVE_MAP.items():
+            if vid == valve_id:
+                return name
+        return "UNKNOWN"
+
     def _describe_connection_error(self, err: Exception, ip: str, port: int) -> str:
         """Build a user-friendly connection failure reason for logs/UI."""
         if isinstance(err, SocketTimeout):
@@ -300,16 +306,7 @@ class EthernetClient:
         if packet.packet_type not in [EGCPPacket.PKT_VSO, EGCPPacket.PKT_VSC]:
             return
 
-        # Extract valve ID from packet body and get valve name
-        valve_name = "UNKNOWN"
-        if len(packet.body) >= 1:
-            valve_id = packet.body[0]
-            # Reverse lookup valve name from ID
-            for name, vid in self.VALVE_MAP.items():
-                if vid == valve_id:
-                    valve_name = name
-                    break
-
+        valve_name = self._valve_name_for_id(packet.body[0]) if packet.body else "UNKNOWN"
         cmd_type = "OPEN" if packet.packet_type == EGCPPacket.PKT_VSO else "CLOSE"
         reason = f"{cmd_type}_{valve_name}_timeout:packet_id={pkt_id}"
 
@@ -371,10 +368,8 @@ class EthernetClient:
                 self.sock = socket(AddressFamily.AF_INET, SocketKind.SOCK_DGRAM)
                 self.sock.settimeout(self.timeout)   # seconds
 
-                # Tells the socket to connect to the MCU's IP and port
-                # host = socket.get
                 try:
-                    self.sock.bind(("", port))     # bind to the hardcoded port (should be configurable live in the future
+                    self.sock.bind(("", port))
                 except OSError:
                     print(f"[EthernetClient] Local UDP port {port} in use, binding to ephemeral port")
                     self.sock.bind(("", 0))
@@ -395,9 +390,7 @@ class EthernetClient:
                 finally:
                     if probe_sock:
                         probe_sock.close()
-                
-                # self.sock.connect((ip, port))
-                
+
                 # Send START packet to announce presence and initiate connection
                 # Retry handshake packets until timeout expires. This avoids false failures
                 # when the first UDP packet is dropped during ARP resolution.
@@ -479,24 +472,20 @@ class EthernetClient:
         self.heartbeat_last_rx = QDateTime.currentMSecsSinceEpoch()
         
         def heartbeat_loop():
-            while self.connected and self.heartbeat_active:    # For now I am going to ignore the connection requirement
+            while self.connected and self.heartbeat_active:
                 # Send the TX heartbeat
                 now = QDateTime.currentMSecsSinceEpoch()
                 if (now - self.heartbeat_last_tx) > self.heartbeat_tx_cadence:
                     try:
                         if self.remote_ip and self.remote_port:
-                            # Send binary HRT packet instead of text NOOP
                             hrt_packet = EGCPPacket(self._get_next_tx_id(), EGCPPacket.PKT_HRT)
                             self._send_packet(hrt_packet)
                             self.heartbeat_last_tx = now
                             self.heartbeat_tx_count += 1
-
-                        # if self.log_event_callback:
-                        #     self.log_event_callback("HEARTBEAT:HRT")
                     except Exception as e:
                         self.disconnect(str(e))
                         break
-                
+
                 # Check for pending ACKs and retry if needed
                 now = QDateTime.currentMSecsSinceEpoch()
                 packets_to_retry = []
@@ -542,12 +531,10 @@ class EthernetClient:
 
                 time.sleep(0.001)    # Control the pace of this thread to 1ms to prevent it from burning too much CPU
         
-        # Start the thread
-        # NOTE - Although this is a separate high priority thread, applying a stylesheet or doing other
-        #        basic things on the GUI can cause 40-50ms pauses in this thread's execution.
-        #        As a result the timing loop is constrained to a precision of that amount to not get an abort
-        #        Currently to see an abort, you need to miss 6x 10ms heartbeats (60ms total timeout),
-        #        which provides tolerance for brief GUI hiccups while still detecting connection loss quickly.
+        # NOTE - Although this is a separate high-priority thread, applying a
+        #        stylesheet or other basic GUI work can pause it 40-50 ms, so the
+        #        rx-miss window (heartbeat_rx_miss_interval) must stay well above
+        #        that to avoid spurious aborts while still catching link loss fast.
         self.heartbeat_thread = QThread()
         self.heartbeat_thread.run = heartbeat_loop
         self.heartbeat_thread.start()
@@ -627,16 +614,10 @@ class EthernetClient:
                                 # If the ACK was for a valve command, notify the GUI controller it succeeded
                                 if acked_record and self.receive_callback:
                                     _, orig_pkt, _ = acked_record
-                                    if orig_pkt.packet_type in (EGCPPacket.PKT_VSO, EGCPPacket.PKT_VSC):
-                                        if len(orig_pkt.body) >= 1:
-                                            valve_id = orig_pkt.body[0]
-                                            valve_name = "UNKNOWN"
-                                            for name, vid in self.VALVE_MAP.items():
-                                                if vid == valve_id:
-                                                    valve_name = name
-                                                    break
-                                            state_str = "1" if orig_pkt.packet_type == EGCPPacket.PKT_VSO else "0"
-                                            self.receive_callback(f"0,VALVE_SUCCESS:{valve_name}:{state_str}")
+                                    if orig_pkt.packet_type in (EGCPPacket.PKT_VSO, EGCPPacket.PKT_VSC) and orig_pkt.body:
+                                        valve_name = self._valve_name_for_id(orig_pkt.body[0])
+                                        state_str = "1" if orig_pkt.packet_type == EGCPPacket.PKT_VSO else "0"
+                                        self.receive_callback(f"0,VALVE_SUCCESS:{valve_name}:{state_str}")
                             
                             elif packet.packet_type == EGCPPacket.PKT_NCK:
                                 # NCK received - log error
@@ -651,15 +632,9 @@ class EthernetClient:
                                     
                                 if nck_record and self.receive_callback:
                                     _, orig_pkt, _ = nck_record
-                                    if orig_pkt.packet_type in (EGCPPacket.PKT_VSO, EGCPPacket.PKT_VSC):
-                                        if len(orig_pkt.body) >= 1:
-                                            valve_id = orig_pkt.body[0]
-                                            valve_name = "UNKNOWN"
-                                            for name, vid in self.VALVE_MAP.items():
-                                                if vid == valve_id:
-                                                    valve_name = name
-                                                    break
-                                            self.receive_callback(f"0,VALVE_FAIL:{valve_name}")
+                                    if orig_pkt.packet_type in (EGCPPacket.PKT_VSO, EGCPPacket.PKT_VSC) and orig_pkt.body:
+                                        valve_name = self._valve_name_for_id(orig_pkt.body[0])
+                                        self.receive_callback(f"0,VALVE_FAIL:{valve_name}")
                             
                             elif packet.packet_type == EGCPPacket.PKT_ADC:
                                 # ADC reading: 1 byte sensor ID + 4 bytes IEEE 754 float (calibrated value)
@@ -696,7 +671,6 @@ class EthernetClient:
                     break
 
         self.listening_active = True
-        # self.listen_thread = Thread(target=listen_loop, daemon=True)
         self.listen_thread = QThread()
         self.listen_thread.run = listen_loop
         self.listen_thread.start()

@@ -88,11 +88,12 @@ class SensorCalibrationDialog(QDialog):
     rather than guessing at fake reference points for a flight instrument.
     """
 
-    # 0% (atmospheric baseline) / 50% / 100% of full-scale, tried first; if
-    # confidence still isn't there, additional checkpoints are pulled from
-    # here in order.
-    PRIMARY_FRACTIONS = [0.0, 0.5, 1.0]
-    EXTRA_FRACTIONS   = [0.25, 0.75, 0.10, 0.90]
+    # Checkpoints in psi-above-atmosphere. Kept deliberately low: pressing up
+    # a PT for calibration shouldn't need anywhere near full scale, so the
+    # primary sequence stays at/under 100 and the extras only climb toward
+    # 200 if the fit still isn't confident (200 is the hard ceiling).
+    PRIMARY_TARGETS = [0.0, 50.0, 100.0]
+    EXTRA_TARGETS   = [25.0, 75.0, 150.0, 200.0]
 
     CONFIDENCE_R2_THRESHOLD   = 0.999
     MIN_POINTS_FOR_CONFIDENCE = 3
@@ -110,8 +111,8 @@ class SensorCalibrationDialog(QDialog):
         self.setMinimumWidth(480)
 
         self._points: list = []       # (expected, wire_avg)
-        self._fraction_queue: list = []
-        self._full_scale: float = 0.0
+        self._target_queue: list = [] # pending checkpoints, psi above atmosphere
+        self._used_targets: list = []
         self._ref0: float = 14.7
 
         lay = QVBoxLayout(self)
@@ -184,9 +185,11 @@ class SensorCalibrationDialog(QDialog):
         intro = QLabel(
             "The wizard tells you what pressure to set up next - starting "
             "with atmospheric (a free, always-available zero point), then "
-            "checkpoints derived from the sensor's full-scale rating. Capture "
-            "at least 3 points; it applies automatically once the fit is "
-            "confident, or asks for more points if it isn't."
+            "low-pressure checkpoints (nothing above 200 psi is ever asked "
+            "for). Capture at least 3 points; it applies automatically once "
+            "the fit is confident, or asks for another point if it isn't. "
+            "You can also capture extra points at any pressure of your own "
+            "to tighten the fit."
         )
         intro.setWordWrap(True)
         wl.addWidget(intro)
@@ -196,20 +199,9 @@ class SensorCalibrationDialog(QDialog):
         self._ref_combo = QComboBox()
         self._ref_combo.addItem("Absolute (atmosphere = 14.7 psia)", 14.7)
         self._ref_combo.addItem("Gauge (atmosphere = 0 psig)", 0.0)
-        self._ref_combo.currentIndexChanged.connect(self._on_ref_or_fs_changed)
+        self._ref_combo.currentIndexChanged.connect(self._on_ref_changed)
         ref_row.addWidget(self._ref_combo)
         wl.addLayout(ref_row)
-
-        fs_row = QHBoxLayout()
-        fs_row.addWidget(QLabel("Full-scale rating (psi):"))
-        self._fs_spin = QDoubleSpinBox()
-        self._fs_spin.setRange(1.0, 100000.0)
-        self._fs_spin.setDecimals(1)
-        self._fs_spin.setValue(1000.0)
-        self._fs_spin.valueChanged.connect(self._on_ref_or_fs_changed)
-        fs_row.addWidget(self._fs_spin)
-        fs_row.addStretch()
-        wl.addLayout(fs_row)
 
         self._start_btn = QPushButton("Start Calibration")
         self._start_btn.clicked.connect(self._start_sequence)
@@ -226,6 +218,24 @@ class SensorCalibrationDialog(QDialog):
         cap_row.addWidget(self._capture_btn)
         cap_row.addStretch()
         wl.addLayout(cap_row)
+
+        custom_row = QHBoxLayout()
+        custom_row.addWidget(QLabel("Your own point - actual pressure:"))
+        self._custom_spin = QDoubleSpinBox()
+        self._custom_spin.setRange(0.0, 100000.0)
+        self._custom_spin.setDecimals(2)
+        self._custom_spin.setSuffix(" psi")
+        custom_row.addWidget(self._custom_spin)
+        self._custom_btn = QPushButton("Capture Custom Point")
+        self._custom_btn.setToolTip(
+            "Capture a point at whatever pressure you actually have applied "
+            "right now (enter it in the box) - more points mean a more "
+            "confident fit.")
+        self._custom_btn.setEnabled(False)
+        self._custom_btn.clicked.connect(self._capture_custom)
+        custom_row.addWidget(self._custom_btn)
+        custom_row.addStretch()
+        wl.addLayout(custom_row)
 
         self._points_list = QListWidget()
         self._points_list.setMaximumHeight(110)
@@ -268,9 +278,8 @@ class SensorCalibrationDialog(QDialog):
 
     # ── PT calibration flow ───────────────────────────────────────────────
 
-    def _on_ref_or_fs_changed(self):
+    def _on_ref_changed(self):
         self._ref0 = self._ref_combo.currentData()
-        self._full_scale = self._fs_spin.value()
         if not self._points:
             self._reset_sequence()
 
@@ -278,10 +287,12 @@ class SensorCalibrationDialog(QDialog):
         self._points = []
         self._points_list.clear()
         self._ref0 = self._ref_combo.currentData()
-        self._full_scale = self._fs_spin.value()
-        self._fraction_queue = list(self.PRIMARY_FRACTIONS)
+        self._target_queue = list(self.PRIMARY_TARGETS)
+        self._used_targets = []
         self._apply_now_btn.setEnabled(False)
         self._capture_btn.setEnabled(False)
+        if hasattr(self, "_custom_btn"):
+            self._custom_btn.setEnabled(False)
         self._confidence_lbl.setText("No points captured yet.")
         self._target_lbl.setText("")
 
@@ -292,56 +303,78 @@ class SensorCalibrationDialog(QDialog):
             return
         self._reset_sequence()
         self._capture_btn.setEnabled(True)
+        self._custom_btn.setEnabled(True)
         self._show_next_target()
 
     def _current_target(self) -> float:
-        return self._ref0 + self._fraction_queue[0] * self._full_scale
+        return self._ref0 + self._target_queue[0]
 
     def _show_next_target(self):
-        if not self._fraction_queue:
-            self._target_lbl.setText("Checkpoint pool exhausted.")
+        if not self._target_queue:
+            self._target_lbl.setText(
+                "Checkpoint pool exhausted - add your own points below.")
             self._capture_btn.setEnabled(False)
             return
-        pct = int(round(self._fraction_queue[0] * 100))
+        gauge = self._target_queue[0]
+        setup = "leave it at atmosphere" if gauge == 0 \
+            else f"press up to {gauge:g} psi above atmosphere"
         self._target_lbl.setText(
-            f"Set {self._selected_sensor()} to {self._current_target():.2f} psi  "
-            f"({pct}% of full scale)")
+            f"Set {self._selected_sensor()} to {self._current_target():.2f} psi "
+            f"({setup})")
 
-    def _capture(self):
+    def _read_wire_average(self) -> float:
+        """Average of the last few raw wire samples, or None if no data."""
         name = self._selected_sensor()
         recent = self.controller.sensor_recent.get(name)
         if not recent:
             QMessageBox.warning(
                 self, "No Data",
                 f"No readings received yet for {name} - connect and wait for data.")
+            return None
+        tail = list(recent)[-5:]
+        return sum(tail) / len(tail)
+
+    def _capture(self):
+        wire_avg = self._read_wire_average()
+        if wire_avg is None:
             return
 
-        tail = list(recent)[-5:]
-        wire_avg = sum(tail) / len(tail)
         expected = self._current_target()
-
-        self._points.append((expected, wire_avg))
-        self._points_list.addItem(f"{expected:.2f} psi   (raw {wire_avg:.3f})")
-        self._fraction_queue.pop(0)
+        self._add_point(expected, wire_avg)
+        self._used_targets.append(self._target_queue.pop(0))
 
         self._evaluate_fit()
 
-        if not self._fraction_queue and not self._confidence_met():
+        if not self._target_queue and not self._confidence_met():
             # Primary checkpoints exhausted and still not confident - pull
-            # from the extra pool instead of just giving up.
-            used = len(self._points)
-            extra_needed = self.EXTRA_FRACTIONS[:max(0, used - len(self.PRIMARY_FRACTIONS) + 1)]
-            remaining_extra = [f for f in self.EXTRA_FRACTIONS
-                               if f not in [p[0] for p in self._points]]
-            self._fraction_queue = remaining_extra[:1]
+            # the next unused extra (they climb gradually, never past 200).
+            remaining_extra = [t for t in self.EXTRA_TARGETS
+                               if t not in self._used_targets]
+            self._target_queue = remaining_extra[:1]
 
-        if self._fraction_queue:
+        if self._confidence_met():
+            return   # _evaluate_fit already auto-applied
+        if self._target_queue:
             self._show_next_target()
         else:
             self._target_lbl.setText(
-                "Checkpoint pool exhausted." if not self._confidence_met()
-                else "Calibration complete.")
+                "Checkpoint pool exhausted - add your own points below, or "
+                "Apply Now to accept the current fit.")
             self._capture_btn.setEnabled(False)
+
+    def _capture_custom(self):
+        """Operator-supplied checkpoint: they type the pressure actually
+        applied right now and we capture against it. Lets them stack as many
+        points as they want to drive confidence up."""
+        wire_avg = self._read_wire_average()
+        if wire_avg is None:
+            return
+        self._add_point(self._custom_spin.value(), wire_avg)
+        self._evaluate_fit()
+
+    def _add_point(self, expected: float, wire_avg: float):
+        self._points.append((expected, wire_avg))
+        self._points_list.addItem(f"{expected:.2f} psi   (raw {wire_avg:.3f})")
 
     def _confidence_met(self) -> bool:
         if len(self._points) < self.MIN_POINTS_FOR_CONFIDENCE:

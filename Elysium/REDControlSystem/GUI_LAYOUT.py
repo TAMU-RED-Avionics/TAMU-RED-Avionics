@@ -2,16 +2,16 @@ from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFrame, QSizePolicy,
     QStackedWidget, QComboBox, QScrollArea,
-    QGridLayout, QSplitter, QToolButton, QMessageBox,
-    QLineEdit, QDialog, QDialogButtonBox, QDoubleSpinBox,
+    QToolButton, QMessageBox,
+    QDialog, QDialogButtonBox, QDoubleSpinBox,
 )
-from PyQt5.QtCore import Qt, QSize, pyqtSignal
-from PyQt5.QtGui import QColor, QFont
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtGui import QColor
 
 from GUI_LOGO import LogoWindow
 from GUI_CONNECT import ConnectionWindow
 from GUI_DAQ import DAQWindow
-from GUI_GRAPHS import SensorGridWindow, SensorGraph
+from GUI_GRAPHS import SensorGridWindow
 from GUI_CONTROLLER import GUIController
 from PID_EDITOR import PIDEditorWindow
 from PID_VIEW   import PIDViewWindow
@@ -166,14 +166,14 @@ class SensorRow(QWidget):
 
     def set_value(self, val: float, status: str = ""):
         self.value_lbl.setText(f"{val:.2f}")
-        if status == "RED":
-            self.value_lbl.setStyleSheet("color: #cc2222; font-weight: bold;")
-        elif status == "ORANGE":
-            self.value_lbl.setStyleSheet("color: #cc7700; font-weight: bold;")
-        elif status == "BLUE":
-            self.value_lbl.setStyleSheet("color: #4488ff; font-weight: bold;")
-        else:
-            self.value_lbl.setStyleSheet("")
+        # setStyleSheet forces a style re-polish; only touch it on change.
+        if status != getattr(self, "_last_status", None):
+            self._last_status = status
+            self.value_lbl.setStyleSheet({
+                "RED":    "color: #cc2222; font-weight: bold;",
+                "ORANGE": "color: #cc7700; font-weight: bold;",
+                "BLUE":   "color: #4488ff; font-weight: bold;",
+            }.get(status, ""))
 
     def set_selected(self, selected: bool):
         """Highlight this row when it's the selected sensor for graphing."""
@@ -201,6 +201,13 @@ class SensorPanel(QWidget):
         self.controller.signals.sensor_updated.connect(self._on_sensor_updated)
 
         self._selected_sensor = None
+
+        # Buffer per-sample updates and repaint the rows at 10 Hz - at wire
+        # rate the per-packet setText calls add up to real GUI-thread time.
+        self._pending: dict[str, float] = {}
+        self._flush_timer = QTimer(self)
+        self._flush_timer.timeout.connect(self._flush_pending)
+        self._flush_timer.start(100)
 
         self.setObjectName("sensor_panel")
         self.setMinimumWidth(320)
@@ -334,15 +341,23 @@ class SensorPanel(QWidget):
         self.sensor_selected.emit(sensor_name)
 
     def _on_sensor_updated(self, name: str, value: float, timestamp: float):
-        if name in self.pt_rows:
-            status = self.controller.get_sensor_status(name, value)
-            self.pt_rows[name].set_value(value, status)
+        self._pending[name] = value
 
-        elif name in self.tc_rows:
-            self.tc_rows[name].set_value(value)
-
-        elif name in self.lc_rows:
-            self.lc_rows[name].set_value(value)
+    def _flush_pending(self):
+        if not self._pending or not self.isVisible():
+            return
+        pending, self._pending = self._pending, {}
+        lc_dirty = False
+        for name, value in pending.items():
+            if name in self.pt_rows:
+                status = self.controller.get_sensor_status(name, value)
+                self.pt_rows[name].set_value(value, status)
+            elif name in self.tc_rows:
+                self.tc_rows[name].set_value(value)
+            elif name in self.lc_rows:
+                self.lc_rows[name].set_value(value)
+                lc_dirty = True
+        if lc_dirty:
             self._update_lc_total()
 
     def _update_lc_total(self):
@@ -548,7 +563,7 @@ class HomePage(QWidget):
             self.clear_warnings()
 
     def set_dark_mode(self, dark: bool):
-        # The live PID canvas uses its own dark background - nothing to switch
+        self.live_pid.canvas.set_dark_mode(dark)
         self.sensor_grid.set_dark_mode(dark)
 
 class ActionBar(QWidget):

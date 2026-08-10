@@ -1,19 +1,21 @@
 # PID_VIEW.py
 
-import os
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QSlider, QDialog, QDialogButtonBox, QSizePolicy, QFrame,
-    QComboBox, QFileDialog, QMessageBox, QSpinBox, QDoubleSpinBox,
+    QSlider, QDialog, QDialogButtonBox, QFrame,
+    QFileDialog, QMessageBox, QSpinBox,
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 
 from PID_SCHEMA import (
-    PIDProject, Component,
+    PIDProject,
     COMP_VALVE, COMP_THROTTLE_VALVE, COMP_PRESSURE, COMP_TEMPERATURE,
     COMP_LOAD_CELL, COMP_BALL_VALVE, COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER,
 )
 from PID_CANVAS import PIDCanvas
+
+_VALVE_TYPES = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
+                COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER)
 
 
 class ThrottleDialog(QDialog):
@@ -177,10 +179,8 @@ class PIDViewWindow(QWidget):
         self._status.setText(f"Loaded: {project.name}  "
                              f"({len(project.components)} components, "
                              f"{len(project.lines)} pipes)")
-        VALVE_TYPES = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
-                       COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER)
         for cid, comp in project.components.items():
-            if comp.type in VALVE_TYPES:
+            if comp.type in _VALVE_TYPES:
                 self.canvas.update_valve_state(cid, "CLOSED")
 
     def _build_hw_maps(self):
@@ -192,11 +192,8 @@ class PIDViewWindow(QWidget):
         if not self._project:
             return
 
-        VALVE_TYPES = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
-                       COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER)
-
         for cid, comp in self._project.components.items():
-            if comp.type in VALVE_TYPES:
+            if comp.type in _VALVE_TYPES:
                 hw_id = comp.extras.get("hw_id", comp.label)
                 if hw_id:
                     self._valve_hw_to_comp[hw_id] = cid
@@ -243,7 +240,6 @@ class PIDViewWindow(QWidget):
 
     def _on_valve_open_requested(self, cid: str):
         hw_id = self._comp_to_valve_hw.get(cid, cid)
-        print(f"HW_ID: {hw_id}")
         if not self._interactive:
             self._status.setText("Not connected - cannot control valves.")
             return

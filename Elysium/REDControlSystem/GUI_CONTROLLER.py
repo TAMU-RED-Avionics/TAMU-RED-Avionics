@@ -5,14 +5,16 @@ from collections import deque
 from datetime import datetime
 from typing import Optional
 
-import openpyxl
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QDialog, QLabel, QDialogButtonBox, QCheckBox, QMessageBox, QGroupBox, QComboBox
-from PyQt5.QtCore import QDate, Qt, QTimer, QDateTime
-from PyQt5.QtGui import QFont
-from PyQt5.QtCore import QObject, pyqtSignal
+from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QDialog, QLabel, QDialogButtonBox, QMessageBox
+from PyQt5.QtCore import Qt, QTimer, QDateTime, QObject, pyqtSignal
 from GUI_COMMS import EthernetClient
+
+try:
+    from CoolProp.CoolProp import PropsSI as _PropsSI
+except ImportError:
+    _PropsSI = None
 
 _TEMPLATE_TOKEN_RE = re.compile(r"\{([A-Za-z0-9_]+)\}")
 
@@ -40,7 +42,6 @@ def render_message_template(template: str, context: dict) -> str:
     return _TEMPLATE_TOKEN_RE.sub(_repl, template)
 
 
-# This may be necessary for ongoing refactors but currently has no use
 class Signals(QObject):
     abort_triggered = pyqtSignal(str, str)
     safe_state = pyqtSignal()
@@ -67,17 +68,13 @@ class Signals(QObject):
 """
 GUI CONTROLLER
 
-This class object is the daddy of the entire GUI. It is intended to manage state. All actions that 
-are called by the windows which cant be contained locally are functions within this object. This 
-controller will shit out signals depending on both information it retrieves from the EthernetClient
-as well as the action functions connected to different buttons.
+Central state manager / backend for the entire GUI. It emits signals driven
+both by data arriving from the EthernetClient and by the action functions the
+windows connect to their buttons.
 
-Think of it as the entire backend managed in one spot.
-
-The rest of the windows are configured to take in this controller as an initializer object. Each
-one of them will connect different signals inside here to their internal update actions, and will
-connect functions here to their buttons in order to configure connections.
-
+Every window takes this controller as an initializer object: each connects
+the signals here to its internal update actions and wires its buttons to the
+action functions here.
 """
 class GUIController:
     def __init__(self, parent: QWidget):
@@ -95,10 +92,9 @@ class GUIController:
         )
         
 
-        # Explaining the disconnect loop - the ethernet client calls the disconnect_callback
-        # in a separate thread, therefore we must use a signal that pops out of it and back in here
-        # to safely change things in the main thread as a result
-        # self.signals.connected.connect(self.handle_connect)
+        # The ethernet client calls the disconnect_callback in a separate
+        # thread, so a signal is used to hop back onto the main thread before
+        # touching any UI state.
         self.signals.disconnected.connect(self._on_disconnected)
         self.signals.abort_triggered.connect(self.handle_abort)
         self.signals.valve_updated.connect(self.update_valve_state)
@@ -136,8 +132,6 @@ class GUIController:
         # These are constants and dictionaries that the UI needs to be tracked
         self.lockout = True                     # default to lockout until a connection starts
 
-        #self.ncs3_opened_due_to_p2 = False  # legacy compat
-        #self.abort_modes: dict = {}         # legacy compat
         self.pre_abort_valve_states: dict = {}
         self.current_sensor_values: dict = {}
         self.manual_valve_buttons: dict = {}
@@ -190,10 +184,16 @@ class GUIController:
         # Sequence execution runtime state
         self._sequence_timers: list[QTimer] = []   # kept alive during a fire sequence run
 
-        # Calculated performance channels (Mdot, Thrust, Isp, ...) - recomputed
-        # any time a sensor value updates.
+        # Calculated performance channels (Mdot, Thrust, Isp, ...). Recomputing
+        # runs eval() per channel, so it's throttled to 10 Hz instead of
+        # running per sample - at wire rate that was hundreds of evals/sec of
+        # GUI-thread time for readouts nobody can read that fast.
         self.calc_values: dict = {}
-        self.signals.sensor_updated.connect(lambda *_args: self._recompute_calc_channels())
+        self._calc_dirty = False
+        self.signals.sensor_updated.connect(self._mark_calc_dirty)
+        self._calc_timer = QTimer()
+        self._calc_timer.timeout.connect(self._flush_calc_channels)
+        self._calc_timer.start(100)
 
         self.setup_abort_monitor()
     
@@ -436,6 +436,19 @@ class GUIController:
         "sqrt": math.sqrt, "abs": abs, "min": min, "max": max, "pow": pow,
         "G0": G0,
     }
+    if _PropsSI is not None:
+        # CoolProp fluid property lookup, e.g. PropsSI('D','T',TC1+273.15,'P',P1*6894.76,'N2O')
+        # to get temperature/pressure-corrected density instead of a fixed SG constant.
+        _CALC_SAFE_FUNCS["PropsSI"] = _PropsSI
+
+    def _mark_calc_dirty(self, *_args):
+        self._calc_dirty = True
+
+    def _flush_calc_channels(self):
+        if not self._calc_dirty:
+            return
+        self._calc_dirty = False
+        self._recompute_calc_channels()
 
     def _recompute_calc_channels(self):
         """Evaluate every CalcChannel against the current sensor values and
@@ -714,11 +727,6 @@ class GUIController:
             "Use the 'Abort Config' tab to configure abort thresholds and rules."
         )
 
-    def toggle_abort_mode(self, mode, state):
-        """Legacy stub - abort modes are now stored in project rules."""
-        pass
-
-
     def handle_abort(self, abort_type, reason):
         """Handle abort sequence (Req 11, 20-24)"""
         if self.lockout:
@@ -759,10 +767,7 @@ class GUIController:
             self.ethernet_client.cancel_auto_abort_countdown()
             self.ethernet_client.set_system_state("SAFE")
             self.lockout = False
-            # self.abort_state = False
             self.signals.safe_state.emit()
-        
-            # Log safe state confirmation
             self.log_event("SAFE_STATE", "Operator confirmed safe state")
 
 
@@ -816,20 +821,11 @@ class GUIController:
             "",
         ]
 
-        for key in self.pt_keys:
-            val = self.current_sensor_values.get(key.upper(), "")
-            row.append(round(val, 4) if isinstance(val, float) else val)
-        row.append("")
-
-        for key in self.tc_keys:
-            val = self.current_sensor_values.get(key.upper(), "")
-            row.append(round(val, 4) if isinstance(val, float) else val)
-        row.append("")
-
-        for key in self.lc_keys:
-            val = self.current_sensor_values.get(key.upper(), "")
-            row.append(round(val, 4) if isinstance(val, float) else val)
-        row.append("")
+        for keys in (self.pt_keys, self.tc_keys, self.lc_keys):
+            for key in keys:
+                val = self.current_sensor_values.get(key.upper(), "")
+                row.append(round(val, 4) if isinstance(val, float) else val)
+            row.append("")
 
         current_state = getattr(self.ethernet_client, "system_state", "UNKNOWN")
         row.extend([current_state, event_type, event_details])
@@ -917,24 +913,18 @@ class GUIController:
         for reading in readings:
             if "ABORTED" in reading:
                 if "ABORTED:COMMS:" in reading:
-                    reason_part = reading.split("ABORTED:COMMS:", 1)[1] if len(reading.split("ABORTED:COMMS:")) > 1 else "Unknown reason"
-                    
-                    if reason_part.startswith("countdown_expired:"):
-                        reason_part = reason_part.replace("countdown_expired:", "", 1)
-                    
-                    if "OPEN_" in reason_part or "CLOSE_" in reason_part:
-                        parts = reason_part.split("_")
-                        if len(parts) >= 2:
-                            cmd = parts[0]
-                            valve = parts[1].split(":")[0]
-                            display_reason = f"Valve {valve} {cmd} command failed (timeout)"
-                        else:
-                            display_reason = reason_part
-                    else:
-                        display_reason = reason_part
-                    self.signals.abort_triggered.emit("comms_auto_abort", display_reason)
+                    reason = reading.split("ABORTED:COMMS:", 1)[1] or "Unknown reason"
+                    if reason.startswith("countdown_expired:"):
+                        reason = reason[len("countdown_expired:"):]
+                    if "OPEN_" in reason or "CLOSE_" in reason:
+                        # e.g. "OPEN_NCS1_timeout:packet_id=5"
+                        cmd, _, rest = reason.partition("_")
+                        valve = rest.split("_")[0].split(":")[0]
+                        if valve:
+                            reason = f"Valve {valve} {cmd} command failed (timeout)"
+                    self.signals.abort_triggered.emit("comms_auto_abort", reason)
                 elif "ABORTED:REMOTE_SFE:" in reading:
-                    sfe_reason = reading.split("ABORTED:REMOTE_SFE:", 1)[1] if len(reading.split("ABORTED:REMOTE_SFE:")) > 1 else "unknown packet"
+                    sfe_reason = reading.split("ABORTED:REMOTE_SFE:", 1)[1] or "unknown packet"
                     self.signals.abort_triggered.emit("remote_safe_mode", f"Received SFE from MCU ({sfe_reason})")
                 else:
                     # Engine MCU triggered abort
@@ -942,33 +932,20 @@ class GUIController:
 
             # Valve command responses
             elif "VALVE_SUCCESS" in reading:
-                
                 parts = reading.split(':')
                 if len(parts) >= 3:
-                    valve_name: str = parts[1]
-                    new_state: str = "OPEN" if parts[2] == "1" else "CLOSED"
-
-                    print(f"ACK received for {valve_name}: {reading}")
-
-                    # Clear pending command if it exists
-                    if valve_name in self.pending_valve_commands:
-                        del self.pending_valve_commands[valve_name]
-
-                    self.signals.valve_updated.emit(valve_name, new_state)
-                
+                    valve_name = parts[1]
+                    self.pending_valve_commands.pop(valve_name, None)
+                    self.signals.valve_updated.emit(
+                        valve_name, "OPEN" if parts[2] == "1" else "CLOSED")
 
             elif "VALVE_FAIL" in reading:
                 parts = reading.split(':')
                 if len(parts) >= 2:
-                    valve_name: str = parts[1]
-                    
-                    print(f"NAK received for {valve_name}: {reading}")
-
-                    # Clear pending command if it exists
-                    if valve_name in self.pending_valve_commands:
-                        del self.pending_valve_commands[valve_name]
-
-                    prev_state = self.valve_states[valve_name]
+                    valve_name = parts[1]
+                    self.pending_valve_commands.pop(valve_name, None)
+                    # Revert the PENDING display to the last confirmed state
+                    prev_state = self.valve_states.get(valve_name, False)
                     self.signals.valve_updated.emit(valve_name, "OPEN" if prev_state else "CLOSED")
 
             # Sensor data
@@ -1327,13 +1304,11 @@ class GUIController:
             self.valve_states[valve_name] = False
 
         # Update the manual valve buttons
-        if valve_name in self.manual_valve_buttons:
-            if new_val == "OPEN":
-                self.manual_valve_buttons[valve_name].setStyleSheet(f"background-color: green; color: white;")
-            elif new_val == "CLOSED":
-                self.manual_valve_buttons[valve_name].setStyleSheet(f"background-color: red; color: white;")
-            elif new_val == "PENDING":
-                self.manual_valve_buttons[valve_name].setStyleSheet(f"background-color: gray; color: white;")
+        btn = self.manual_valve_buttons.get(valve_name)
+        if btn is not None:
+            color = {"OPEN": "green", "CLOSED": "red", "PENDING": "gray"}.get(new_val)
+            if color:
+                btn.setStyleSheet(f"background-color: {color}; color: white;")
 
     def show_manual_valve_control(self):
         if self.lockout:
@@ -1374,26 +1349,15 @@ class GUIController:
         if self.lockout:
             return
 
-        if state is None:
-            new_state = not self.valve_states[valve_name]
-        else:
-            new_state = state
+        new_state = (not self.valve_states[valve_name]) if state is None else state
 
-        # Only send command if valve state is actually changing
+        # Only send a command if the valve state is actually changing
         if valve_name in self.valve_states and self.valve_states[valve_name] == new_state:
-            # Valve already in desired state, no need to send command
             return
 
-        # self.valve_states[valve_name] = new_state     # needs to update when we get a response
+        # Internal state updates only once the MCU confirms; show PENDING until then
         self.signals.valve_updated.emit(valve_name, "PENDING")
-        
-        # Update manual valve button if dialog is open
-        # if valve_name in self.manual_valve_buttons:
-        #     # color = "green" if new_state else "red"
-        #     self.manual_valve_buttons[valve_name].setStyleSheet(
-        #         f"background-color: gray; color: white;"
-        #     )
-        
+
         try:
             self.ethernet_client.send_valve_command(valve_name, new_state)
         except Exception:
@@ -1423,7 +1387,6 @@ class GUIController:
                     except Exception:
                         pass
                 else:
-                    print(f"Timeout: Max retries reached for valve {valve_name}")
                     self.log_event("VALVE_TIMEOUT", f"{valve_name}:{info['state']}")
                     valves_to_delete.append(valve_name)
 

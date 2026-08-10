@@ -3,8 +3,7 @@ from PyQt5.QtWidgets import (
     QMessageBox,
 )
 from PyQt5.QtGui import QColor
-from PyQt5.QtCore import Qt
-from pyqtspinner import WaitingSpinner          # pip install pyqtspinner (later on we should have install scripts that do this automatically)
+from pyqtspinner import WaitingSpinner          # pip install pyqtspinner
 
 from GUI_CONTROLLER import GUIController
 

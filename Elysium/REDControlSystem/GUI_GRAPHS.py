@@ -1,13 +1,14 @@
 # GUI_GRAPHS.py
 # This file hosts the UI elements for plotting live data from various sensors aboard the flight hardware
+import math
 from collections import deque
 from typing import Dict, List, Tuple
 
 from PyQt5.QtWidgets import (
     QWidget, QLabel, QGridLayout, QDialog, QVBoxLayout, QHBoxLayout,
-    QFrame, QSizePolicy, QToolButton, QCheckBox,
+    QFrame, QToolButton, QCheckBox,
 )
-from PyQt5.QtCore import Qt, QDateTime, QPoint, pyqtSignal
+from PyQt5.QtCore import Qt, QDateTime, QPoint, QTimer, pyqtSignal
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
@@ -113,6 +114,15 @@ This widget uses matplotlib to plot one or more live sensor series over a
 rolling time window. It is intended to be heavily manually controlled by its
 parent: the parent pushes samples in via update_single() and swaps the plotted
 series via set_sensors().
+
+Rendering is decoupled from data rate: update_single() only appends to the
+data buffers (cheap), and an internal timer redraws at a fixed 10 Hz - and
+only while the widget is actually visible. Frames are drawn with matplotlib
+blitting (restore cached background, redraw just the line artists) so a
+frame costs ~1 ms instead of a full figure redraw; the full redraw only
+happens when the y-axis limits actually need to change. This keeps even a
+popped-out window full of graphs from starving the GUI thread (and the
+comms signal queue with it).
 """
 class SensorGraph(QWidget):
     settings_requested = pyqtSignal(QPoint)   # global pos to anchor the picker
@@ -139,8 +149,16 @@ class SensorGraph(QWidget):
         self.ax = self.figure.add_subplot(111)
         self.figure.set_constrained_layout(True)
 
-        self.last_render_time: int = 0          # ms since Jan 1 1970 (UNIX time)
-        self.max_render_interval: int = 100     # ms
+        # Blitting state: cached rendering of everything except the line
+        # artists (axes, grid, labels, legend). Recaptured on any full draw.
+        self._bg = None
+        self.canvas.mpl_connect("draw_event", self._on_mpl_draw)
+
+        # Fixed-rate render clock, running only while visible (see
+        # showEvent/hideEvent). Data ingestion never triggers a draw.
+        self.render_interval_ms: int = 100
+        self._render_timer = QTimer(self)
+        self._render_timer.timeout.connect(self.update_graph)
 
         header = QWidget()
         header_layout = QHBoxLayout(header)
@@ -225,6 +243,9 @@ class SensorGraph(QWidget):
         for i, name in enumerate(self.sensors):
             color = palette[i % len(palette)]
             line, = self.ax.plot([], [], color=color, linewidth=2, label=name)
+            # animated=True keeps the lines out of full draws so the cached
+            # blit background contains only the static chrome.
+            line.set_animated(True)
             self._lines[name] = line
 
         self.title_lbl.setText(self._title_text())
@@ -246,32 +267,58 @@ class SensorGraph(QWidget):
                 text.set_fontfamily("monospace")
 
         self.ax.set_xlim(-self.render_seconds, 0)
+        self._bg = None
         self.canvas.draw()
+
+    def _on_mpl_draw(self, _event):
+        """Any full matplotlib draw (initial, resize, theme change) leaves a
+        fresh line-free rendering on the canvas - cache it for blitting."""
+        self._bg = self.canvas.copy_from_bbox(self.figure.bbox)
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self._render_timer.start(self.render_interval_ms)
+        self.update_graph(force=True)
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._render_timer.stop()
 
     def update_single(self, sensor_name: str, value: float, timestamp: float):
         series = self.data.get(sensor_name)
-        if series is None:
-            return
-        series.append((timestamp, value))
-
-        now = QDateTime.currentMSecsSinceEpoch()
-        if (now - self.last_render_time) > self.max_render_interval:
-            self.last_render_time = now
-            self.update_graph()
+        if series is not None:
+            series.append((timestamp, value))
 
     def _downsample(self, series: deque, now: float) -> Tuple[list, list]:
         xs, ys = [], []
         last_ts = None
-        for ts, val in series:
+        for ts, val in reversed(series):
             rel = ts - now
-            if rel < -self.render_seconds or rel > 0:
+            if rel < -self.render_seconds:
+                break
+            if rel > 0:
                 continue
-            if last_ts is not None and (rel - last_ts) < self.step:
+            if last_ts is not None and (last_ts - rel) < self.step:
                 continue
             xs.append(rel)
             ys.append(val)
             last_ts = rel
+        xs.reverse()
+        ys.reverse()
         return xs, ys
+
+    def _ensure_ylim(self, y_min: float, y_max: float) -> bool:
+        pad = max(0.1 * (y_max - y_min), 0.1)
+        needed_lo, needed_hi = y_min - pad, y_max + pad
+        cur_lo, cur_hi = self.ax.get_ylim()
+        needed_span = needed_hi - needed_lo
+        # Redraw when data escapes the current limits, or when the current
+        # range is so oversized the trace flattens into a sliver.
+        if needed_lo < cur_lo or needed_hi > cur_hi or (cur_hi - cur_lo) > 3.0 * needed_span:
+            margin = 0.25 * needed_span
+            self.ax.set_ylim(needed_lo - margin, needed_hi + margin)
+            return True
+        return False
 
     def update_graph(self, force: bool = False):
         now = QDateTime.currentMSecsSinceEpoch() / 1000.0
@@ -293,14 +340,21 @@ class SensorGraph(QWidget):
         if not any_data:
             if force:
                 self.ax.set_ylim(0, 1)
-                self.canvas.draw_idle()
+                self._bg = None
+                self.canvas.draw()
             return
 
-        padding = max(0.1 * (y_max - y_min), 0.1)
-        self.ax.set_ylim(y_min - padding, y_max + padding)
-        self.ax.set_xlim(-self.render_seconds, 0)
-        # draw_idle lets Qt coalesce paint requests instead of blocking here
-        self.canvas.draw_idle()
+        if self._ensure_ylim(y_min, y_max) or self._bg is None or force:
+            # Full draw re-renders the static chrome and recaptures the
+            # blit background (via the draw_event hook).
+            self.canvas.draw()
+
+        self.canvas.restore_region(self._bg)
+        for name in self.sensors:
+            line = self._lines.get(name)
+            if line is not None:
+                self.ax.draw_artist(line)
+        self.canvas.blit(self.figure.bbox)
 
     def set_dark_mode(self, dark: bool):
         self.dark_mode = dark
@@ -308,7 +362,6 @@ class SensorGraph(QWidget):
         self.update_graph(force=True)
 
     def _theme_colors(self) -> Tuple[str, str, str]:
-        """(foreground, background, gridline) for the current theme."""
         if self.dark_mode:
             return "#e8e6e0", "#1e1e24", "#44444f"
         return "#1a1a1a", "#ffffff", "#cccccc"
@@ -330,16 +383,6 @@ class SensorPopupGraph(QDialog):
         layout.setSpacing(0)
         self.setLayout(layout)
 
-
-"""
-Sensor Frame
-
-This is simply a wrapper for the QFrame type, which is helpful for making global style
-configuration easier. Frames used in SensorGridWindow need to have different style settings
-from the rest of the QFrames in the GUI, so it just calls this wrapper type instead.
-
-Globally they are treated as different types
-"""
 class SensorFrame(QFrame):
     def __init__(self):
         super().__init__()
@@ -391,12 +434,15 @@ class SensorGridWindow(QWidget):
 
         self.multi_graph_window: "MultiGraphWindow" = None
 
+        self._pending_values: Dict[str, float] = {}
+        self._label_status: Dict[str, str] = {}
+        self._label_timer = QTimer(self)
+        self._label_timer.timeout.connect(self._flush_labels)
+        self._label_timer.start(100)
+
         self.refresh_sensors()
 
     def load_project(self, project=None):
-        """Called whenever a project is (re)loaded - the sensor list is
-        entirely driven by the project (controller.pt_keys/tc_keys/lc_keys),
-        never hardcoded, since different projects wire up different sensors."""
         self.refresh_sensors()
 
     def refresh_sensors(self):
@@ -479,20 +525,12 @@ class SensorGridWindow(QWidget):
         self.multi_graph_window.activateWindow()
 
     def update_sensor_value(self, sensor: str, value: float, timestamp: float):
+        """Per-sample ingestion: append-only buffer work. All drawing (labels
+        and graphs) happens on fixed-rate timers, never per packet."""
         if sensor not in self.value_labels:
             return
 
-        status = self.controller.get_sensor_status(sensor, value)
-        if status == "RED":
-            self.value_labels[sensor].setStyleSheet("color: #b00020; font-weight: bold;")
-        elif status == "ORANGE":
-            self.value_labels[sensor].setStyleSheet("color: #ff8c00; font-weight: bold;")
-        elif status == "BLUE":
-            self.value_labels[sensor].setStyleSheet("color: #0000ff; font-weight: bold;")
-        else:
-            self.value_labels[sensor].setStyleSheet("")
-
-        self.value_labels[sensor].setText(f"{value:.2f}")
+        self._pending_values[sensor] = value
         self.sensor_history[sensor].append((timestamp, value))
 
         if sensor in self.graphs:
@@ -502,6 +540,24 @@ class SensorGridWindow(QWidget):
 
         if self.multi_graph_window is not None:
             self.multi_graph_window.update_single(sensor, value, timestamp)
+
+    def _flush_labels(self):
+        if not self._pending_values or not self.isVisible():
+            return
+        pending, self._pending_values = self._pending_values, {}
+        for sensor, value in pending.items():
+            label = self.value_labels.get(sensor)
+            if label is None:
+                continue
+            status = self.controller.get_sensor_status(sensor, value)
+            if status != self._label_status.get(sensor):
+                self._label_status[sensor] = status
+                label.setStyleSheet({
+                    "RED":    "color: #b00020; font-weight: bold;",
+                    "ORANGE": "color: #ff8c00; font-weight: bold;",
+                    "BLUE":   "color: #0000ff; font-weight: bold;",
+                }.get(status, ""))
+            label.setText(f"{value:.2f}")
 
     def update_main_graph(self, sensor: str):
         self.main_graph.set_sensors([sensor], self.sensor_history)
@@ -597,7 +653,6 @@ class MultiGraphWindow(QWidget):
         self.add_btn.setEnabled(len(self.graphs) < self.MAX_GRAPHS)
 
     def _relayout(self):
-        import math
         n = len(self.graphs)
         cols = max(1, math.ceil(math.sqrt(n)))
         for idx, graph in enumerate(self.graphs):

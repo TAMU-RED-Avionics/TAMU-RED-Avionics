@@ -729,7 +729,9 @@
       "id": "LOA_4",
       "type": "load_cell",
       "label": "LC4",
-      "hardware": {},
+      "hardware": {
+        "adc": 15
+      },
       "extras": {},
       "rotation": 0,
       "hide_lbl": false
@@ -738,7 +740,9 @@
       "id": "LOA_5",
       "type": "load_cell",
       "label": "LC5",
-      "hardware": {},
+      "hardware": {
+        "adc": 16
+      },
       "extras": {},
       "rotation": 0,
       "hide_lbl": false
