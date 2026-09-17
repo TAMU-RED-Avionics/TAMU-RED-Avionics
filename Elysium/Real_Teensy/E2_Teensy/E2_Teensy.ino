@@ -6,6 +6,7 @@ VARIABLES & USER INPUT
 
 #include <Arduino.h>
 #include "EGCP.h"  // Elysium Ground Communications Protocol
+#include "Gimbaling.h"  // Non-blocking pitch/yaw gimbal trajectory driver
 
 #define SERIAL_DEBUG 1
 
@@ -408,6 +409,7 @@ void setup() {
   pinMode(IGN1_PIN, OUTPUT);
   pinMode(IGN2_PIN, OUTPUT);
   pinMode(GIMBAL_ENABLE_PIN, OUTPUT);
+  gimbalSetup();  // configure gimbal steppers (non-blocking driver)
   DBG_PRINTLN("[E2] Stage: Valve/igniter pins initialized");
   DBG_PRINTLN("[E2] Stage: Before setup UDP test 2");
   
@@ -518,6 +520,7 @@ void trigger_shutdown(const char* reason) {
   digitalWrite(GV1_PIN, LOW);
   digitalWrite(GV2_PIN, LOW);
   digitalWrite(GIMBAL_ENABLE_PIN, LOW);
+  haltGimbalingProgram();  // stop any running gimbal trajectory
 
   // Unpower igniters
   digitalWrite(IGN1_PIN, LOW);
@@ -618,6 +621,9 @@ void loop() {
       DBG_PRINTLN("none");
     }
   }
+
+  // Advance the gimbal one step (non-blocking); must run every loop pass.
+  gimbalUpdate();
 
   // Read incoming packets
   int packet_size = udp.parsePacket();
@@ -734,6 +740,22 @@ void loop() {
           }
         }
         
+        else if (rxPacket.packet_type == EGCPPacket::PKT_BGP) {
+          // Begin Gimbaling Program
+          DBG_PRINTLN("[E2] BGP received -> begin gimbaling");
+          beginGimbalingProgram();
+          LAST_HUMAN_UPDATE = micros();
+          sendACK(rxPacket.packet_id);
+        }
+
+        else if (rxPacket.packet_type == EGCPPacket::PKT_HGP) {
+          // Halt Gimbaling Program
+          DBG_PRINTLN("[E2] HGP received -> halt gimbaling");
+          haltGimbalingProgram();
+          LAST_HUMAN_UPDATE = micros();
+          sendACK(rxPacket.packet_id);
+        }
+
         else if (rxPacket.packet_type == EGCPPacket::PKT_SFE) {
           // Emergency abort / safe mode
           DBG_PRINTLN("[E2] SFE received from GUI");
@@ -832,7 +854,12 @@ void loop() {
       sendEGCPPacket(adc);
     }
 
-    delay(10);
+    // NOTE: removed a blocking delay(10) here. It froze the whole loop for 10 ms
+    // every sensor cycle, which starved gimbalUpdate() and made the stepper
+    // stutter. Sensor send cadence is now paced non-blockingly by the
+    // SENSOR_UPDATE_INTERVAL gate above (LAST_SENSOR_UPDATE was reset at the top
+    // of this block). To restore the previous ~10 ms cadence, set
+    // SENSOR_UPDATE_INTERVAL = 10000 (microseconds) rather than adding a delay.
   }
 
   // Lost communication shutdown
