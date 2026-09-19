@@ -1,3 +1,4 @@
+import os
 from PyQt5.QtWidgets import (
     QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QPushButton, QLabel, QFrame, QSizePolicy,
@@ -5,7 +6,7 @@ from PyQt5.QtWidgets import (
     QToolButton, QMessageBox,
     QDialog, QDialogButtonBox, QDoubleSpinBox,
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QSettings
 from PyQt5.QtGui import QColor
 
 from GUI_LOGO import LogoWindow
@@ -771,14 +772,23 @@ class TabBar(QWidget):
         for i, btn in enumerate(self.buttons):
             btn.setChecked(i == idx)
 
+# saves a .ini of your text size so it loads the same on launch
+_SETTINGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gui_settings.ini")
+TEXT_SIZE_CYCLE = {12: (16, "Small Text"), 16: (8, "Medium Text"), 8: (12, "Large Text")}
+TEXT_SIZE_LABELS = {size: label for size, label in TEXT_SIZE_CYCLE.values()}
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("RED Control System")
         self.setGeometry(10, 10, 1400, 820)
 
+        self._settings = QSettings(_SETTINGS_PATH, QSettings.IniFormat)
+
         self.dark_mode = True # change to False if you want to start in light mode
-        self.text_size = 12   # must be one of the sizes in the change_text_size cycle
+        self.text_size = int(self._settings.value("text_size", 12))
+        if self.text_size not in TEXT_SIZE_LABELS:
+            self.text_size = 12
 
         self.controller = GUIController(self)
 
@@ -879,7 +889,7 @@ class MainWindow(QMainWindow):
         self.dark_mode_btn.clicked.connect(self.toggle_dark_mode)
         chrome_layout.addWidget(self.dark_mode_btn)
 
-        self.text_size_btn = QPushButton("Large Text")
+        self.text_size_btn = QPushButton(TEXT_SIZE_LABELS[self.text_size])
         self.text_size_btn.setObjectName("small_btn")
         self.text_size_btn.setFixedHeight(26)
         self.text_size_btn.clicked.connect(self.change_text_size)
@@ -1032,9 +1042,9 @@ class MainWindow(QMainWindow):
             self.telemetry_page.panel_b.graph.set_dark_mode(self.dark_mode)
 
     def change_text_size(self):
-        cycle = {12: (16, "Small Text"), 16: (8, "Medium Text"), 8: (12, "Large Text")}
-        self.text_size, label = cycle.get(self.text_size, (12, "Large Text"))
+        self.text_size, label = TEXT_SIZE_CYCLE.get(self.text_size, (12, "Large Text"))
         self.text_size_btn.setText(label)
+        self._settings.setValue("text_size", self.text_size)
         self.apply_stylesheet()
 
     def apply_stylesheet(self):

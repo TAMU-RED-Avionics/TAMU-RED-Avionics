@@ -15,9 +15,26 @@ from PID_SCHEMA import (
     COMP_REGULATOR, COMP_CHECK_VALVE, COMP_LABEL, COMP_JUNCTION,
     FLUID_OXIDIZER, FLUID_FUEL, FLUID_PRESSURANT, FLUID_PURGE, COMP_BALL_VALVE, COMP_PSV,
     COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_REDUCER, COMP_PRV, COMP_IGNITER,
+    COMP_ORIFICE, COMP_FILTER,
+    COMP_ACTUATED_VALVE, COMP_ACTUATED_VALVE_LS, COMP_NEEDLE_VALVE, COMP_THREE_WAY_VALVE,
+    COMP_EP_THROTTLE_VALVE, COMP_BURST_DISK, COMP_BULKHEAD, COMP_QUICK_DISCONNECT,
+    COMP_CAP_PLUG, COMP_HAND_REGULATOR, COMP_DOME_REGULATOR, COMP_EP_CONVERTER,
+    COMP_PUMP, COMP_PRESSURE_GAUGE, COMP_DIFF_PRESSURE, COMP_FLOW_METER,
+    COMP_TO_ATMOSPHERE, COMP_FLEX_HOSE, COMP_BELLOWS, COMP_HEAT_EXCHANGER, COMP_PANEL,
 )
 
 from PID_CANVAS import PIDCanvas, snap
+
+# Types actuated/driven through a relay command (see GUI_COMMS.VALVE_TYPES) -
+# these get the "Binding" hardware field in the property panel.
+HW_BINDING_TYPES = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
+                     COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER,
+                     COMP_ACTUATED_VALVE, COMP_ACTUATED_VALVE_LS,
+                     COMP_EP_THROTTLE_VALVE, COMP_THREE_WAY_VALVE, COMP_PUMP)
+# Types read as a live ADC channel (see GUI_COMMS.SENSOR_TYPES) - these get
+# the "Channel" hardware field instead.
+HW_CHANNEL_TYPES = (COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL,
+                     COMP_DIFF_PRESSURE, COMP_FLOW_METER)
 
 PALETTE_GROUPS = [
     ("Valves", [
@@ -26,26 +43,51 @@ PALETTE_GROUPS = [
         ("Solenoid",         COMP_SOLENOID),
         ("Globe Valve",      COMP_GLOBE_VALVE),
         ("Check Valve",      COMP_CHECK_VALVE),
+        ("Actuated Valve",   COMP_ACTUATED_VALVE),
+        ("Actuated Valve (LS)", COMP_ACTUATED_VALVE_LS),
+        ("Needle Valve",     COMP_NEEDLE_VALVE),
+        ("3-Way Valve",      COMP_THREE_WAY_VALVE),
+        ("EP Throttle Valve",COMP_EP_THROTTLE_VALVE),
     ]),
     ("Pressure Ctrl", [
         ("PSV",              COMP_PSV),
         ("PRV",              COMP_PRV),
         ("Regulator",        COMP_REGULATOR),
+        ("Hand Regulator",   COMP_HAND_REGULATOR),
+        ("Dome Regulator",   COMP_DOME_REGULATOR),
+        ("EP Converter",     COMP_EP_CONVERTER),
     ]),
     ("Sensors", [
         ("PT",               COMP_PRESSURE),
         ("Thermocouple",     COMP_TEMPERATURE),
         ("Load Cell",        COMP_LOAD_CELL),
+        ("Pressure Gauge",   COMP_PRESSURE_GAUGE),
+        ("Diff Pressure",    COMP_DIFF_PRESSURE),
+        ("Flow Meter",       COMP_FLOW_METER),
     ]),
     ("Ignition", [
         ("Igniter",          COMP_IGNITER),
     ]),
-    ("Plumbing", [
+    ("Fittings", [
         ("Reducer",          COMP_REDUCER),
+        ("Orifice",          COMP_ORIFICE),
+        ("Filter",           COMP_FILTER),
+        ("Burst Disk",       COMP_BURST_DISK),
+        ("Bulkhead",         COMP_BULKHEAD),
+        ("Quick Disconnect", COMP_QUICK_DISCONNECT),
+        ("Cap/Plug",         COMP_CAP_PLUG),
+        ("Flex Hose",        COMP_FLEX_HOSE),
+        ("Bellows",          COMP_BELLOWS),
+        ("Heat Exchanger",   COMP_HEAT_EXCHANGER),
+    ]),
+    ("Plumbing", [
         ("Tank",             COMP_TANK),
         ("Injector",         COMP_INJECTOR),
+        ("Pump",             COMP_PUMP),
         ("Junction",         COMP_JUNCTION),
+        ("To Atmosphere",    COMP_TO_ATMOSPHERE),
         ("Label",            COMP_LABEL),
+        ("Panel",            COMP_PANEL),
     ]),
 ]
 
@@ -221,17 +263,26 @@ class PropertyPanel(QWidget):
         self._add_scale_field("Width Scale", "extra_scale_x", comp.extras.get("scale_x", 1.0))
         self._add_scale_field("Height Scale", "extra_scale_y", comp.extras.get("scale_y", 1.0))
 
+        scale_hint = QLabel("Tip: hold Ctrl and drag a corner\nhandle on the canvas to resize.")
+        scale_hint.setStyleSheet("color: #777; font-size: 8pt;")
+        scale_hint.setWordWrap(True)
+        self.form.addRow(scale_hint)
+
         self._add_component_specific_fields(comp)
 
         if comp.type == COMP_PRESSURE:
             self._add("Linked Line ID", comp.extras.get("line_id", ""), key="extra_line_id")
             self._add("Color Max (psi)", comp.extras.get("line_pressure_max", "50"), key="extra_line_pressure_max")
 
-        self._add("Relay", str(comp.hardware.relay) if comp.hardware.relay is not None else "", key="relay",
-                  tooltip="Firmware relay ID (see EGCP.h). Accepts decimal or\n"
-                          "0x-prefixed hex - e.g. type 0x30 for IG1, not 30\n"
-                          "(30 decimal = 0x1E, a different relay entirely).")
-        self._add("ADC ch", str(comp.hardware.adc) if comp.hardware.adc is not None else "", key="adc")
+        if comp.type in HW_BINDING_TYPES:
+            self._add("Binding", str(comp.hardware.relay) if comp.hardware.relay is not None else "", key="relay",
+                      tooltip="Firmware relay ID (see EGCP.h). Accepts decimal or\n"
+                              "0x-prefixed hex - e.g. type 0x30 for IG1, not 30\n"
+                              "(30 decimal = 0x1E, a different relay entirely).")
+        elif comp.type in HW_CHANNEL_TYPES:
+            self._add("Channel", str(comp.hardware.adc) if comp.hardware.adc is not None else "", key="adc",
+                      tooltip="ADC channel index this sensor is read on\n"
+                              "(the channel sent in PKT_ADC packets).")
 
         if comp.type in [COMP_BALL_VALVE, COMP_GLOBE_VALVE, COMP_SOLENOID]:
             self._add("Normally", comp.extras.get("normally", "closed"), key="extra_normally")
@@ -404,6 +455,7 @@ class PIDEditorWindow(QWidget):
         self.canvas = PIDCanvas(interactive=True)
         self.canvas.component_clicked.connect(self._on_comp_clicked)
         self.canvas.component_moved.connect(lambda cid, x, y: self._status.setText(f"Moved {cid} → ({x:.0f}, {y:.0f})"))
+        self.canvas.component_resized.connect(self._on_comp_resized)
         self.canvas.canvas_clicked.connect(self._on_canvas_clicked)
         self.canvas.line_clicked.connect(self._on_line_clicked)
         self.canvas.line_finished.connect(self._on_line_finished)
@@ -539,6 +591,29 @@ class PIDEditorWindow(QWidget):
                 COMP_REDUCER: "RED",
                 COMP_TANK: "TK",
                 COMP_IGNITER: "IGN",
+                COMP_ACTUATED_VALVE: "AV",
+                COMP_ACTUATED_VALVE_LS: "AVLS",
+                COMP_NEEDLE_VALVE: "NV",
+                COMP_THREE_WAY_VALVE: "3WV",
+                COMP_EP_THROTTLE_VALVE: "EPTV",
+                COMP_BURST_DISK: "BD",
+                COMP_BULKHEAD: "BH",
+                COMP_QUICK_DISCONNECT: "QD",
+                COMP_CAP_PLUG: "CAP",
+                COMP_HAND_REGULATOR: "HREG",
+                COMP_DOME_REGULATOR: "DREG",
+                COMP_EP_CONVERTER: "EPC",
+                COMP_PUMP: "P",
+                COMP_PRESSURE_GAUGE: "PG",
+                COMP_DIFF_PRESSURE: "DP",
+                COMP_FLOW_METER: "FM",
+                COMP_TO_ATMOSPHERE: "ATM",
+                COMP_FLEX_HOSE: "H",
+                COMP_BELLOWS: "B",
+                COMP_HEAT_EXCHANGER: "HEX",
+                COMP_ORIFICE: "OR",
+                COMP_FILTER: "F",
+                COMP_PANEL: "PNL",
             }
             
             prefix = type_to_prefix.get(ctype, ctype[:3].upper())
@@ -559,6 +634,17 @@ class PIDEditorWindow(QWidget):
             self.prop_panel.show_component(cid, comp)
             self._status.setText(f"Selected: {cid}  ({comp.type})")
     
+    def _on_comp_resized(self, cid: str):
+        if not self._project:
+            return
+        comp = self._project.components.get(cid)
+        if not comp:
+            return
+        sx, sy = comp.extras.get("scale_x", 1.0), comp.extras.get("scale_y", 1.0)
+        self._status.setText(f"Resized {cid} → scale ({sx:.2f}, {sy:.2f})")
+        if self.prop_panel._comp_id == cid:
+            self.prop_panel.show_component(cid, comp)
+
     def _on_line_clicked(self, lid: str):
         if self._project:
             line = next((l for l in self._project.lines if l.id == lid), None)

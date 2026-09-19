@@ -138,6 +138,9 @@ class EthernetClient:
             COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
             COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER,
             COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL,
+            COMP_ACTUATED_VALVE, COMP_ACTUATED_VALVE_LS,
+            COMP_EP_THROTTLE_VALVE, COMP_THREE_WAY_VALVE, COMP_PUMP,
+            COMP_DIFF_PRESSURE, COMP_FLOW_METER,
         )
 
         # Igniters fire through the same PKT_VSO/PKT_VSC relay commands as
@@ -145,9 +148,15 @@ class EthernetClient:
         # relay IDs 0x30/0x31 to "IG1"/"IG2" and handles them identically to
         # every other valve in handle_valve_command) - so they need a relay
         # mapping here too, or send_valve_command silently no-ops for them.
+        # Kept in sync with PID_EDITOR.HW_BINDING_TYPES / HW_CHANNEL_TYPES -
+        # those decide which hardware field ("Binding" vs "Channel") shows in
+        # the property panel, these decide what actually gets wired up here.
         VALVE_TYPES  = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
-                        COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER)
-        SENSOR_TYPES = (COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL)
+                        COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER,
+                        COMP_ACTUATED_VALVE, COMP_ACTUATED_VALVE_LS,
+                        COMP_EP_THROTTLE_VALVE, COMP_THREE_WAY_VALVE, COMP_PUMP)
+        SENSOR_TYPES = (COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL,
+                        COMP_DIFF_PRESSURE, COMP_FLOW_METER)
 
         new_valve_map:  dict[str, int] = {}
         new_sensor_map: dict[int, str] = {}

@@ -1616,6 +1616,15 @@
       "expression": "abs(LC1) + abs(LC2) + abs(LC3)",
       "constants": {},
       "enabled": true
+    },
+    {
+      "id": "calc_1946c30a",
+      "label": "Ox Density (N2O)",
+      "role": "custom",
+      "unit": "kg/m^3",
+      "expression": "PropsSI('D','T',TC1+273.15,'P',P1*6894.76,'N2O')",
+      "constants": {},
+      "enabled": true
     }
   ]
 }

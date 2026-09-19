@@ -101,8 +101,7 @@ const float PT_INTERCEPT[8] = { -374.6f, -374.6f, -374.6f, -374.6f,
                                   -374.6f, -374.6f,
                                   -249.7f, -249.7f };
 
-// FX292X LC4/LC5: analog bridge, 0-200 lbs full scale
-// Calibration depends on OPA192 gain — PLACEHOLDER, recalibrate on hardware
+
 const float LC45_SLOPE     = 0.04884f;   // <-- USER INPUT  (lbs per raw count, no amp gain known)
 const float LC45_INTERCEPT = 0.0f;       // <-- USER INPUT
 
@@ -200,11 +199,7 @@ const float LC_INTERCEPT[3] = { 0.0f, 0.0f, 0.0f };     // <-- USER INPUT
 
 float lc_weights[5] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
 
-// ---------------------------------------------------------------------------
-// THERMOCOUPLES  (MCP9600 via I2C)
-// I2C bus: SCL=GPIO18 (SCLTC), SDA=GPIO19 (SDATC)  = Wire2 on Teensy 4.1
-// TCA9548A mux selects which MCP9600 is active
-// ---------------------------------------------------------------------------
+
 #define TCA_TC_ADDR  0x71   // <-- USER INPUT  (TCA9548A address for TC bus)
 
 TwoWire& TC_WIRE = Wire2;   // GPIO18/19 = Wire2 on Teensy 4.1  <-- confirm with pinout

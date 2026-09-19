@@ -8,3 +8,4 @@ __pycache__/
 moc_*
 Data Analysis/Testing
 .DS_Store
+gui_settings.ini

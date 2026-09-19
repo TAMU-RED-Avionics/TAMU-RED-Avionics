@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass, field, asdict
 from typing import Any, Optional, List
 
-COMP_VALVE          = "valve"           # on/off solenoid or ball valve
+COMP_VALVE          = "valve"           # RED-001 3.3: Manual Valve
 COMP_THROTTLE_VALVE = "throttle_valve"  # proportional / globe valve
 COMP_PRESSURE       = "pressure"        # pressure transducer
 COMP_TEMPERATURE    = "temperature"     # thermocouple
@@ -16,16 +16,39 @@ COMP_ORIFICE        = "orifice"         # fixed flow restriction
 COMP_FILTER         = "filter"          # inline filter
 COMP_REGULATOR      = "regulator"       # pressure regulator
 COMP_CHECK_VALVE    = "check_valve"     # check / non-return valve
-COMP_RELIEF_VALVE   = "relief_valve"    # safety / relief valve
+COMP_RELIEF_VALVE   = "relief_valve"    # RED-001 3.3: Relief Valve (RV)
 COMP_LABEL          = "label"           # free text annotation
 COMP_JUNCTION       = "junction"        # pipe tee / junction node
 COMP_BALL_VALVE     = "ball_valve"
 COMP_PSV            = "psv"             # Pressure Safety Valve
 COMP_PRV            = "prv"             # Pressure Relief Valve
-COMP_SOLENOID       = "solenoid"
+COMP_SOLENOID       = "solenoid"        # RED-001 3.3: Solenoid Valve
 COMP_GLOBE_VALVE    = "globe_valve"
-COMP_REDUCER        = "reducer"
-COMP_IGNITER        = "igniter" 
+COMP_REDUCER        = "reducer"         # RED-001 3.3: Reducer
+COMP_IGNITER        = "igniter"
+
+# --- RED-001 3.3 standardized P&ID parts -----------------------------------
+COMP_ACTUATED_VALVE     = "actuated_valve"      # Actuated Valve (no limit)
+COMP_ACTUATED_VALVE_LS  = "actuated_valve_ls"   # Actuated Valve (with limit)
+COMP_NEEDLE_VALVE       = "needle_valve"        # Needle Valve
+COMP_THREE_WAY_VALVE    = "three_way_valve"     # 3-Way Valve
+COMP_EP_THROTTLE_VALVE  = "ep_throttle_valve"   # Electro-Pneumatic Throttle Valve
+COMP_BURST_DISK         = "burst_disk"          # Burst Disk (BD)
+COMP_BULKHEAD           = "bulkhead"            # Bulkhead (BH)
+COMP_QUICK_DISCONNECT   = "quick_disconnect"    # Quick Disconnect (QD)
+COMP_CAP_PLUG           = "cap_plug"            # Cap/Plug
+COMP_HAND_REGULATOR     = "hand_regulator"      # Hand Regulator (R)
+COMP_DOME_REGULATOR     = "dome_regulator"      # Dome Regulator (R)
+COMP_EP_CONVERTER       = "ep_converter"        # Electro-Pneumatic Converter
+COMP_PUMP               = "pump"                # Pump (P)
+COMP_PRESSURE_GAUGE     = "pressure_gauge"      # Pressure Gauge (PG)
+COMP_DIFF_PRESSURE      = "diff_pressure"       # Differential Pressure Transducer (DP)
+COMP_FLOW_METER         = "flow_meter"          # Flow Meter (FM)
+COMP_TO_ATMOSPHERE      = "to_atmosphere"       # To Atmosphere vent
+COMP_FLEX_HOSE          = "flex_hose"           # Flex Hose (H)
+COMP_BELLOWS            = "bellows"             # Bellow (B)
+COMP_HEAT_EXCHANGER     = "heat_exchanger"      # Heat Exchanger (HEX)
+COMP_PANEL              = "panel"               # Panel / description container
 
 
 COMPONENT_TYPES = [
@@ -33,6 +56,11 @@ COMPONENT_TYPES = [
     COMP_LOAD_CELL, COMP_TANK, COMP_INJECTOR, COMP_ORIFICE, COMP_FILTER,
     COMP_REGULATOR, COMP_CHECK_VALVE, COMP_RELIEF_VALVE, COMP_LABEL, COMP_JUNCTION, COMP_BALL_VALVE,
     COMP_PSV, COMP_PRV, COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_REDUCER, COMP_IGNITER,
+    COMP_ACTUATED_VALVE, COMP_ACTUATED_VALVE_LS, COMP_NEEDLE_VALVE, COMP_THREE_WAY_VALVE,
+    COMP_EP_THROTTLE_VALVE, COMP_BURST_DISK, COMP_BULKHEAD, COMP_QUICK_DISCONNECT,
+    COMP_CAP_PLUG, COMP_HAND_REGULATOR, COMP_DOME_REGULATOR, COMP_EP_CONVERTER,
+    COMP_PUMP, COMP_PRESSURE_GAUGE, COMP_DIFF_PRESSURE, COMP_FLOW_METER,
+    COMP_TO_ATMOSPHERE, COMP_FLEX_HOSE, COMP_BELLOWS, COMP_HEAT_EXCHANGER, COMP_PANEL,
 ]
 
 FLUID_OXIDIZER   = "oxidizer"    # blue
