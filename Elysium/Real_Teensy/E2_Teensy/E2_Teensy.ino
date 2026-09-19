@@ -1,7 +1,5 @@
 /*
--------------------------------------------------------------------
 VARIABLES & USER INPUT
--------------------------------------------------------------------
 */
 
 #include <Arduino.h>
@@ -45,39 +43,40 @@ const int BAUD = 115200;
 
 // ---------------------------------------------------------------------------
 // VALVE PIN ASSIGNMENTS
-// Available RELAY→GPIO assignments from schematic:
-//   RELAY1  → GPIO 2  or GPIO 32
-//   RELAY3  → GPIO 33
-//   RELAY4  → GPIO 3
-//   RELAY5  → GPIO 34
-//   RELAY6  → GPIO 4
-//   RELAY7  → GPIO 5
-//   RELAY8  → GPIO 35
-//   RELAY9  → GPIO 36
-//   RELAY10 → GPIO 6
-//   RELAY11 → GPIO 37
-//   RELAY12 → GPIO 38
-//   RELAY13 → GPIO 39
-//   RELAY14 → GPIO 40
-//   RELAY15 → GPIO 14
-//   RELAY16 → GPIO 41
+//
+//   RELAY1  -> GPIO 2  or GPIO 32
+//   RELAY3  -> GPIO 33
+//   RELAY4  -> GPIO 3
+//   RELAY5  -> GPIO 34
+//   RELAY6  -> GPIO 4
+//   RELAY7  -> GPIO 5
+//   RELAY8  -> GPIO 35
+//   RELAY9  -> GPIO 36
+//   RELAY10 -> GPIO 6
+//   RELAY11 -> GPIO 37
+//   RELAY12 -> GPIO 38
+//   RELAY13 -> GPIO 39
+//   RELAY14 -> GPIO 40  (spare)
+//   RELAY15 -> GPIO 14  (spare)
+//   RELAY16 -> GPIO 41  (spare)
+//   RELAY2  -> not listed in source comment (spare/unassigned)
 // ---------------------------------------------------------------------------
-const int NCS1_PIN   = -1;   // <-- USER INPUT  (available: see RELAY map above)
-const int NCS2_PIN   = -1;   // <-- USER INPUT  (vent line — HIGH = open)
-const int NCS3_PIN   = -1;   // <-- USER INPUT
+const int NCS1_PIN   = 2;    // RELAY1
+const int NCS2_PIN   = 33;   // RELAY3   (vent line — HIGH = open)
+const int NCS3_PIN   = 3;    // RELAY4
 // NCS4 is a manual switch
-const int NCS5_PIN   = -1;   // <-- USER INPUT 
-const int PA_BV3_PIN = -1;   // <-- USER INPUT  (prev. NCS6)
-const int PA_BV1_PIN = -1;   // <-- USER INPUT  (prev. LA-BV1)
-const int PA_BV2_PIN = -1;   // <-- USER INPUT  (prev. LA-BV2)
-const int GV1_PIN    = -1;   // <-- USER INPUT
-const int GV2_PIN    = -1;   // <-- USER INPUT
-const int IGN1_PIN   = -1;   // <-- USER INPUT
-const int IGN2_PIN   = -1;   // <-- USER INPUT
-const int GIMBAL_PIN = -1;   // <-- USER INPUT
+const int NCS5_PIN   = 34;   // RELAY5
+const int PA_BV3_PIN = 4;    // RELAY6   (prev. NCS6)
+const int PA_BV1_PIN = 5;    // RELAY7   (prev. LA-BV1)
+const int PA_BV2_PIN = 35;   // RELAY8   (prev. LA-BV2)
+const int GV1_PIN    = 36;   // RELAY9
+const int GV2_PIN    = 6;    // RELAY10
+const int IGN1_PIN   = 37;   // RELAY11
+const int IGN2_PIN   = 38;   // RELAY12
+const int GIMBAL_PIN = 39;   // RELAY13
 
 // ---------------------------------------------------------------------------
-// ADS7953 SPI ADC  (pressure transducers + LC4/LC5 analog)
+// ADS7953 SPI ADC  (pressure transducers, PT0-PT11)
 // Pins fixed by schematic — do not change
 // ---------------------------------------------------------------------------
 const int ADS_CS_PIN  = 10;   // GPIO10 = CS1
@@ -86,24 +85,14 @@ const int ADS_MISO    = 12;   // GPIO12 = SDO1
 const int ADS_SCK     = 13;   // GPIO13 = SCLK1
 
 // ADS7953 channel assignments
-// PT1-PT8 → CH0-CH7 (4-20mA sensors with 150Ω shunt, 0-3V on 3.3V rail)
-// LC4, LC5 → CH8, CH9 (FX292X analog bridge via OPA192 amp)
-// CH10-CH15 reserved / unassigned
-
-// Calibration: psi = slope * raw12bit + intercept
-// Raw range for 4-20mA / 150Ω shunt on 3.3V:
-//   4mA  → 0.6V → raw = 4095*(0.6/3.3) = 744
-//   20mA → 3.0V → raw = 4095*(3.0/3.3) = 3723
-const float PT_SLOPE[8]     = { 0.5035f, 0.5035f, 0.5035f, 0.5035f,      // PT1-4: 0-1500 psi  <-- USER INPUT (verify gain)
-                                 0.5035f, 0.5035f,                       // PT5-6: 0-1500 psi
-                                 0.3357f, 0.3357f };                     // PT7-8: 0-1000 psi
-const float PT_INTERCEPT[8] = { -374.6f, -374.6f, -374.6f, -374.6f,
-                                  -374.6f, -374.6f,
-                                  -249.7f, -249.7f };
-
-
-const float LC45_SLOPE     = 0.04884f;   // <-- USER INPUT  (lbs per raw count, no amp gain known)
-const float LC45_INTERCEPT = 0.0f;       // <-- USER INPUT
+const float PT_SLOPE[12]     = { 0.5035f, 0.5035f, 0.5035f, 0.5035f,      // PT0-3: 0-1500 psi  <-- USER INPUT (verify gain)
+                                  0.5035f, 0.5035f,                       // PT4-5: 0-1500 psi
+                                  0.3357f, 0.3357f,                       // PT6-7: 0-1000 psi
+                                  0.5035f, 0.5035f, 0.5035f, 0.5035f };   // PT8-11: <-- USER INPUT, range unverified
+const float PT_INTERCEPT[12] = { -374.6f, -374.6f, -374.6f, -374.6f,
+                                   -374.6f, -374.6f,
+                                   -249.7f, -249.7f,
+                                   -374.6f, -374.6f, -374.6f, -374.6f };  // <-- USER INPUT, PT8-11 unverified
 
 uint16_t ads7953_read(uint8_t channel) {
     // ADS7953 manual-mode single-channel read
@@ -122,24 +111,19 @@ inline float pt_psi(uint8_t channel) {
     return PT_SLOPE[channel] * raw + PT_INTERCEPT[channel];
 }
 
-// ---------------------------------------------------------------------------
-// NAU7802 I2C ADC  (load cells LC1-LC3)
-// I2C bus: SCL=GPIO16 (SCLLC), SDA=GPIO17 (SDALC)
-// TCA9548A mux selects which NAU7802 is active
-// NAU7802 default I2C address: 0x2A
-// ---------------------------------------------------------------------------
+// NAU7802 I2C ADC  (load cells LC1-LC6)
 #define NAU7802_ADDR     0x2A
-#define TCA_LC_ADDR      0x70   // <-- USER INPUT  (TCA9548A address for LC bus, set by A0-A2 strapping)
+#define TCA_LC_ADDR      0x70
 
 // NAU7802 register addresses
 #define NAU7802_PU_CTRL  0x00
 #define NAU7802_CTRL1    0x01
 #define NAU7802_ADCO_B2  0x12
 
-TwoWire& LC_WIRE  = Wire1;   // GPIO16/17 = Wire1 on Teensy 4.1  <-- confirm with pinout
+TwoWire& LC_WIRE  = Wire1;
 
 void tca_lc_select(uint8_t channel) {
-    // Select TCA9548A channel (0-7) on the LC I2C bus
+    // Select TCA9548A channel (0-5) on the LC I2C bus
     LC_WIRE.beginTransmission(TCA_LC_ADDR);
     LC_WIRE.write(1 << channel);
     LC_WIRE.endTransmission();
@@ -193,29 +177,46 @@ bool nau7802_init() {
     return true;
 }
 
-// LC1-LC3 calibration: lbs = slope * raw24bit + intercept
-const float LC_SLOPE[3]     = { 1.0f, 1.0f, 1.0f };     // <-- USER INPUT  (calibrate on hardware)
-const float LC_INTERCEPT[3] = { 0.0f, 0.0f, 0.0f };     // <-- USER INPUT
+// LC1-LC6 calibration: lbs = slope * raw24bit + intercept
+const float LC_SLOPE[6]     = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };     // <-- USER INPUT  (calibrate on hardware)
+const float LC_INTERCEPT[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };     // <-- USER INPUT
 
-float lc_weights[5] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+float lc_weights[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
 
 
-#define TCA_TC_ADDR  0x71   // <-- USER INPUT  (TCA9548A address for TC bus)
+// ---------------------------------------------------------------------------
+// MCP9600 I2C thermocouple ADCs (TCADC1-12)
+// I2C bus: SCL=GPIO18 (SCLTC), SDA=GPIO19 (SDATC)
+// TCA9548A mux (U2 on PCB) selects TCADC1-8; TCADC9-12 sit directly on
+// the same bus with distinct hardware addresses (no mux select needed).
+//
+// CONFIRMED FROM PCB NETLIST (resistor-divider trace on each ADDR pin):
+//   TCADC1-8  (muxed, channels 0-7): ADDR pulled to VMC+ via 10k, no
+//             bottom resistor -> address 0x67 (all 8 share this address,
+//             safe since the mux isolates them one at a time)
+//   TCADC9:   10k top / 22k bottom divider -> address 0x65 (exact match
+//             to Microchip's documented resistor table)
+//   TCADC10:  10k top / 43k bottom divider -> address 0x66 (exact match)
+//   TCADC11:  10k top / 14.5k bottom divider -> ratio lands closest to
+//             address 0x64, but 14.5k is NOT one of Microchip's standard
+//             table values (2.2k/4.3k/7.5k/13k/22k/43k) -- VERIFY ON
+//             HARDWARE with an I2C scanner before trusting this.
+//   TCADC12:  ADDR tied directly to GND -> address 0x60
+// ---------------------------------------------------------------------------
+#define TCA_TC_ADDR      0x70   // CONFIRMED: U2's A0/A1/A2 all pulled to GND -> base address 0x70
+#define MCP9600_MUXED_ADDR 0x67 // CONFIRMED: TCADC1-8 (all muxed channels share this address)
+
+// TCADC9-12 direct-bus addresses (indices 0-3 correspond to TCADC9-12)
+const uint8_t TC_DIRECT_ADDR[4] = { 0x65, 0x66, 0x64, 0x60 };
+// TCADC9 = 0x65 (confirmed) | TCADC10 = 0x66 (confirmed)
+// TCADC11 = 0x64 (BEST GUESS -- confirm with I2C scan, see note above)
+// TCADC12 = 0x60 (confirmed)
 
 TwoWire& TC_WIRE = Wire2;   // GPIO18/19 = Wire2 on Teensy 4.1  <-- confirm with pinout
 
-#define TC1_MUX_CH  0   // <-- USER INPUT  (which TCA9548A channel each MCP9600 is on)
-#define TC2_MUX_CH  1   // <-- USER INPUT
-#define TC3_MUX_CH  2   // <-- USER INPUT
-
-Adafruit_MCP9600 tc1_sensor;
-Adafruit_MCP9600 tc2_sensor;
-Adafruit_MCP9600 tc3_sensor;
-bool tc1_ok = false;
-bool tc2_ok = false;
-bool tc3_ok = false;
-
-#define MCP9600_ADDR  0x60   // MCP9600 fixed I2C address (all instances share same addr, mux selects)
+Adafruit_MCP9600 tc_sensor[12];
+bool tc_ok[12] = { false };
+float tc_temps[12] = { 0.0f };
 
 void tca_tc_select(uint8_t channel) {
     TC_WIRE.beginTransmission(TCA_TC_ADDR);
@@ -223,7 +224,12 @@ void tca_tc_select(uint8_t channel) {
     TC_WIRE.endTransmission();
 }
 
-float lc45_weights[2] = { 0.0f, 0.0f };
+void mcp9600_configure(Adafruit_MCP9600 &sensor) {
+    sensor.setADCresolution(MCP9600_ADCRESOLUTION_18);
+    sensor.setThermocoupleType(MCP9600_TYPE_K);
+    sensor.setFilterCoefficient(3);
+    sensor.enable(true);
+}
 
 
 byte MAC_ADDRESS[] = { 0xDE, 0xAD, 0xBE, 0xEF, 0xFE, 0xED };
@@ -423,10 +429,10 @@ void setup() {
     ads7953_read(0);
     DBG_PRINTLN("ADS7953 SPI initialized");
 
-    // ---- I2C for NAU7802 load cells ----
+    // ---- I2C for NAU7802 load cells (LC1-LC6, all muxed) ----
     LC_WIRE.begin();
     LC_WIRE.setClock(400000);
-    for (uint8_t ch = 0; ch < 3; ch++) {
+    for (uint8_t ch = 0; ch < 6; ch++) {
         tca_lc_select(ch);
         if (nau7802_init()) {
             DBG_PRINT("LC"); DBG_PRINT(ch + 1); DBG_PRINTLN(" (NAU7802) ready");
@@ -435,39 +441,33 @@ void setup() {
         }
     }
 
-    // ---- I2C for MCP9600 thermocouples ----
+    // ---- I2C for MCP9600 thermocouples (TCADC1-12) ----
     TC_WIRE.begin();
     TC_WIRE.setClock(400000);
 
-    tca_tc_select(TC1_MUX_CH);
-    tc1_ok = tc1_sensor.begin(MCP9600_ADDR, &TC_WIRE);
-    if (tc1_ok) {
-        tc1_sensor.setADCresolution(MCP9600_ADCRESOLUTION_18);
-        tc1_sensor.setThermocoupleType(MCP9600_TYPE_K);
-        tc1_sensor.setFilterCoefficient(3);
-        tc1_sensor.enable(true);
-        DBG_PRINTLN("TC1 ready");
-    } else { DBG_PRINTLN("WARN: TC1 not found"); }
+    // TCADC1-8: muxed, all at address 0x67 (mux isolates them)
+    for (uint8_t ch = 0; ch < 8; ch++) {
+        tca_tc_select(ch);
+        tc_ok[ch] = tc_sensor[ch].begin(MCP9600_MUXED_ADDR, &TC_WIRE);
+        if (tc_ok[ch]) {
+            mcp9600_configure(tc_sensor[ch]);
+            DBG_PRINT("TCADC"); DBG_PRINT(ch + 1); DBG_PRINTLN(" ready");
+        } else {
+            DBG_PRINT("WARN: TCADC"); DBG_PRINT(ch + 1); DBG_PRINTLN(" not found");
+        }
+    }
 
-    tca_tc_select(TC2_MUX_CH);
-    tc2_ok = tc2_sensor.begin(MCP9600_ADDR, &TC_WIRE);
-    if (tc2_ok) {
-        tc2_sensor.setADCresolution(MCP9600_ADCRESOLUTION_18);
-        tc2_sensor.setThermocoupleType(MCP9600_TYPE_K);
-        tc2_sensor.setFilterCoefficient(3);
-        tc2_sensor.enable(true);
-        DBG_PRINTLN("TC2 ready");
-    } else { DBG_PRINTLN("WARN: TC2 not found"); }
-
-    tca_tc_select(TC3_MUX_CH);
-    tc3_ok = tc3_sensor.begin(MCP9600_ADDR, &TC_WIRE);
-    if (tc3_ok) {
-        tc3_sensor.setADCresolution(MCP9600_ADCRESOLUTION_18);
-        tc3_sensor.setThermocoupleType(MCP9600_TYPE_K);
-        tc3_sensor.setFilterCoefficient(3);
-        tc3_sensor.enable(true);
-        DBG_PRINTLN("TC3 ready");
-    } else { DBG_PRINTLN("WARN: TC3 not found"); }
+    // TCADC9-12: direct bus, distinct hardware addresses, no mux select
+    for (uint8_t i = 0; i < 4; i++) {
+        uint8_t idx = 8 + i;
+        tc_ok[idx] = tc_sensor[idx].begin(TC_DIRECT_ADDR[i], &TC_WIRE);
+        if (tc_ok[idx]) {
+            mcp9600_configure(tc_sensor[idx]);
+            DBG_PRINT("TCADC"); DBG_PRINT(idx + 1); DBG_PRINTLN(" ready");
+        } else {
+            DBG_PRINT("WARN: TCADC"); DBG_PRINT(idx + 1); DBG_PRINTLN(" not found (check address, esp. TCADC11)");
+        }
+    }
 
     // ---- Valve output pins ----
     {
@@ -596,46 +596,41 @@ void loop() {
     if ((micros() - LAST_SENSOR_UPDATE) > SENSOR_UPDATE_INTERVAL) {
         LAST_SENSOR_UPDATE = micros();
 
-        // PT1-PT8 via ADS7953 CH0-CH7
-        for (int i = 0; i < 8; i++) {
+        // PT0-PT11 via ADS7953 CH0-CH11 (all 12 channels, confirmed from PCB)
+        for (int i = 0; i < 12; i++) {
             uint16_t raw = ads7953_read(i);
             float psi = PT_SLOPE[i] * raw + PT_INTERCEPT[i];
             send_adc_packet(0x01 + i, psi);
         }
 
-        // TC1-TC3 via MCP9600 through TCA9548A mux
-        tca_tc_select(TC1_MUX_CH);
-        float tc1_temp = tc1_ok ? tc1_sensor.readThermocouple() : 0.0f;
-        tca_tc_select(TC2_MUX_CH);
-        float tc2_temp = tc2_ok ? tc2_sensor.readThermocouple() : 0.0f;
-        tca_tc_select(TC3_MUX_CH);
-        float tc3_temp = tc3_ok ? tc3_sensor.readThermocouple() : 0.0f;
-        send_adc_packet(0x09, tc1_temp);
-        send_adc_packet(0x0A, tc2_temp);
-        send_adc_packet(0x0B, tc3_temp);
+        // TCADC1-12 via MCP9600 (8 muxed + 4 direct-address)
+        for (uint8_t ch = 0; ch < 8; ch++) {
+            tca_tc_select(ch);
+            tc_temps[ch] = tc_ok[ch] ? tc_sensor[ch].readThermocouple() : 0.0f;
+        }
+        for (uint8_t i = 0; i < 4; i++) {
+            uint8_t idx = 8 + i;
+            tc_temps[idx] = tc_ok[idx] ? tc_sensor[idx].readThermocouple() : 0.0f;
+        }
+        for (uint8_t i = 0; i < 12; i++) {
+            send_adc_packet(0x09 + i, tc_temps[i]);
+        }
 
-        // LC1-LC3 via NAU7802 through TCA9548A mux (slower update rate)
+        // LC1-LC6 via NAU7802 through TCA9548A mux (slower update rate)
         if ((LAST_SENSOR_UPDATE - LAST_LC_UPDATE) > LC_UPDATE_INTERVAL) {
             LAST_LC_UPDATE = LAST_SENSOR_UPDATE;
-            for (uint8_t ch = 0; ch < 3; ch++) {
+            for (uint8_t ch = 0; ch < 6; ch++) {
                 tca_lc_select(ch);
                 if (nau7802_data_ready()) {
                     int32_t raw = nau7802_read_adc();
                     lc_weights[ch] = LC_SLOPE[ch] * raw + LC_INTERCEPT[ch];
                 }
             }
-            // LC4 and LC5 via ADS7953 CH8-CH9 (FX292X analog bridge)
-            uint16_t raw4 = ads7953_read(8);
-            uint16_t raw5 = ads7953_read(9);
-            lc45_weights[0] = LC45_SLOPE * raw4 + LC45_INTERCEPT;
-            lc45_weights[1] = LC45_SLOPE * raw5 + LC45_INTERCEPT;
         }
 
-        send_adc_packet(0x0C, lc_weights[0]);
-        send_adc_packet(0x0D, lc_weights[1]);
-        send_adc_packet(0x0E, lc_weights[2]);
-        send_adc_packet(0x0F, lc45_weights[0]);
-        send_adc_packet(0x10, lc45_weights[1]);
+        for (uint8_t ch = 0; ch < 6; ch++) {
+            send_adc_packet(0x15 + ch, lc_weights[ch]);
+        }
 
         delay(1);
     }
