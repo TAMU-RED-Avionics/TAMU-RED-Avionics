@@ -24,10 +24,10 @@ VARIABLES & USER INPUT
 #endif
 
 
-const long unsigned SENSOR_UPDATE_INTERVAL     = 10000;         // <-- USER INPUT       sensor update interval (microsec)
-const long unsigned LC_UPDATE_INTERVAL         = 100000;        // <-- USER INPUT       load cell update interval (microsec)
-const long unsigned CONNECTION_TIMEOUT         = 5000000;       // <-- USER INPUT       automated shutdown timeout for complete comms failure (microsec)
-const long unsigned HUMAN_CONNECTION_TIMEOUT   = 3600000000;    // <-- USER INPUT       automated shutdown timeout for human comms failure (microsec)
+const long unsigned SENSOR_UPDATE_INTERVAL     = 10000;         // sensor update interval (microsec)
+const long unsigned LC_UPDATE_INTERVAL         = 100000;        // load cell update interval (microsec)
+const long unsigned CONNECTION_TIMEOUT         = 5000000;       // shutdown timeout for complete comms failure (microsec)
+const long unsigned HUMAN_CONNECTION_TIMEOUT   = 3600000000;    // shutdown timeout for human comms failure (microsec)
                                         // NOTE: ^ THIS IS CURRENTLY 1 HOUR. THIS SHOULD NEVER TRIGGER, HOWEVER IT IS JUST TO BE SAFE (AND LEFTOVER FROM E1)
 
 const long unsigned ABORTED_TIME_INTERVAL      = 500000;        // microsec between printing "aborted" (when aborted)
@@ -77,7 +77,6 @@ const int GIMBAL_PIN = 39;   // RELAY13
 
 // ---------------------------------------------------------------------------
 // ADS7953 SPI ADC  (pressure transducers, PT0-PT11)
-// Pins fixed by schematic — do not change
 // ---------------------------------------------------------------------------
 const int ADS_CS_PIN  = 10;   // GPIO10 = CS1
 const int ADS_MOSI    = 11;   // GPIO11 = SDI1
@@ -111,7 +110,6 @@ inline float pt_psi(uint8_t channel) {
     return PT_SLOPE[channel] * raw + PT_INTERCEPT[channel];
 }
 
-// NAU7802 I2C ADC  (load cells LC1-LC6)
 #define NAU7802_ADDR     0x2A
 #define TCA_LC_ADDR      0x70
 
@@ -182,41 +180,23 @@ const float LC_SLOPE[6]     = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };     // <--
 const float LC_INTERCEPT[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };     // <-- USER INPUT
 
 float lc_weights[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+bool LC_INSTALLED[6] = { true, true, true, true, true, true };   // set false based on how many used
 
 
-// ---------------------------------------------------------------------------
-// MCP9600 I2C thermocouple ADCs (TCADC1-12)
-// I2C bus: SCL=GPIO18 (SCLTC), SDA=GPIO19 (SDATC)
-// TCA9548A mux (U2 on PCB) selects TCADC1-8; TCADC9-12 sit directly on
-// the same bus with distinct hardware addresses (no mux select needed).
-//
-// CONFIRMED FROM PCB NETLIST (resistor-divider trace on each ADDR pin):
-//   TCADC1-8  (muxed, channels 0-7): ADDR pulled to VMC+ via 10k, no
-//             bottom resistor -> address 0x67 (all 8 share this address,
-//             safe since the mux isolates them one at a time)
-//   TCADC9:   10k top / 22k bottom divider -> address 0x65 (exact match
-//             to Microchip's documented resistor table)
-//   TCADC10:  10k top / 43k bottom divider -> address 0x66 (exact match)
-//   TCADC11:  10k top / 14.5k bottom divider -> ratio lands closest to
-//             address 0x64, but 14.5k is NOT one of Microchip's standard
-//             table values (2.2k/4.3k/7.5k/13k/22k/43k) -- VERIFY ON
-//             HARDWARE with an I2C scanner before trusting this.
-//   TCADC12:  ADDR tied directly to GND -> address 0x60
-// ---------------------------------------------------------------------------
-#define TCA_TC_ADDR      0x70   // CONFIRMED: U2's A0/A1/A2 all pulled to GND -> base address 0x70
-#define MCP9600_MUXED_ADDR 0x67 // CONFIRMED: TCADC1-8 (all muxed channels share this address)
+#define TCA_TC_ADDR      0x70 
+#define MCP9600_MUXED_ADDR 0x67
 
 // TCADC9-12 direct-bus addresses (indices 0-3 correspond to TCADC9-12)
 const uint8_t TC_DIRECT_ADDR[4] = { 0x65, 0x66, 0x64, 0x60 };
-// TCADC9 = 0x65 (confirmed) | TCADC10 = 0x66 (confirmed)
-// TCADC11 = 0x64 (BEST GUESS -- confirm with I2C scan, see note above)
-// TCADC12 = 0x60 (confirmed)
+
 
 TwoWire& TC_WIRE = Wire2;   // GPIO18/19 = Wire2 on Teensy 4.1  <-- confirm with pinout
 
 Adafruit_MCP9600 tc_sensor[12];
 bool tc_ok[12] = { false };
 float tc_temps[12] = { 0.0f };
+
+bool TC_INSTALLED[12] = { true, true, true, true, true, true, true, true, true, true, true, true };   // set per hardware
 
 void tca_tc_select(uint8_t channel) {
     TC_WIRE.beginTransmission(TCA_TC_ADDR);
@@ -433,6 +413,10 @@ void setup() {
     LC_WIRE.begin();
     LC_WIRE.setClock(400000);
     for (uint8_t ch = 0; ch < 6; ch++) {
+        if (!LC_INSTALLED[ch]) {
+            DBG_PRINT("LC"); DBG_PRINT(ch + 1); DBG_PRINTLN(" skipped (not installed)");
+            continue;
+        }
         tca_lc_select(ch);
         if (nau7802_init()) {
             DBG_PRINT("LC"); DBG_PRINT(ch + 1); DBG_PRINTLN(" (NAU7802) ready");
@@ -445,8 +429,11 @@ void setup() {
     TC_WIRE.begin();
     TC_WIRE.setClock(400000);
 
-    // TCADC1-8: muxed, all at address 0x67 (mux isolates them)
     for (uint8_t ch = 0; ch < 8; ch++) {
+        if (!TC_INSTALLED[ch]) {
+            DBG_PRINT("TCADC"); DBG_PRINT(ch + 1); DBG_PRINTLN(" skipped (not installed)");
+            continue;
+        }
         tca_tc_select(ch);
         tc_ok[ch] = tc_sensor[ch].begin(MCP9600_MUXED_ADDR, &TC_WIRE);
         if (tc_ok[ch]) {
@@ -457,9 +444,12 @@ void setup() {
         }
     }
 
-    // TCADC9-12: direct bus, distinct hardware addresses, no mux select
     for (uint8_t i = 0; i < 4; i++) {
         uint8_t idx = 8 + i;
+        if (!TC_INSTALLED[idx]) {
+            DBG_PRINT("TCADC"); DBG_PRINT(idx + 1); DBG_PRINTLN(" skipped (not installed)");
+            continue;
+        }
         tc_ok[idx] = tc_sensor[idx].begin(TC_DIRECT_ADDR[i], &TC_WIRE);
         if (tc_ok[idx]) {
             mcp9600_configure(tc_sensor[idx]);
@@ -469,7 +459,6 @@ void setup() {
         }
     }
 
-    // ---- Valve output pins ----
     {
         const int output_pins[] = {NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
         for (int pin : output_pins) {
@@ -586,40 +575,39 @@ void loop() {
                 }
             }
 
-            // Consume processed bytes from buffer
             memmove(egcp_rx_buf, egcp_rx_buf + total_sz, egcp_rx_pos - total_sz);
             egcp_rx_pos -= total_sz;
         }
     }
 
-    // Sensor reading and transmission
     if ((micros() - LAST_SENSOR_UPDATE) > SENSOR_UPDATE_INTERVAL) {
         LAST_SENSOR_UPDATE = micros();
 
-        // PT0-PT11 via ADS7953 CH0-CH11 (all 12 channels, confirmed from PCB)
         for (int i = 0; i < 12; i++) {
             uint16_t raw = ads7953_read(i);
             float psi = PT_SLOPE[i] * raw + PT_INTERCEPT[i];
             send_adc_packet(0x01 + i, psi);
         }
 
-        // TCADC1-12 via MCP9600 (8 muxed + 4 direct-address)
         for (uint8_t ch = 0; ch < 8; ch++) {
+            if (!TC_INSTALLED[ch] || !tc_ok[ch]) continue;
             tca_tc_select(ch);
-            tc_temps[ch] = tc_ok[ch] ? tc_sensor[ch].readThermocouple() : 0.0f;
+            tc_temps[ch] = tc_sensor[ch].readThermocouple();
         }
         for (uint8_t i = 0; i < 4; i++) {
             uint8_t idx = 8 + i;
-            tc_temps[idx] = tc_ok[idx] ? tc_sensor[idx].readThermocouple() : 0.0f;
+            if (!TC_INSTALLED[idx] || !tc_ok[idx]) continue;
+            tc_temps[idx] = tc_sensor[idx].readThermocouple();
         }
         for (uint8_t i = 0; i < 12; i++) {
+            if (!TC_INSTALLED[i]) continue;   // don't send stale/zero data for uninstalled channels
             send_adc_packet(0x09 + i, tc_temps[i]);
         }
 
-        // LC1-LC6 via NAU7802 through TCA9548A mux (slower update rate)
         if ((LAST_SENSOR_UPDATE - LAST_LC_UPDATE) > LC_UPDATE_INTERVAL) {
             LAST_LC_UPDATE = LAST_SENSOR_UPDATE;
             for (uint8_t ch = 0; ch < 6; ch++) {
+                if (!LC_INSTALLED[ch]) continue;
                 tca_lc_select(ch);
                 if (nau7802_data_ready()) {
                     int32_t raw = nau7802_read_adc();
@@ -629,6 +617,7 @@ void loop() {
         }
 
         for (uint8_t ch = 0; ch < 6; ch++) {
+            if (!LC_INSTALLED[ch]) continue;
             send_adc_packet(0x15 + ch, lc_weights[ch]);
         }
 
