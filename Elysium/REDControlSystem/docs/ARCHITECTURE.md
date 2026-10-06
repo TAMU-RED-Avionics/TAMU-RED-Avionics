@@ -422,16 +422,13 @@ over UDP.
 | `PKT_SFE` | `0x8` | either | enter safe mode (emergency abort) |
 | `PKT_ADC` | `0x9` | Teensy → GUI | 1 byte sensor ID + 4-byte big-endian float |
 | `PKT_STA` | `0xA` | GUI → Teensy | handshake / connection start |
+| `PKT_POS` | `0xB` | either | 3 bytes: actuator ID + big-endian `uint16` position in 0.01 % units (0-10000). GUI → Teensy sets it (ACK'd/retried like VSO/VSC); Teensy → GUI reports it (sent after every `PKT_STA`) |
 
 > **`PKT_GVS`/`PKT_BGP`/`PKT_HGP` are dead protocol.** `GUIController.toggle_gimbaling`
-> only flips a local flag and logs it; `PID_VIEW.py`'s throttle dialog calls
-> `self.controller.set_throttle(...)`, a method that **does not exist** on
-> `GUIController` (the call is wrapped in a `try/except AttributeError` that silently
-> swallows the failure). `E2_Teensy.ino`'s main loop only branches on `PKT_STA`,
-> `PKT_HRT`, `PKT_VSO`, `PKT_VSC`, and `PKT_SFE` — it has no handler for `PKT_GVS`
-> either. Globe-valve throttling and gimbaling are UI-only today; wiring them up is a
-> real feature (packet body format, firmware actuation, GUI send path), not a
-> mapping fix.
+> only flips a local flag and logs it, and `E2_Teensy.ino` has no handler for any of
+> the three. Gimbaling is UI-only today. Proportional valve/servo control no longer
+> goes through `PKT_GVS`: it uses `PKT_POS` (see §6.4), and `GUIController.set_throttle`
+> now exists as a thin wrapper over it.
 
 ### 6.1 Reliability
 
@@ -463,7 +460,42 @@ If nothing has arrived in that window, it invokes `receive_callback("ABORTED:COM
 directly, which `GUIController.handle_new_data` turns into a
 `signals.abort_triggered` emission (see §8).
 
-### 6.3 Sequence diagrams
+### 6.3 Proportional actuators (`PKT_POS`)
+
+Modulating valves and servos are **data-driven**: the GUI has no per-device code.
+
+| Concern | Where it lives |
+|---|---|
+| Which components are positioned, their range, safe / open positions, unit, presets, step | the P&ID: `Component.extras["actuator"]` (`PID_SCHEMA.ActuatorSpec`, edited in the P&ID editor's *Proportional Actuator* section) |
+| Which firmware actuator it is | the P&ID: `hardware.relay` (same 1-byte ID space as valves, e.g. `0x50`) |
+| How a position becomes a physical signal (servo pulse, PWM into the 4-20 mA card, ...) | the firmware: the `ACTUATORS[]` table in `E2_Teensy.ino` |
+
+```json
+"extras": { "actuator": { "min_pct": 0, "max_pct": 100, "safe_pct": 0, "open_pct": 100,
+                          "unit": "%", "presets": [0, 25, 50, 75, 100], "step": 1 } }
+```
+
+`throttle_valve` / `ep_throttle_valve` components are proportional by default (0-100 %,
+safe 0); any other valve type becomes proportional by carrying the `actuator` block, and
+`{"enabled": false}` opts out.
+
+How the rest of the app sees an actuator: it is an ordinary entry in
+`GUIController.valve_states` (`True` = off its safe position), so abort, sequences,
+rules and the project lock work unchanged. `toggle_valve(name, True/False)` sends
+`open_pct` / `safe_pct`; the live P&ID shows a slider popup
+(`PID_CANVAS.ActuatorPopup`) instead of the open/close one and prints the confirmed
+position on the symbol. In a sequence step, an actuator listed under `open_valves`
+means "go to `open_pct`"; unlisted means "go to `safe_pct`" (per-step setpoints are not
+supported yet).
+
+Firmware side (`E2_Teensy.ino`): `ACT_RC_SERVO` (50 Hz pulse `us_min..us_max` on a GPIO)
+and `ACT_PWM_ANALOG` (fixed-frequency PWM into the PWM-to-analog slave card). Every
+actuator is driven to `safe_pct` at boot and in `safe_all_valves()` (so SFE, comms loss
+and `trigger_shutdown` safe them), and the current positions are sent to the GUI after
+each `PKT_STA`. An unknown actuator ID is NCK'd (the GUI shows the command as failed);
+an unwired pin (`-1`) is ACK'd, same as valves.
+
+### 6.4 Sequence diagrams
 
 **Connect / handshake:**
 
@@ -582,6 +614,8 @@ goes to the wrong relay). Current bindings, current firmware constants:
 | `VALVE_GV_1` / `VALVE_GV_2` | `0x20` / `0x21` | `GV-1` / `GV-2` |
 | `VALVE_IG1` / `VALVE_IG2` | `0x30` / `0x31` | `IGN_1` / `IGN_2` |
 | `VALVE_GIMBAL` | `0x40` | *(none — gimbaling unimplemented, see §6)* |
+| `ACTUATOR_SV1` | `0x51` | `SV-1` (`SV_1`, 35 kg RC servo on Teensy pin 23; `PKT_POS`) |
+| `ACTUATOR_SV2` | `0x52` | `SV-2` (`SV_2`, 35 kg RC servo on Teensy pin 22; `PKT_POS`) |
 | `SENSOR_P1`..`SENSOR_P8` | `0x01`-`0x08` | `P1`..`P8` |
 | `SENSOR_TC1`..`SENSOR_TC3` | `0x09`-`0x0B` | `TC1`..`TC3` |
 | `SENSOR_L1`..`SENSOR_L3` | `0x0C`-`0x0E` | `LC1`..`LC3` |
@@ -641,7 +675,10 @@ commandable again.
 
 ## 9. Known limitations (as of this writing)
 
-- Globe-valve throttling and gimbaling are UI-only — see the callout in §6.
+- Gimbaling is UI-only — see the callout in §6. (Proportional valves/servos work via
+  `PKT_POS`, §6.3, but the `GV-1`/`GV-2` globe valves in `Elysium.red` are still plain
+  on/off relays.)
+- **Test setup:** `SV-1` / `SV-2` are two 35 kg RC servos wired straight to Teensy pins 23 / 22 (red to 5 V) in `E2_Teensy.ino`. A 35 kg servo can draw more than the Teensy 5 V pin supplies; use a separate supply with a shared ground if the board resets. The Bray valve / PWM-to-analog driver (`ACT_PWM_ANALOG`) is kept in the firmware but unused. In `Elysium.red` both servos are placed unconnected at the right edge of the canvas and need to be dragged into position and piped.
 - `GUIController.toggle_abort_mode` was removed as dead code during the last cleanup
   pass; abort behavior is entirely driven by `project.rules` / per-sensor
   `thresholds` now, not by any in-memory "mode" toggle.

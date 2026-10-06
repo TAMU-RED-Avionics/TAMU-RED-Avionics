@@ -253,6 +253,19 @@ class Renderer:
             Renderer._panel(p, pos, zoom, scale_x, scale_y)
 
         p.restore()
+
+        # Live position readout for proportional actuators. Globe / E-P throttle
+        # symbols already print their own value; every other type gets this badge.
+        actuator_pct = kwargs.get("actuator_pct")
+        if actuator_pct is not None and t not in (COMP_GLOBE_VALVE, COMP_EP_THROTTLE_VALVE):
+            txt = f"{actuator_pct:.0f}%"
+            f = QFont("Courier New", max(int(6 / zoom), 4))
+            p.setFont(f)
+            p.setPen(QPen(C_LABEL))
+            r = world_rect(pos, t, comp)
+            tw = QFontMetrics(f).horizontalAdvance(txt)
+            p.drawText(QPointF(pos.x - tw / 2, r.bottom() + 9), txt)
+
         if show_label and t == COMP_PANEL:
             # RED-001 3.3: Panel — bold "Description" label sits inside the
             # panel at the top-left, not centered below like other parts.

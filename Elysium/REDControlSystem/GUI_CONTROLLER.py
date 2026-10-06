@@ -50,6 +50,7 @@ class Signals(QObject):
     warnings_changed = pyqtSignal(list)
     
     valve_updated = pyqtSignal(str, str)     # can be open, closed, or pending a response from the MCU
+    actuator_updated = pyqtSignal(str, float)  # proportional actuator hw_id, confirmed position (%)
     sensor_updated = pyqtSignal(str, float, float)      # sensor_name, val, timestamp
     system_status = pyqtSignal(str)
 
@@ -176,6 +177,14 @@ class GUIController:
             "GV-2": False
         }
 
+        # Proportional actuators (modulating valves, RC servos, ...): hw_id ->
+        # ActuatorSpec, rebuilt from the project's component extras["actuator"]
+        # on every load_project. actuator_positions holds the last position the
+        # MCU confirmed (%). Actuators also live in valve_states (True = off its
+        # safe position) so abort / sequences / lockout treat them like valves.
+        self.actuator_specs: dict = {}
+        self.actuator_positions: dict[str, float] = {}
+
         # hw_ids that are igniters, not valves - kept out of any automated
         # cycling (health-check valve checkout). They still live in
         # valve_states (so "Fully Closed" can safe one left firing).
@@ -252,6 +261,7 @@ class GUIController:
             self.project_path = path
         self._rebuild_sensor_keys(project)
         self._rebuild_valve_states(project)
+        self._rebuild_actuators(project)
         self.load_calibrations_from_project(project)
         self.reload_abort_rules(project)
         self.ethernet_client.load_project_maps(project)
@@ -263,7 +273,7 @@ class GUIController:
         Existing states are preserved for valves that carry over; new valves start closed."""
         from PID_SCHEMA import (
             COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE, COMP_GLOBE_VALVE,
-            COMP_SOLENOID, COMP_IGNITER,
+            COMP_SOLENOID, COMP_IGNITER, get_actuator_spec,
         )
         VALVE_TYPES = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
                        COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER)
@@ -274,7 +284,9 @@ class GUIController:
         new_states: dict[str, bool] = {}
         new_igniters: set = set()
         for comp in project.components.values():
-            if comp.type not in VALVE_TYPES:
+            # Anything carrying an actuator spec (e.g. an ep_throttle_valve or a
+            # servo-driven ball valve) is commandable even if its type isn't listed.
+            if comp.type not in VALVE_TYPES and get_actuator_spec(comp) is None:
                 continue
             hw_id = comp.extras.get("hw_id") or comp.label
             if not hw_id:
@@ -286,6 +298,24 @@ class GUIController:
 
         self.valve_states = new_states
         self.igniter_hw_ids = new_igniters
+
+    def _rebuild_actuators(self, project):
+        """Rebuild actuator_specs from the project (see PID_SCHEMA.get_actuator_spec).
+        Positions carry over for actuators that survive a reload; new ones
+        start at their safe position."""
+        from PID_SCHEMA import get_actuator_spec
+
+        specs: dict = {}
+        if project:
+            for comp in project.components.values():
+                spec = get_actuator_spec(comp)
+                hw_id = comp.extras.get("hw_id") or comp.label
+                if spec is not None and hw_id and hw_id in self.valve_states:
+                    specs[hw_id] = spec
+
+        self.actuator_specs = specs
+        self.actuator_positions = {
+            hw: self.actuator_positions.get(hw, spec.safe_pct) for hw, spec in specs.items()}
 
     def _rebuild_sensor_keys(self, project):
         from PID_SCHEMA import COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL
@@ -916,7 +946,11 @@ class GUIController:
                     reason = reading.split("ABORTED:COMMS:", 1)[1] or "Unknown reason"
                     if reason.startswith("countdown_expired:"):
                         reason = reason[len("countdown_expired:"):]
-                    if "OPEN_" in reason or "CLOSE_" in reason:
+                    if reason.startswith("SET_") and "_timeout" in reason:
+                        # e.g. "SET_MV-1_timeout:packet_id=5"
+                        actuator = reason[len("SET_"):reason.index("_timeout")]
+                        reason = f"Actuator {actuator} position command failed (timeout)"
+                    elif "OPEN_" in reason or "CLOSE_" in reason:
                         # e.g. "OPEN_NCS1_timeout:packet_id=5"
                         cmd, _, rest = reason.partition("_")
                         valve = rest.split("_")[0].split(":")[0]
@@ -929,6 +963,30 @@ class GUIController:
                 else:
                     # Engine MCU triggered abort
                     self.signals.abort_triggered.emit("engine_abort", "The engine MCU triggered a local abort")
+
+            # Proportional actuator responses
+            elif "ACTUATOR_SUCCESS" in reading or "ACTUATOR_POS" in reading:
+                parts = reading.split(':')
+                if len(parts) >= 3:
+                    name = parts[1]
+                    try:
+                        pct = float(parts[2])
+                    except ValueError:
+                        continue
+                    if "ACTUATOR_SUCCESS" in reading:
+                        self.pending_valve_commands.pop(name, None)
+                    elif name in self.pending_valve_commands:
+                        continue    # MCU position report racing our own command; its ACK will follow
+                    self._apply_actuator_position(name, pct)
+
+            elif "ACTUATOR_FAIL" in reading:
+                parts = reading.split(':')
+                if len(parts) >= 2:
+                    name = parts[1]
+                    self.pending_valve_commands.pop(name, None)
+                    # Revert the PENDING display to the last confirmed position
+                    self._apply_actuator_position(
+                        name, self.actuator_positions.get(name, 0.0))
 
             # Valve command responses
             elif "VALVE_SUCCESS" in reading:
@@ -1345,8 +1403,62 @@ class GUIController:
             
         dialog.show()
 
+    def _apply_actuator_position(self, name: str, pct: float):
+        """Record an MCU-confirmed position and fan it out to the UI. 'Open' for
+        the rest of the app (valve_states, lockout, abort) means 'off its safe
+        position'."""
+        spec = self.actuator_specs.get(name)
+        if spec is None:
+            return
+        self.actuator_positions[name] = pct
+        self.signals.actuator_updated.emit(name, pct)
+        self.signals.valve_updated.emit(name, "OPEN" if spec.is_off_safe(pct) else "CLOSED")
+
+    def set_actuator_position(self, name: str, pct: float):
+        """Command a proportional actuator to a position (%), clamped to its range."""
+        if self.lockout:
+            return
+        spec = self.actuator_specs.get(name)
+        if spec is None:
+            return
+
+        target = spec.clamp(pct)
+        pending = self.pending_valve_commands.get(name)
+        current = pending["pct"] if pending and "pct" in pending else self.actuator_positions.get(name)
+        if current is not None and abs(current - target) < 0.005:
+            return      # already there (or already on its way); sequences re-issue every step
+
+        self.signals.valve_updated.emit(name, "PENDING")
+        try:
+            self.ethernet_client.send_actuator_command(name, target)
+        except Exception:
+            pass
+
+        self.log_event("ACTUATOR_SET", f"{name}:{target:.2f}")
+        self.pending_valve_commands[name] = {
+            "state": spec.is_off_safe(target),
+            "pct": target,
+            "last_sent": QDateTime.currentMSecsSinceEpoch(),
+            "retries": 0,
+        }
+
+    def set_throttle(self, name: str, fraction: float):
+        """0.0-1.0 of the actuator's travel (min..max), for callers that think in fractions."""
+        spec = self.actuator_specs.get(name)
+        if spec is not None:
+            self.set_actuator_position(
+                name, spec.min_pct + (spec.max_pct - spec.min_pct) * float(fraction))
+
     def toggle_valve(self, valve_name: str, state: bool=None):
         if self.lockout:
+            return
+
+        # Proportional actuators: open/close map onto the spec's open/safe positions
+        spec = self.actuator_specs.get(valve_name)
+        if spec is not None:
+            if state is None:
+                state = not self.valve_states.get(valve_name, False)
+            self.set_actuator_position(valve_name, spec.open_pct if state else spec.safe_pct)
             return
 
         new_state = (not self.valve_states[valve_name]) if state is None else state
@@ -1382,7 +1494,10 @@ class GUIController:
                     info["retries"] += 1
                     info["last_sent"] = current_time
                     try:
-                        self.ethernet_client.send_valve_command(valve_name, info["state"])
+                        if "pct" in info:
+                            self.ethernet_client.send_actuator_command(valve_name, info["pct"])
+                        else:
+                            self.ethernet_client.send_valve_command(valve_name, info["state"])
                         self.log_event("VALVE_RETRY", f"{valve_name}:{info['state']} (Attempt {info['retries']})")
                     except Exception:
                         pass

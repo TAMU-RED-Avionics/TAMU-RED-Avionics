@@ -9,11 +9,18 @@ from PID_CANVAS import PIDCanvas
 from PID_SCHEMA import (
     SequenceStep, NamedSequence,
     COMP_VALVE, COMP_BALL_VALVE, COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_IGNITER,
+    get_actuator_spec,
 )
 
 # Component types that a sequence step can command open/closed (or, for the
 # igniter, fire/safe).
+# Proportional actuators (any component with an ActuatorSpec) are also commandable:
+# "open" in a step means the actuator's open_pct, "closed" its safe_pct.
 _STEP_ACTUATOR_TYPES = [COMP_VALVE, COMP_BALL_VALVE, COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_IGNITER]
+
+
+def _is_step_actuator(comp) -> bool:
+    return comp.type in _STEP_ACTUATOR_TYPES or get_actuator_spec(comp) is not None
 
 class SequenceEditorWindow(QWidget):
     def __init__(self, controller, project, canvas_save_callback=None):
@@ -231,7 +238,7 @@ class SequenceEditorWindow(QWidget):
         mock_valve_states = {}
         for cid in self._project.components.keys():
             comp = self._project.components[cid]
-            if comp.type in _STEP_ACTUATOR_TYPES:
+            if _is_step_actuator(comp):
                 mock_valve_states[cid] = "OPEN" if cid in step.open_valves else "CLOSED"
         
         self.canvas.live_valve_states = mock_valve_states
@@ -242,7 +249,7 @@ class SequenceEditorWindow(QWidget):
         if self.current_step_idx == -1:
             return
         comp = self._project.components.get(cid)
-        if not comp or comp.type not in _STEP_ACTUATOR_TYPES:
+        if not comp or not _is_step_actuator(comp):
             return
 
         step = self.steps[self.current_step_idx]

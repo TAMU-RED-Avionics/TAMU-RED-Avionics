@@ -11,6 +11,7 @@ from PID_SCHEMA import (
     AbortRule,
     COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL,
     COMP_VALVE, COMP_BALL_VALVE, COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_THROTTLE_VALVE,
+    get_actuator_spec,
 )
 
 
@@ -365,7 +366,7 @@ class _SensorThresholdsSection(QWidget):
         valve_options = [
             (cid, comp.label or cid)
             for cid, comp in project.components.items()
-            if comp.type in _VALVE_TYPES
+            if comp.type in _VALVE_TYPES or get_actuator_spec(comp) is not None
         ]
 
         sensor_comps = [

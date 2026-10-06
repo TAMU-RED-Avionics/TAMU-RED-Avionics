@@ -570,7 +570,7 @@
       "type": "load_cell",
       "label": "LC1",
       "hardware": {
-        "adc": 12
+        "adc": 25
       },
       "extras": {
         "thresholds": {
@@ -600,7 +600,7 @@
       "type": "load_cell",
       "label": "LC2",
       "hardware": {
-        "adc": 13
+        "adc": 26
       },
       "extras": {
         "thresholds": {
@@ -630,7 +630,7 @@
       "type": "load_cell",
       "label": "LC3",
       "hardware": {
-        "adc": 14
+        "adc": 27
       },
       "extras": {
         "thresholds": {
@@ -660,7 +660,67 @@
       "type": "temperature",
       "label": "TC1",
       "hardware": {
-        "adc": 9
+        "adc": 111
+      },
+      "extras": {
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "soak_ms": 0
+        }
+      },
+      "rotation": 0,
+      "hide_lbl": false
+    },
+    {
+      "id": "TC_2",
+      "type": "temperature",
+      "label": "TC2",
+      "hardware": {
+        "adc": 110
+      },
+      "extras": {
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "soak_ms": 0
+        }
+      },
+      "rotation": 0,
+      "hide_lbl": false
+    },
+    {
+      "id": "TC_3",
+      "type": "temperature",
+      "label": "TC3",
+      "hardware": {
+        "adc": 109
       },
       "extras": {
         "thresholds": {
@@ -730,9 +790,28 @@
       "type": "load_cell",
       "label": "LC4",
       "hardware": {
-        "adc": 15
+        "adc": 28
       },
-      "extras": {},
+      "extras": {
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "soak_ms": 0
+        }
+      },
       "rotation": 0,
       "hide_lbl": false
     },
@@ -741,9 +820,28 @@
       "type": "load_cell",
       "label": "LC5",
       "hardware": {
-        "adc": 16
+        "adc": 29
       },
-      "extras": {},
+      "extras": {
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "soak_ms": 0
+        }
+      },
       "rotation": 0,
       "hide_lbl": false
     },
@@ -751,9 +849,84 @@
       "id": "LOA_6",
       "type": "load_cell",
       "label": "LC6",
-      "hardware": {},
-      "extras": {},
+      "hardware": {
+        "adc": 30
+      },
+      "extras": {
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "soak_ms": 0
+        }
+      },
       "rotation": 0,
+      "hide_lbl": false
+    },
+    {
+      "id": "SV_1",
+      "type": "ball_valve",
+      "label": "SV-1",
+      "hardware": {
+        "relay": 81
+      },
+      "extras": {
+        "actuator": {
+          "min_pct": 0,
+          "max_pct": 100,
+          "safe_pct": 0,
+          "open_pct": 100,
+          "unit": "%",
+          "presets": [
+            0,
+            25,
+            50,
+            75,
+            100
+          ],
+          "step": 1
+        }
+      },
+      "rotation": 90,
+      "hide_lbl": false
+    },
+    {
+      "id": "SV_2",
+      "type": "ball_valve",
+      "label": "SV-2",
+      "hardware": {
+        "relay": 82
+      },
+      "extras": {
+        "actuator": {
+          "min_pct": 0,
+          "max_pct": 100,
+          "safe_pct": 0,
+          "open_pct": 100,
+          "unit": "%",
+          "presets": [
+            0,
+            25,
+            50,
+            75,
+            100
+          ],
+          "step": 1
+        }
+      },
+      "rotation": 90,
       "hide_lbl": false
     }
   ],
@@ -939,6 +1112,14 @@
       "x": 220.0,
       "y": 620.0
     },
+    "TC_2": {
+      "x": 290.0,
+      "y": 620.0
+    },
+    "TC_3": {
+      "x": 360.0,
+      "y": 620.0
+    },
     "IGN_1": {
       "x": 220.0,
       "y": 700.0
@@ -966,6 +1147,14 @@
     "LOA_6": {
       "x": 150.0,
       "y": 780.0
+    },
+    "SV_1": {
+      "x": 1200.0,
+      "y": 460.0
+    },
+    "SV_2": {
+      "x": 1200.0,
+      "y": 300.0
     }
   },
   "lines": [
@@ -1428,7 +1617,7 @@
       "id": "logic_rule_1",
       "condition_type": "expression",
       "action": "abort",
-      "enabled": true,
+      "enabled": false,
       "sensor_id": "",
       "expression": "P8 > 700",
       "description": "high chamber pressure",
@@ -1441,7 +1630,7 @@
       "id": "logic_rule_2",
       "condition_type": "expression",
       "action": "abort",
-      "enabled": true,
+      "enabled": false,
       "sensor_id": "",
       "expression": "P8 > P7",
       "description": "reverse flow",
@@ -1454,7 +1643,7 @@
       "id": "logic_rule_3",
       "condition_type": "expression",
       "action": "abort",
-      "enabled": true,
+      "enabled": false,
       "sensor_id": "",
       "expression": "P5 - P3 >= 5",
       "description": "high upstream pressure",
@@ -1467,7 +1656,7 @@
       "id": "logic_rule_4",
       "condition_type": "expression",
       "action": "abort",
-      "enabled": true,
+      "enabled": false,
       "sensor_id": "",
       "expression": "P6 - P4 >= 5",
       "description": "high upstream pressure",
@@ -1480,7 +1669,7 @@
       "id": "logic_rule_5",
       "condition_type": "expression",
       "action": "open_valve",
-      "enabled": true,
+      "enabled": false,
       "sensor_id": "",
       "expression": "P2 > 1375",
       "description": "high p2",
@@ -1493,7 +1682,7 @@
       "id": "logic_rule_6",
       "condition_type": "expression",
       "action": "warn",
-      "enabled": true,
+      "enabled": false,
       "sensor_id": "",
       "expression": "P2 > 1375",
       "description": "Warning: P2 > 1375. Opening NCS3...",

@@ -20,6 +20,7 @@ class EGCPPacket:
     PKT_SFE = 0x8   # Enter Safe Mode
     PKT_ADC = 0x9   # ADC Reading
     PKT_STA = 0xA   # Connection Start/Handshake
+    PKT_POS = 0xB   # Actuator Position: body = [actuator id:1][position:2, big-endian, 0.01 % units]
     
     def __init__(self, packet_id: int, packet_type: int, body: bytes = b''):
         self.packet_id = packet_id & 0xFFFFFF  # 24-bit packet ID
@@ -56,7 +57,7 @@ class EGCPPacket:
     
     def __repr__(self):
         type_names = {0: 'ACK', 1: 'NCK', 2: 'HRT', 3: 'VSO', 4: 'VSC', 
-                      5: 'GVS', 6: 'BGP', 7: 'HGP', 8: 'SFE', 9: 'ADC', 10: 'START'}
+                      5: 'GVS', 6: 'BGP', 7: 'HGP', 8: 'SFE', 9: 'ADC', 10: 'START', 11: 'POS'}
         type_name = type_names.get(self.packet_type, f'UNK({self.packet_type})')
         return f"EGCPPacket(id={self.packet_id}, type={type_name}, len={self.packet_length})"
 
@@ -94,7 +95,7 @@ class EthernetClient:
 
         self.timeout: float = 3                             # seconds
         self.heartbeat_tx_cadence: int = 10                 # ms
-        self.heartbeat_rx_miss_interval: int = 100          # ms (11x missed heartbeats at 10ms cadence; occasionally missing at 101ms)
+        self.heartbeat_rx_miss_interval: int = 150           # ms (15x missed heartbeats at 10ms cadence; occasionally missing at 151ms)
 
         self.heartbeat_last_tx: int = 0                     # ms since Jan 1 1970
         self.heartbeat_last_rx: int = 0                     # ms since Jan 1 1970
@@ -262,7 +263,7 @@ class EthernetClient:
             if track_ack:
                 timestamp = QDateTime.currentMSecsSinceEpoch()
                 self.pending_acks[packet.packet_id] = (timestamp, packet, 0)
-    
+
     def _send_ack(self, packet_id_to_ack: int):
         """Send an ACK packet for the given packet ID"""
         # ACK body is 3 bytes: the ID of the packet being acknowledged
@@ -311,12 +312,13 @@ class EthernetClient:
 
     def _handle_command_failure(self, packet: EGCPPacket, pkt_id: int):
         """Handle repeated failure for command packets."""
-        # Only handle valve commands (open or close)
-        if packet.packet_type not in [EGCPPacket.PKT_VSO, EGCPPacket.PKT_VSC]:
+        # Only handle valve/actuator commands (open, close or set-position)
+        if packet.packet_type not in [EGCPPacket.PKT_VSO, EGCPPacket.PKT_VSC, EGCPPacket.PKT_POS]:
             return
 
         valve_name = self._valve_name_for_id(packet.body[0]) if packet.body else "UNKNOWN"
-        cmd_type = "OPEN" if packet.packet_type == EGCPPacket.PKT_VSO else "CLOSE"
+        cmd_type = {EGCPPacket.PKT_VSO: "OPEN", EGCPPacket.PKT_VSC: "CLOSE"}.get(
+            packet.packet_type, "SET")
         reason = f"{cmd_type}_{valve_name}_timeout:packet_id={pkt_id}"
 
         if self._is_fire_state():
@@ -627,6 +629,10 @@ class EthernetClient:
                                         valve_name = self._valve_name_for_id(orig_pkt.body[0])
                                         state_str = "1" if orig_pkt.packet_type == EGCPPacket.PKT_VSO else "0"
                                         self.receive_callback(f"0,VALVE_SUCCESS:{valve_name}:{state_str}")
+                                    elif orig_pkt.packet_type == EGCPPacket.PKT_POS and len(orig_pkt.body) >= 3:
+                                        name = self._valve_name_for_id(orig_pkt.body[0])
+                                        pct = struct.unpack('>H', orig_pkt.body[1:3])[0] / 100.0
+                                        self.receive_callback(f"0,ACTUATOR_SUCCESS:{name}:{pct:.2f}")
                             
                             elif packet.packet_type == EGCPPacket.PKT_NCK:
                                 # NCK received - log error
@@ -644,6 +650,9 @@ class EthernetClient:
                                     if orig_pkt.packet_type in (EGCPPacket.PKT_VSO, EGCPPacket.PKT_VSC) and orig_pkt.body:
                                         valve_name = self._valve_name_for_id(orig_pkt.body[0])
                                         self.receive_callback(f"0,VALVE_FAIL:{valve_name}")
+                                    elif orig_pkt.packet_type == EGCPPacket.PKT_POS and orig_pkt.body:
+                                        self.receive_callback(
+                                            f"0,ACTUATOR_FAIL:{self._valve_name_for_id(orig_pkt.body[0])}")
                             
                             elif packet.packet_type == EGCPPacket.PKT_ADC:
                                 # ADC reading: 1 byte sensor ID + 4 bytes IEEE 754 float (calibrated value)
@@ -661,6 +670,16 @@ class EthernetClient:
                                         data_str = f"0,{sensor_name}:{raw_value:.2f}"
                                         self.receive_callback(data_str)
                             
+                            elif packet.packet_type == EGCPPacket.PKT_POS:
+                                # Unsolicited position report from the MCU (e.g. an actuator
+                                # driven to its safe position by the firmware itself).
+                                if len(packet.body) >= 3:
+                                    self._send_ack(packet.packet_id)
+                                    name = self._valve_name_for_id(packet.body[0])
+                                    pct = struct.unpack('>H', packet.body[1:3])[0] / 100.0
+                                    if self.receive_callback:
+                                        self.receive_callback(f"0,ACTUATOR_POS:{name}:{pct:.2f}")
+
                             elif packet.packet_type == EGCPPacket.PKT_SFE:
                                 # Safe mode entered - ACK and notify
                                 self._send_ack(packet.packet_id)
@@ -689,28 +708,62 @@ class EthernetClient:
         self.listening_active = False
 
     def send_valve_command(self, valve_name, state):
-        if self.connected:
-            try:
-                # Get valve ID from mapping
-                valve_id = self.VALVE_MAP.get(valve_name)
-                if valve_id is None:
-                    if self.log_event_callback:
-                        self.log_event_callback(f"VALVE_ERROR:Unknown valve {valve_name}")
-                    return
-                
-                # Create VSO (open) or VSC (close) packet with 1-byte valve ID body
-                packet_type = EGCPPacket.PKT_VSO if state else EGCPPacket.PKT_VSC
-                body = struct.pack('B', valve_id)  # 1-byte valve ID
-                packet = EGCPPacket(self._get_next_tx_id(), packet_type, body)
-                
-                # Send with ACK tracking for reliability
-                self._send_packet(packet, track_ack=True)
-                
+        if not self.connected:
+            print(f"[EthernetClient] send_valve_command({valve_name}, {state}) SKIPPED: not connected")
+            return
+        try:
+            # Get valve ID from mapping
+            valve_id = self.VALVE_MAP.get(valve_name)
+            if valve_id is None:
+                print(f"[EthernetClient] send_valve_command({valve_name}) FAILED: not in VALVE_MAP "
+                      f"(known valves: {list(self.VALVE_MAP.keys())})")
                 if self.log_event_callback:
-                    state_str = "OPEN" if state else "CLOSE"
-                    self.log_event_callback(f"VALVE_CMD:{valve_name}:{state_str}")
-            except Exception as e:
-                print(f"Valve command error: {e}")
+                    self.log_event_callback(f"VALVE_ERROR:Unknown valve {valve_name}")
+                return
+
+            # Create VSO (open) or VSC (close) packet with 1-byte valve ID body
+            packet_type = EGCPPacket.PKT_VSO if state else EGCPPacket.PKT_VSC
+            body = struct.pack('B', valve_id)  # 1-byte valve ID
+            packet = EGCPPacket(self._get_next_tx_id(), packet_type, body)
+
+            # Send with ACK tracking for reliability
+            self._send_packet(packet, track_ack=True)
+            print(f"[EthernetClient] send_valve_command({valve_name}, relay=0x{valve_id:02X}) SENT "
+                  f"to {self.remote_ip}:{self.remote_port}")
+
+            if self.log_event_callback:
+                state_str = "OPEN" if state else "CLOSE"
+                self.log_event_callback(f"VALVE_CMD:{valve_name}:{state_str}")
+        except Exception as e:
+            print(f"[EthernetClient] send_valve_command({valve_name}) EXCEPTION: {e}")
+
+    def send_actuator_command(self, name, pct):
+        """Command a proportional actuator to ``pct`` (already clamped by the
+        caller to the component's ActuatorSpec range). The actuator is addressed
+        by the same hardware.relay ID as any other valve; the firmware decides
+        how to turn the position into a servo pulse / 4-20 mA / etc."""
+        if not self.connected:
+            print(f"[EthernetClient] send_actuator_command({name}, {pct}) SKIPPED: not connected")
+            return
+        try:
+            actuator_id = self.VALVE_MAP.get(name)
+            if actuator_id is None:
+                print(f"[EthernetClient] send_actuator_command({name}) FAILED: not in VALVE_MAP "
+                      f"(known: {list(self.VALVE_MAP.keys())})")
+                if self.log_event_callback:
+                    self.log_event_callback(f"VALVE_ERROR:Unknown actuator {name}")
+                return
+
+            raw = max(0, min(10000, int(round(float(pct) * 100))))   # 0.01 % units
+            body = struct.pack('>BH', actuator_id, raw)
+            packet = EGCPPacket(self._get_next_tx_id(), EGCPPacket.PKT_POS, body)
+            self._send_packet(packet, track_ack=True)
+            print(f"[EthernetClient] send_actuator_command({name}, id=0x{actuator_id:02X}, {raw / 100:.2f}%) SENT")
+
+            if self.log_event_callback:
+                self.log_event_callback(f"ACTUATOR_CMD:{name}:{raw / 100:.2f}")
+        except Exception as e:
+            print(f"[EthernetClient] send_actuator_command({name}) EXCEPTION: {e}")
 
     def graceful_disconnect(self):
         """Operator-requested disconnect: tell the MCU we are leaving on

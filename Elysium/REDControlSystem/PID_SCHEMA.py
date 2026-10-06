@@ -130,6 +130,85 @@ class Component:
         )
 
 
+# ---------------------------------------------------------------------------
+# Proportional actuator spec - stored in Component.extras["actuator"]
+# ---------------------------------------------------------------------------
+# Any valve-type component can carry this to become a *positioned* actuator
+# (modulating valve, RC servo, ...) instead of a plain open/close relay. It
+# describes only what the GUI needs: the commandable range, which position is
+# "safe", and what "open" means for sequences/rules that only know open/closed.
+# HOW the position is physically produced (4-20mA via a PWM->analog card, RC
+# servo pulse, stepper...) is the firmware's business - the GUI just sends a
+# position (PKT_POS) to the component's hardware.relay ID.
+#
+#   "actuator": {
+#       "min_pct": 0, "max_pct": 100,     commandable range, % of stroke
+#       "safe_pct": 0,                    position used by abort / "close"
+#       "open_pct": 100,                  position used by "open" (sequences, rules)
+#       "unit": "%",                      display suffix
+#       "presets": [0, 25, 50, 75, 100],  quick-set buttons in the popup
+#       "step": 1                         slider / spinbox increment
+#   }
+@dataclass
+class ActuatorSpec:
+    min_pct:  float = 0.0
+    max_pct:  float = 100.0
+    safe_pct: float = 0.0
+    open_pct: float = 100.0
+    unit:     str   = "%"
+    presets:  list  = field(default_factory=lambda: [0, 25, 50, 75, 100])
+    step:     float = 1.0
+
+    def clamp(self, pct: float) -> float:
+        return max(self.min_pct, min(self.max_pct, float(pct)))
+
+    def is_off_safe(self, pct: float) -> bool:
+        """True when the actuator is meaningfully away from its safe position
+        (what the rest of the app treats as 'open')."""
+        return abs(pct - self.safe_pct) > 0.5
+
+    def to_dict(self) -> dict:
+        return asdict(self)
+
+    @staticmethod
+    def from_dict(d: dict) -> "ActuatorSpec":
+        def _f(key, default):
+            try:
+                return float(d.get(key, default))
+            except (TypeError, ValueError):
+                return default
+        lo, hi = _f("min_pct", 0.0), _f("max_pct", 100.0)
+        if hi < lo:
+            lo, hi = hi, lo
+        spec = ActuatorSpec(
+            min_pct  = lo,
+            max_pct  = hi,
+            safe_pct = _f("safe_pct", 0.0),
+            open_pct = _f("open_pct", hi),
+            unit     = str(d.get("unit", "%")),
+            presets  = [float(x) for x in d.get("presets", [0, 25, 50, 75, 100])
+                        if isinstance(x, (int, float))],
+            step     = max(0.01, _f("step", 1.0)),
+        )
+        spec.safe_pct = spec.clamp(spec.safe_pct)
+        spec.open_pct = spec.clamp(spec.open_pct)
+        return spec
+
+
+def get_actuator_spec(comp: "Component") -> Optional[ActuatorSpec]:
+    """Return the component's ActuatorSpec, or None for plain on/off valves.
+
+    An explicit extras["actuator"] dict wins (set "enabled": false to opt out);
+    the throttle-valve types are proportional by definition, so they get the
+    default 0-100% spec when none is given."""
+    raw = comp.extras.get("actuator")
+    if isinstance(raw, dict):
+        return ActuatorSpec.from_dict(raw) if raw.get("enabled", True) else None
+    if comp.type in (COMP_THROTTLE_VALVE, COMP_EP_THROTTLE_VALVE):
+        return ActuatorSpec()
+    return None
+
+
 @dataclass
 class Connection:
     from_id: str

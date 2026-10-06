@@ -25,6 +25,11 @@ public:
     static constexpr uint8_t PKT_SFE = 0x8;   // Enter Safe Mode (Emergency Abort)
     static constexpr uint8_t PKT_ADC = 0x9;   // ADC Reading (sensor data)
     static constexpr uint8_t PKT_STA = 0xA;   // Connection Start/Handshake
+    static constexpr uint8_t PKT_POS = 0xB;   // Actuator Position (either direction)
+                                              //   body = [actuator id:1][position:2]
+                                              //   position is big-endian uint16 in 0.01 % units (0..10000)
+                                              //   GUI -> Teensy: set position (ACK'd like VSO/VSC)
+                                              //   Teensy -> GUI: position report (GUI ACKs it)
 
     // Valve ID mapping (1-byte IDs)
     static constexpr uint8_t VALVE_NCS1 = 0x01;
@@ -43,21 +48,52 @@ public:
     static constexpr uint8_t VALVE_IG2 = 0x31;
     static constexpr uint8_t VALVE_GIMBAL = 0x40;
 
-    // Sensor ID mapping (1-byte IDs)
-    static constexpr uint8_t SENSOR_P1 = 0x01;
-    static constexpr uint8_t SENSOR_P2 = 0x02;
-    static constexpr uint8_t SENSOR_P3 = 0x03;
-    static constexpr uint8_t SENSOR_P4 = 0x04;
-    static constexpr uint8_t SENSOR_P5 = 0x05;
-    static constexpr uint8_t SENSOR_P6 = 0x06;
-    static constexpr uint8_t SENSOR_P7 = 0x07;
-    static constexpr uint8_t SENSOR_P8 = 0x08;
-    static constexpr uint8_t SENSOR_TC1 = 0x09;
-    static constexpr uint8_t SENSOR_TC2 = 0x0A;
-    static constexpr uint8_t SENSOR_TC3 = 0x0B;
-    static constexpr uint8_t SENSOR_L1 = 0x0C;
-    static constexpr uint8_t SENSOR_L2 = 0x0D;
-    static constexpr uint8_t SENSOR_L3 = 0x0E;
+    // Proportional actuator IDs (PKT_POS). These are the same 1-byte IDs the
+    // P&ID stores in a component's hardware.relay, so they share the VSO/VSC
+    // ID space - keep them disjoint from the valve IDs above.
+    // *** TEST SETUP: two 35 kg RC servos driven straight from Teensy GPIO. ***
+    // (Servos are externally powered and always on; the Teensy only sends the PWM signal.)
+    // (The Bray modulating valve / PWM-to-analog slave card is NOT used right now.)
+    static constexpr uint8_t ACTUATOR_SV1 = 0x51;   // 35 kg RC servo #1 (Teensy pin 23)
+    static constexpr uint8_t ACTUATOR_SV2 = 0x52;   // 35 kg RC servo #2 (Teensy pin 22)
+
+    // Sensor ID mapping (1-byte IDs) - E2: 12 pressure transducers (PT0-PT11),
+    // 12 thermocouples (TCADC1-12), 6 load cells (LC1-6). Ranges are kept
+    // disjoint since PKT_ADC packets carry only a single 1-byte sensor id.
+    // NOTE: these MUST match the sensor_id bytes actually written by
+    // send_adc_packet() in E2_Teensy.ino's loop() - TC1-12 are sent on
+    // 0x64-0x6F, not the old contiguous 0x0D-0x18 range, so PID files bind
+    // their "adc" field to these values, not the old ones.
+    static constexpr uint8_t SENSOR_P1  = 0x01;
+    static constexpr uint8_t SENSOR_P2  = 0x02;
+    static constexpr uint8_t SENSOR_P3  = 0x03;
+    static constexpr uint8_t SENSOR_P4  = 0x04;
+    static constexpr uint8_t SENSOR_P5  = 0x05;
+    static constexpr uint8_t SENSOR_P6  = 0x06;
+    static constexpr uint8_t SENSOR_P7  = 0x07;
+    static constexpr uint8_t SENSOR_P8  = 0x08;
+    static constexpr uint8_t SENSOR_P9  = 0x09;
+    static constexpr uint8_t SENSOR_P10 = 0x0A;
+    static constexpr uint8_t SENSOR_P11 = 0x0B;
+    static constexpr uint8_t SENSOR_P12 = 0x0C;
+    static constexpr uint8_t SENSOR_L1 = 0x19;
+    static constexpr uint8_t SENSOR_L2 = 0x1A;
+    static constexpr uint8_t SENSOR_L3 = 0x1B;
+    static constexpr uint8_t SENSOR_L4 = 0x1C;
+    static constexpr uint8_t SENSOR_L5 = 0x1D;
+    static constexpr uint8_t SENSOR_L6 = 0x1E;
+    static constexpr uint8_t SENSOR_TC1  = 0x64;
+    static constexpr uint8_t SENSOR_TC2  = 0x65;
+    static constexpr uint8_t SENSOR_TC3  = 0x66;
+    static constexpr uint8_t SENSOR_TC4  = 0x67;
+    static constexpr uint8_t SENSOR_TC5  = 0x68;
+    static constexpr uint8_t SENSOR_TC6  = 0x69;
+    static constexpr uint8_t SENSOR_TC7  = 0x6A;
+    static constexpr uint8_t SENSOR_TC8  = 0x6B;
+    static constexpr uint8_t SENSOR_TC9  = 0x6C;
+    static constexpr uint8_t SENSOR_TC10 = 0x6D;
+    static constexpr uint8_t SENSOR_TC11 = 0x6E;
+    static constexpr uint8_t SENSOR_TC12 = 0x6F;
     static constexpr uint8_t SENSOR_T1 = SENSOR_TC1; // Backward-compatible alias
 
     uint32_t packet_id;     // 24-bit packet ID (wraparound at 2^24)

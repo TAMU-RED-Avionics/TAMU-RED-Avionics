@@ -5,10 +5,10 @@ from PyQt5.QtWidgets import (
     QSplitter, QMessageBox, QFrame, QSizePolicy,
     QToolButton, QScrollArea,
 )
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 
 from PID_SCHEMA import (
-    PIDProject, Component, PipeLine,
+    PIDProject, Component, PipeLine, ActuatorSpec, get_actuator_spec,
     FLUID_COLORS, FLUID_GENERIC,
     COMP_VALVE, COMP_THROTTLE_VALVE, COMP_PRESSURE, COMP_TEMPERATURE,
     COMP_LOAD_CELL, COMP_TANK, COMP_INJECTOR,
@@ -284,6 +284,9 @@ class PropertyPanel(QWidget):
                       tooltip="ADC channel index this sensor is read on\n"
                               "(the channel sent in PKT_ADC packets).")
 
+        if comp.type in HW_BINDING_TYPES:
+            self._add_actuator_fields(comp)
+
         if comp.type in [COMP_BALL_VALVE, COMP_GLOBE_VALVE, COMP_SOLENOID]:
             self._add("Normally", comp.extras.get("normally", "closed"), key="extra_normally")
             self._add("Actuation", comp.extras.get("actuation", "manual"), key="extra_actuation")
@@ -298,7 +301,7 @@ class PropertyPanel(QWidget):
             self._add("Reduction Ratio", comp.extras.get("reduction_ratio", ""), key="extra_reduction_ratio")
 
         ignored_keys = {
-            "scale_x", "scale_y",
+            "scale_x", "scale_y", "actuator",
             "normally", "actuation", "set_pressure", "size",
             "inlet_size", "outlet_size", "reduction_ratio",
         }
@@ -310,6 +313,42 @@ class PropertyPanel(QWidget):
         self.hide_lbl_cb.setChecked(getattr(comp, "hide_lbl", False))
         self.hide_lbl_cb.toggled.connect(lambda checked: self.property_changed.emit("hide_lbl", checked))
         self.form.addRow(self.hide_lbl_cb)
+
+    def _add_actuator_fields(self, comp):
+        """Proportional-actuator section. Stored as extras["actuator"] (see
+        PID_SCHEMA.ActuatorSpec); how the position is physically produced lives
+        in the firmware, keyed by the same Binding ID."""
+        self._add_section_header("Proportional Actuator")
+        explicit = isinstance(comp.extras.get("actuator"), dict)
+        spec = get_actuator_spec(comp)
+
+        cb = QCheckBox("Positioned (modulating valve / servo)")
+        cb.setChecked(spec is not None)
+        cb.setToolTip("Control this component with a 0-100 position instead of open/close.\n"
+                      "Sends PKT_POS to the Binding ID; the firmware decides how\n"
+                      "(RC servo pulse, 4-20 mA card, ...).")
+        cb.toggled.connect(lambda checked: self.property_changed.emit("act_enabled", checked))
+        self.form.addRow(cb)
+
+        if spec is None:
+            return
+        hint = ("Range / safe / open positions are in the units below. 'Safe' is where abort\n"
+                "and CLOSE send it; 'Open' is what sequences and rules mean by open.")
+        lbl = QLabel(hint)
+        lbl.setStyleSheet("color: #777; font-size: 8pt;")
+        lbl.setWordWrap(True)
+        self.form.addRow(lbl)
+        for label, key, val in (
+            ("Min",    "act_min_pct",  spec.min_pct),
+            ("Max",    "act_max_pct",  spec.max_pct),
+            ("Safe",   "act_safe_pct", spec.safe_pct),
+            ("Open",   "act_open_pct", spec.open_pct),
+            ("Unit",   "act_unit",     spec.unit),
+            ("Step",   "act_step",     spec.step),
+            ("Presets", "act_presets", ", ".join(f"{v:g}" for v in spec.presets)),
+        ):
+            self._add(label, f"{val:g}" if isinstance(val, float) else val, key=key,
+                      tooltip="Comma-separated quick-set buttons" if key == "act_presets" else "")
 
     def _add_component_specific_fields(self, comp):
         if comp.type == COMP_BALL_VALVE:
@@ -699,6 +738,31 @@ class PIDEditorWindow(QWidget):
                 comp.extras[key[6:]] = max(0.2, float(value))
             except (ValueError, TypeError):
                 comp.extras[key[6:]] = 1.0
+        elif key == "act_enabled":
+            if value:
+                # Keep any explicit spec the user already had; otherwise start from defaults
+                spec = get_actuator_spec(comp)
+                comp.extras["actuator"] = (spec or ActuatorSpec()).to_dict()
+            else:
+                comp.extras["actuator"] = {"enabled": False}
+            # rebuild so the fields appear/disappear (deferred: this runs inside a
+            # signal from a widget the rebuild would delete)
+            QTimer.singleShot(0, lambda: self.prop_panel.show_component(cid, comp))
+        elif key.startswith("act_"):
+            act = comp.extras.get("actuator")
+            if not isinstance(act, dict):
+                return
+            field = key[4:]
+            try:
+                if field == "unit":
+                    act["unit"] = str(value).strip() or "%"
+                elif field == "presets":
+                    act["presets"] = [float(x) for x in str(value).split(",") if x.strip()]
+                else:
+                    act[field] = float(value)
+            except (ValueError, TypeError):
+                pass    # keep the previous value on unparseable input
+            QTimer.singleShot(0, lambda: self.prop_panel.show_component(cid, comp))
         elif key.startswith("extra_"):
             comp.extras[key[6:]] = value
         elif key == "hide_lbl":

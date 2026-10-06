@@ -8,8 +8,8 @@
 
 import math
 from PyQt5.QtWidgets import (
-    QWidget, QSizePolicy, QVBoxLayout, QPushButton, QLabel, QMessageBox,
-    QApplication,
+    QWidget, QSizePolicy, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QMessageBox,
+    QApplication, QSlider, QDoubleSpinBox,
 )
 from PyQt5.QtGui import (
     QPainter, QPen, QBrush, QColor, QFont, QFontMetrics,
@@ -18,7 +18,7 @@ from PyQt5.QtGui import (
 from PyQt5.QtCore import Qt, QPointF, QRectF, pyqtSignal, QTimer
 
 from PID_SCHEMA import (
-    PIDProject, PipeLine, LayoutPoint,
+    PIDProject, PipeLine, LayoutPoint, ActuatorSpec, get_actuator_spec,
     FLUID_GENERIC,
     COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL,
     COMP_CHECK_VALVE, COMP_RELIEF_VALVE,
@@ -208,6 +208,164 @@ class ValvePopup(QWidget):
             self.hide()
 
 
+class ActuatorPopup(QWidget):
+    """
+    Floating control for a proportional actuator (modulating valve, RC servo,
+    ...). Everything it shows - range, unit, safe position, presets - comes from
+    the component's ActuatorSpec in the P&ID, so one popup serves any hardware.
+    """
+    position_requested = pyqtSignal(str, float)   # comp_id, position
+
+    _W = 230
+    _SCALE = 100    # slider ticks per unit, so fractional steps still work
+
+    def __init__(self, parent: QWidget):
+        super().__init__(parent)
+        self.setFixedWidth(self._W)
+        self._cid: str = None
+        self._spec: ActuatorSpec = None
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(5)
+
+        self._title = QLabel("-")
+        self._title.setAlignment(Qt.AlignCenter)
+        self._title.setStyleSheet("font-weight:bold; font-size:9pt; color:#cccccc;")
+        layout.addWidget(self._title)
+
+        self._state_lbl = QLabel("-")
+        self._state_lbl.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self._state_lbl)
+
+        self._slider = QSlider(Qt.Horizontal)
+        self._slider.valueChanged.connect(self._on_slider)
+        layout.addWidget(self._slider)
+
+        row = QHBoxLayout()
+        self._spin = QDoubleSpinBox()
+        self._spin.setDecimals(1)
+        self._spin.valueChanged.connect(self._on_spin)
+        row.addWidget(self._spin, stretch=1)
+        self._set_btn = QPushButton("SET")
+        self._set_btn.setFixedHeight(26)
+        self._set_btn.setStyleSheet(
+            "background:#1a4a1a; color:#00dd55; border:1px solid #00aa44;"
+            "border-radius:4px; font-weight:bold;")
+        self._set_btn.clicked.connect(self._on_set)
+        row.addWidget(self._set_btn)
+        layout.addLayout(row)
+
+        self._preset_row = QHBoxLayout()
+        self._preset_row.setSpacing(3)
+        layout.addLayout(self._preset_row)
+
+        self._safe_btn = QPushButton("■  SAFE")
+        self._safe_btn.setFixedHeight(26)
+        self._safe_btn.setStyleSheet(
+            "background:#4a1a1a; color:#ff5544; border:1px solid #aa2222;"
+            "border-radius:4px; font-weight:bold;")
+        self._safe_btn.clicked.connect(self._on_safe)
+        layout.addWidget(self._safe_btn)
+
+        self.hide()
+        self.setStyleSheet(
+            "ActuatorPopup { background:#1e1e2a; border:1px solid #555566;"
+            "border-radius:8px; }")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+
+    def show_for(self, cid: str, title: str, spec: ActuatorSpec, state: str,
+                 position: float, screen_pos: QPointF):
+        self._cid, self._spec = cid, spec
+        self._title.setText(title)
+
+        self._slider.blockSignals(True)
+        self._spin.blockSignals(True)
+        self._slider.setRange(int(round(spec.min_pct * self._SCALE)),
+                              int(round(spec.max_pct * self._SCALE)))
+        self._slider.setSingleStep(max(1, int(round(spec.step * self._SCALE))))
+        self._slider.setPageStep(max(1, int(round(spec.step * self._SCALE * 5))))
+        self._spin.setRange(spec.min_pct, spec.max_pct)
+        self._spin.setSingleStep(spec.step)
+        self._spin.setSuffix(f" {spec.unit}")
+        self._slider.blockSignals(False)
+        self._spin.blockSignals(False)
+        self._set_inputs(position)
+
+        # Rebuild the preset buttons from the spec
+        while self._preset_row.count():
+            item = self._preset_row.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        for val in spec.presets:
+            if not spec.min_pct <= val <= spec.max_pct:
+                continue
+            b = QPushButton(f"{val:g}")
+            b.setFixedHeight(22)
+            b.setStyleSheet("background:#2a2a3a; color:#cccccc; border:1px solid #555566;"
+                            "border-radius:3px; font-size:8pt;")
+            b.clicked.connect(lambda _=False, v=val: self._request(v))
+            self._preset_row.addWidget(b)
+
+        self._update_state(state, position)
+
+        self.adjustSize()
+        h = self.sizeHint().height()
+        px = int(screen_pos.x()) + 14
+        py = int(screen_pos.y()) - h // 2
+        if px + self._W > self.parent().width():
+            px = int(screen_pos.x()) - self._W - 14
+        py = max(4, min(py, self.parent().height() - h - 4))
+        self.move(px, py)
+        self.raise_()
+        self.show()
+
+    def update_actuator(self, cid: str, state: str, position: float):
+        if cid == self._cid and self.isVisible():
+            self._update_state(state, position)
+
+    def _update_state(self, state: str, position: float):
+        if state == "PENDING" or self._spec is None:
+            colour = "#ff9900"
+        else:
+            colour = "#00dd55" if self._spec.is_off_safe(position) else "#ff5544"
+        unit = self._spec.unit if self._spec else ""
+        text = "PENDING..." if state == "PENDING" else f"{position:.1f} {unit}"
+        self._state_lbl.setText(text)
+        self._state_lbl.setStyleSheet(
+            f"font-weight:bold; font-size:11pt; color:{colour};")
+
+    def _set_inputs(self, value: float):
+        self._slider.blockSignals(True)
+        self._spin.blockSignals(True)
+        self._slider.setValue(int(round(value * self._SCALE)))
+        self._spin.setValue(value)
+        self._slider.blockSignals(False)
+        self._spin.blockSignals(False)
+
+    def _on_slider(self, v: int):
+        self._spin.blockSignals(True)
+        self._spin.setValue(v / self._SCALE)
+        self._spin.blockSignals(False)
+
+    def _on_spin(self, v: float):
+        self._slider.blockSignals(True)
+        self._slider.setValue(int(round(v * self._SCALE)))
+        self._slider.blockSignals(False)
+
+    def _request(self, value: float):
+        if self._cid:
+            self._set_inputs(value)
+            self.position_requested.emit(self._cid, float(value))
+
+    def _on_set(self):
+        self._request(self._spin.value())
+
+    def _on_safe(self):
+        if self._spec:
+            self._request(self._spec.safe_pct)
+
+
 class PIDCanvas(QWidget):
     """
     Signals
@@ -229,6 +387,7 @@ class PIDCanvas(QWidget):
     line_finished        = pyqtSignal(object)
     valve_open_requested  = pyqtSignal(str)
     valve_close_requested = pyqtSignal(str)
+    actuator_position_requested = pyqtSignal(str, float)   # cid, position
 
     def __init__(self, parent=None, interactive: bool = True):
         super().__init__(parent)
@@ -282,6 +441,11 @@ class PIDCanvas(QWidget):
         self._valve_popup.open_requested.connect(self.valve_open_requested)
         self._valve_popup.close_requested.connect(self.valve_close_requested)
 
+        # Proportional-actuator popup (shown instead of the open/close one for
+        # components that carry an ActuatorSpec)
+        self._actuator_popup = ActuatorPopup(self)
+        self._actuator_popup.position_requested.connect(self.actuator_position_requested)
+
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
         self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -294,6 +458,7 @@ class PIDCanvas(QWidget):
         self.live_throttle_pcts.clear()
         self._callout_offsets.clear()
         self._valve_popup.hide()
+        self._actuator_popup.hide()
         self._build_line_topology()
         self.fit_view()
         self._needs_fit = True
@@ -318,6 +483,7 @@ class PIDCanvas(QWidget):
     def update_valve_state(self, cid: str, state: str):
         self.live_valve_states[cid] = state
         self._valve_popup.update_state(cid, state)
+        self._actuator_popup.update_actuator(cid, state, self.live_throttle_pcts.get(cid, 0.0))
         self._request_repaint()
 
     def reset_callout_offset(self, cid: str):
@@ -506,6 +672,8 @@ class PIDCanvas(QWidget):
 
     def update_throttle(self, cid: str, pct: float):
         self.live_throttle_pcts[cid] = pct
+        self._actuator_popup.update_actuator(
+            cid, self.live_valve_states.get(cid, "CLOSED"), pct)
         self._request_repaint()
 
     def set_selected(self, comp_ids):
@@ -950,10 +1118,11 @@ class PIDCanvas(QWidget):
                 continue
             state = self.live_valve_states.get(cid, "CLOSED")
             value = self.live_sensor_values.get(cid)
-            if comp.type in (COMP_GLOBE_VALVE, COMP_EP_THROTTLE_VALVE):
-                thr = self.live_throttle_pcts.get(cid)
-                if thr is not None:
-                    value = thr
+            actuator_pct = None
+            if get_actuator_spec(comp) is not None:
+                actuator_pct = self.live_throttle_pcts.get(cid)
+                if actuator_pct is not None:
+                    value = actuator_pct
             # skip the world-space label so the two don't overlap.
             show_label = self.interactive or comp.type not in SENSOR_TYPES
             # Compute alert color for PT sensors (MEOP/MAWP glow)
@@ -967,7 +1136,8 @@ class PIDCanvas(QWidget):
                         hovered     = cid == self._hovered_comp,
                         zoom        = self._zoom,
                         show_label  = show_label,
-                        alert_color = alert_color)
+                        alert_color = alert_color,
+                        actuator_pct = actuator_pct)
 
     def _paint_line_preview(self, p):
         fluid_color = FLUID_QC.get(self._line_fluid, QColor("#c8c8c8"))
@@ -1000,6 +1170,9 @@ class PIDCanvas(QWidget):
             popup_rect = self._valve_popup.geometry()
             if not popup_rect.contains(event.pos()):
                 self._valve_popup.hide()
+        if self._actuator_popup.isVisible():
+            if not self._actuator_popup.geometry().contains(event.pos()):
+                self._actuator_popup.hide()
 
         if (event.button() == Qt.RightButton or
                 (event.button() == Qt.LeftButton and event.modifiers() & Qt.AltModifier)):
@@ -1063,15 +1236,21 @@ class PIDCanvas(QWidget):
 
                 # Show valve popup in live (non-interactive/non-editor) mode
                 comp = self.project.components.get(cid) if self.project else None
-                if comp and comp.type in VALVE_TYPES and not self.interactive:
+                spec = get_actuator_spec(comp) if comp else None
+                if comp and (spec is not None or comp.type in VALVE_TYPES) and not self.interactive:
                     state = self.live_valve_states.get(cid, "CLOSED")
                     comp_pos = self.project.layout[cid]
                     sp = QPointF(
                         (comp_pos.x + self._pan.x()) * self._zoom,
                         (comp_pos.y + self._pan.y()) * self._zoom,
                     )
-                    self._valve_popup.show_for(cid, state, sp,
-                                               is_igniter=(comp.type == COMP_IGNITER))
+                    if spec is not None:
+                        self._actuator_popup.show_for(
+                            cid, comp.label.strip() or cid, spec, state,
+                            self.live_throttle_pcts.get(cid, spec.safe_pct), sp)
+                    else:
+                        self._valve_popup.show_for(cid, state, sp,
+                                                   is_igniter=(comp.type == COMP_IGNITER))
 
                 if self.interactive:
                     self._dragging_comp    = cid

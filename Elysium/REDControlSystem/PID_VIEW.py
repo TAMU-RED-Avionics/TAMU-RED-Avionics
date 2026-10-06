@@ -2,13 +2,12 @@
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QSlider, QDialog, QDialogButtonBox, QFrame,
-    QFileDialog, QMessageBox, QSpinBox,
+    QFrame, QFileDialog, QMessageBox,
 )
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt
 
 from PID_SCHEMA import (
-    PIDProject,
+    PIDProject, get_actuator_spec,
     COMP_VALVE, COMP_THROTTLE_VALVE, COMP_PRESSURE, COMP_TEMPERATURE,
     COMP_LOAD_CELL, COMP_BALL_VALVE, COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER,
 )
@@ -16,52 +15,6 @@ from PID_CANVAS import PIDCanvas
 
 _VALVE_TYPES = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
                 COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER)
-
-
-class ThrottleDialog(QDialog):
-
-    value_confirmed = pyqtSignal(str, float)   # (comp_id, pct)
-
-    def __init__(self, comp_id: str, comp_label: str, current_pct: float, parent=None):
-        super().__init__(parent)
-        self.comp_id = comp_id
-        self.setWindowTitle(f"Throttle: {comp_label}")
-        self.setMinimumWidth(300)
-
-        layout = QVBoxLayout(self)
-
-        self.slider = QSlider(Qt.Horizontal)
-        self.slider.setRange(0, 100)
-        self.slider.setValue(int(current_pct))
-        self.slider.setTickInterval(10)
-        self.slider.setTickPosition(QSlider.TicksBelow)
-
-        self.pct_label = QLabel(f"{int(current_pct)}%")
-        self.pct_label.setAlignment(Qt.AlignCenter)
-        self.pct_label.setStyleSheet("font-size: 18pt; font-weight: bold;")
-        self.slider.valueChanged.connect(lambda v: self.pct_label.setText(f"{v}%"))
-
-        layout.addWidget(self.pct_label)
-        layout.addWidget(self.slider)
-
-        input_row = QHBoxLayout()
-        input_row.addWidget(QLabel("Value:"))
-        self.spin = QSpinBox()
-        self.spin.setRange(0, 100)
-        self.spin.setValue(int(current_pct))
-        self.spin.setSuffix("%")
-        self.spin.valueChanged.connect(self.slider.setValue)
-        self.slider.valueChanged.connect(self.spin.setValue)
-        input_row.addWidget(self.spin)
-        layout.addLayout(input_row)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
-
-    def get_pct(self) -> float:
-        return float(self.slider.value())
 
 
 class PIDViewWindow(QWidget):
@@ -120,6 +73,7 @@ class PIDViewWindow(QWidget):
         self.canvas.component_clicked.connect(self._on_comp_clicked)
         self.canvas.valve_open_requested.connect(self._on_valve_open_requested)
         self.canvas.valve_close_requested.connect(self._on_valve_close_requested)
+        self.canvas.actuator_position_requested.connect(self._on_actuator_position_requested)
         root.addWidget(self.canvas, stretch=1)
 
         status_row = QWidget()
@@ -140,6 +94,7 @@ class PIDViewWindow(QWidget):
         c.signals.abort_triggered.connect(self._on_abort)
         c.signals.safe_state.connect(self._on_safe_state)
         c.signals.valve_updated.connect(self._on_valve_updated)
+        c.signals.actuator_updated.connect(self._on_actuator_updated)
         c.signals.sensor_updated.connect(self._on_sensor_updated)
 
         # Same lock rule as the project selector: locked once safe state is
@@ -180,8 +135,13 @@ class PIDViewWindow(QWidget):
                              f"({len(project.components)} components, "
                              f"{len(project.lines)} pipes)")
         for cid, comp in project.components.items():
-            if comp.type in _VALVE_TYPES:
+            if comp.type in _VALVE_TYPES or get_actuator_spec(comp) is not None:
                 self.canvas.update_valve_state(cid, "CLOSED")
+            spec = get_actuator_spec(comp)
+            if spec is not None:
+                hw_id = self._comp_to_valve_hw.get(cid)
+                self.canvas.update_throttle(
+                    cid, self.controller.actuator_positions.get(hw_id, spec.safe_pct))
 
     def _build_hw_maps(self):
         """Build comp_id <-> hardware_id lookup tables from the loaded project."""
@@ -193,7 +153,7 @@ class PIDViewWindow(QWidget):
             return
 
         for cid, comp in self._project.components.items():
-            if comp.type in _VALVE_TYPES:
+            if comp.type in _VALVE_TYPES or get_actuator_spec(comp) is not None:
                 hw_id = comp.extras.get("hw_id", comp.label)
                 if hw_id:
                     self._valve_hw_to_comp[hw_id] = cid
@@ -229,6 +189,11 @@ class PIDViewWindow(QWidget):
         elif hw_name in (self._project.components if self._project else {}):
             self.canvas.update_valve_state(hw_name, state)
 
+    def _on_actuator_updated(self, hw_name: str, pct: float):
+        cid = self._valve_hw_to_comp.get(hw_name)
+        if cid:
+            self.canvas.update_throttle(cid, pct)
+
     def _on_sensor_updated(self, hw_name: str, value: float, timestamp: float):
         # Total Thrust / Total Mdot / Isp are computed from the project's own
         # CalcChannel formulas (see GUI_PERFORMANCE.py's PerformanceBar / gear
@@ -246,6 +211,14 @@ class PIDViewWindow(QWidget):
         self.controller.toggle_valve(hw_id, True)
         self._status.setText(f"Opening valve: {hw_id}")
 
+    def _on_actuator_position_requested(self, cid: str, pct: float):
+        hw_id = self._comp_to_valve_hw.get(cid, cid)
+        if not self._interactive:
+            self._status.setText("Not connected - cannot control actuators.")
+            return
+        self.controller.set_actuator_position(hw_id, pct)
+        self._status.setText(f"Setting {hw_id} to {pct:g}")
+
     def _on_valve_close_requested(self, cid: str):
         hw_id = self._comp_to_valve_hw.get(cid, cid)
         if not self._interactive:
@@ -260,27 +233,10 @@ class PIDViewWindow(QWidget):
         comp = self._project.components.get(cid)
         if not comp:
             return
-        # Valve popup is handled directly by canvas now.
-        # Keep legacy throttle dialog for throttle valves.
-        hw_id = self._comp_to_valve_hw.get(cid)
-        if comp.type == COMP_THROTTLE_VALVE:
-            current_pct = self.canvas.live_throttle_pcts.get(cid, 0.0)
-            dlg = ThrottleDialog(cid, comp.label or cid, current_pct, self)
-            if dlg.exec_() == QDialog.Accepted:
-                pct = dlg.get_pct()
-                self.canvas.update_throttle(cid, pct)
-                if hw_id:
-                    try:
-                        self.controller.set_throttle(hw_id, pct / 100.0)
-                    except AttributeError:
-                        pass
-                self._status.setText(f"Throttle {comp.label}: {pct:.0f}%")
-        else:
-            lbl = comp.label or cid
-            state = self.canvas.live_valve_states.get(cid, "-")
-            self._status.setText(f"{lbl}  |  {state}")
-
-
+        # Valve / actuator popups are handled directly by the canvas.
+        lbl = comp.label or cid
+        state = self.canvas.live_valve_states.get(cid, "-")
+        self._status.setText(f"{lbl}  |  {state}")
 
     def _fit_view(self):
         self.canvas.fit_view()
