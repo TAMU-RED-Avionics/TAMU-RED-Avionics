@@ -9,15 +9,16 @@ from PyQt5.QtWidgets import (
     QHeaderView, QFrame, QPushButton, QAbstractItemView,
     QSizePolicy, QToolButton, QStackedWidget, QComboBox,
     QLineEdit, QMessageBox, QListWidget, QListWidgetItem,
-    QDoubleSpinBox,
+    QDoubleSpinBox, QShortcut,
 )
 from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QColor
+from PyQt5.QtGui import QColor, QKeySequence
 
 import matplotlib
 matplotlib.use("Qt5Agg")
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg, NavigationToolbar2QT
 from matplotlib.figure import Figure
+from matplotlib.widgets import RectangleSelector
 
 from GUI_GRAPHS import SERIES_COLORS_DARK, SERIES_COLORS_LIGHT, sensor_category
 
@@ -566,6 +567,13 @@ class SensorGraphPanel(QWidget):
         self._annot = None
         self._ax = None
 
+        # Drag-to-zoom: _home_view is the full view of the last plot; _zoom_stack
+        # holds the views we zoomed away from (newest last), so Back pops one
+        # level and Home returns to _home_view.
+        self._selector = None
+        self._home_view = None
+        self._zoom_stack = []
+
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -613,6 +621,19 @@ class SensorGraphPanel(QWidget):
         self._reset_btn.setEnabled(False)
         tb.addWidget(self._reset_btn)
 
+        self._zoom_back_btn = QPushButton("Back")
+        self._zoom_back_btn.setToolTip(
+            "Undo the last drag-zoom (Backspace / Ctrl+Z / right-click)")
+        self._zoom_back_btn.clicked.connect(self._zoom_back)
+        self._zoom_back_btn.setEnabled(False)
+        tb.addWidget(self._zoom_back_btn)
+
+        self._zoom_home_btn = QPushButton("Full View")
+        self._zoom_home_btn.setToolTip("Return to the full plot (Home / Esc)")
+        self._zoom_home_btn.clicked.connect(self._zoom_home)
+        self._zoom_home_btn.setEnabled(False)
+        tb.addWidget(self._zoom_home_btn)
+
         sep2 = QFrame()
         sep2.setFrameShape(QFrame.VLine)
         tb.addWidget(sep2)
@@ -626,7 +647,7 @@ class SensorGraphPanel(QWidget):
         self._marker_combo.addItem("Valve ops", "valve")
         self._marker_combo.addItem("Off", "off")
         self._marker_combo.currentIndexChanged.connect(
-            lambda _: self._draw() if self._data else None)
+            lambda _: self._draw(preserve_view=True) if self._data else None)
         tb.addWidget(self._marker_combo)
 
         tb.addStretch()
@@ -649,6 +670,68 @@ class SensorGraphPanel(QWidget):
 
         layout.addWidget(self._nav)
         layout.addWidget(self._canvas, stretch=1)
+
+        hint = QLabel("Drag on the plot to zoom to that box  ·  Back / Ctrl+Z / right-click: undo zoom"
+                      "  ·  Home / Esc: full view")
+        hint.setContentsMargins(8, 2, 8, 2)
+        layout.addWidget(hint)
+
+        # Connected before any RectangleSelector exists, so it runs first on each press:
+        # drag-zoom stands down while a toolbar tool (pan / zoom-rect) is active.
+        self._canvas.mpl_connect("button_press_event", self._on_canvas_press)
+        for keys, slot in (
+            (("Backspace", "Ctrl+Z", "Alt+Left"), self._zoom_back),
+            (("Home", "Esc"), self._zoom_home),
+        ):
+            for key in keys:
+                sc = QShortcut(QKeySequence(key), self)
+                sc.setContext(Qt.WidgetWithChildrenShortcut)
+                sc.activated.connect(slot)
+
+    # DRAG ZOOM ------------------------------------------------------------------------------------------------------
+
+    def _on_canvas_press(self, event):
+        if self._selector is not None:
+            self._selector.set_active(not self._nav.mode)
+        if event.button == 3 and event.inaxes is self._ax and not self._nav.mode:
+            self._zoom_back()
+
+    def _on_zoom_select(self, press, release):
+        """RectangleSelector callback: make the dragged box the new window."""
+        if self._ax is None or press.xdata is None or release.xdata is None:
+            return
+        x0, x1 = sorted((press.xdata, release.xdata))
+        y0, y1 = sorted((press.ydata, release.ydata))
+        if x1 <= x0 or y1 <= y0:
+            return
+        self._zoom_stack.append((self._ax.get_xlim(), self._ax.get_ylim()))
+        self._ax.set_xlim(x0, x1)
+        self._ax.set_ylim(y0, y1)
+        self._sync_zoom_buttons()
+        self._canvas.draw_idle()
+
+    def _zoom_back(self):
+        if self._ax is None or not self._zoom_stack:
+            return
+        xlim, ylim = self._zoom_stack.pop()
+        self._ax.set_xlim(xlim)
+        self._ax.set_ylim(ylim)
+        self._sync_zoom_buttons()
+        self._canvas.draw_idle()
+
+    def _zoom_home(self):
+        if self._ax is None or self._home_view is None or not self._zoom_stack:
+            return
+        self._zoom_stack.clear()
+        self._ax.set_xlim(self._home_view[0])
+        self._ax.set_ylim(self._home_view[1])
+        self._sync_zoom_buttons()
+        self._canvas.draw_idle()
+
+    def _sync_zoom_buttons(self):
+        zoomed = bool(self._zoom_stack)
+        self._zoom_back_btn.setEnabled(zoomed)
+        self._zoom_home_btn.setEnabled(zoomed)
 
     def load_data(self, headers: list[str], rows: list[list]):
 
@@ -678,7 +761,7 @@ class SensorGraphPanel(QWidget):
     def set_dark_mode(self, dark: bool):
         self._dark = dark
         if self._data:
-            self._draw()
+            self._draw(preserve_view=True)
 
     def _selected_sensors(self):
 
@@ -711,7 +794,9 @@ class SensorGraphPanel(QWidget):
 
         self._draw()
 
-    def _draw(self):
+    def _draw(self, preserve_view: bool = False):
+        """Redraw. A new plot (data, sensors or time range) resets zoom; a
+        cosmetic redraw (markers, theme) keeps the current zoom."""
 
         if not self._data:
             return
@@ -730,6 +815,11 @@ class SensorGraphPanel(QWidget):
         bg = "#1e1e24" if self._dark else "#f4f2ee"
         fg = "#e8e6e0" if self._dark else "#1a1a1a"
         grid = "#333340" if self._dark else "#cccccc"
+
+        # Capture before clear(): a cleared figure forgets its limits.
+        saved_view = None
+        if preserve_view and self._zoom_stack and self._ax is not None:
+            saved_view = (self._ax.get_xlim(), self._ax.get_ylim())
 
         self._fig.clear()
 
@@ -852,6 +942,21 @@ class SensorGraphPanel(QWidget):
         self._hover_cid = self._canvas.mpl_connect(
             "motion_notify_event",
             self._on_hover,
+        )
+
+        # Full view of this plot (autoscaled y, requested x range) is "home".
+        self._home_view = (ax.get_xlim(), ax.get_ylim())
+        if saved_view is not None:
+            ax.set_xlim(saved_view[0])
+            ax.set_ylim(saved_view[1])
+        else:
+            self._zoom_stack.clear()
+        self._sync_zoom_buttons()
+
+        self._selector = RectangleSelector(
+            ax, self._on_zoom_select, useblit=True, button=[1],
+            minspanx=6, minspany=6, spancoords="pixels", interactive=False,
+            props=dict(facecolor="#3b82f6", edgecolor="#3b82f6", alpha=0.25),
         )
 
         self._canvas.draw_idle()

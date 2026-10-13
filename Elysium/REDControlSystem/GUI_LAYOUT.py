@@ -21,6 +21,7 @@ from GUI_PERFORMANCE import PerformanceBar
 from PROJECT_LOADER import discover_projects, load_project, project_summary
 from GUI_ABORT_CONFIG import AbortConfigPage, AbortWindow
 from GUI_TELEMETRY import TelemetryPage
+from GUI_LIVEDATA import LiveDataPage
 from GUI_HEALTH import HealthPage
 
 class CollapsibleSection(QWidget):
@@ -865,6 +866,7 @@ class MainWindow(QMainWindow):
         self.sequencing_page = SequencingPage(self.controller)
         self.new_pid_page = NewPIDPage(self.controller)
         self.telemetry_page = TelemetryPage(self)
+        self.live_data_page = LiveDataPage(self.controller)
         self.health_page = HealthPage(self.controller)
 
         pages = [
@@ -872,6 +874,7 @@ class MainWindow(QMainWindow):
             ("Abort Config",  self.abort_config_page),
             ("Sequencing",    self.sequencing_page),
             ("New/Edit PID",  self.new_pid_page),
+            ("Live Data",     self.live_data_page),
             ("Telemetry",     self.telemetry_page),
             ("Health",        self.health_page),
         ]
@@ -1049,6 +1052,9 @@ class MainWindow(QMainWindow):
         if hasattr(self, "abort_config_page"):
             self.abort_config_page.load_project(project)
 
+        if hasattr(self, "live_data_page"):
+            self.live_data_page.load_project(project)
+
         # The Safe State lives in the .red file; say so loudly if it isn't defined yet.
         if not self.controller.abort_state_confirmed:
             QMessageBox.warning(
@@ -1072,6 +1078,7 @@ class MainWindow(QMainWindow):
         self.dark_mode = not self.dark_mode
         self.apply_stylesheet()
         self.home_page.set_dark_mode(self.dark_mode)
+        self.live_data_page.set_dark_mode(self.dark_mode)
         self.dark_mode_btn.setText("Light Mode" if self.dark_mode else "Dark Mode")
         if self.dark_mode:
             self.logo.set_dark_image()

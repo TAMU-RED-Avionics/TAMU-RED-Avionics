@@ -63,6 +63,7 @@ class Signals(QObject):
     
     valve_updated = pyqtSignal(str, str)     # can be open, closed, or pending a response from the MCU
     actuator_updated = pyqtSignal(str, float)  # proportional actuator hw_id, confirmed position (%)
+    command_sent = pyqtSignal(str, float, float)  # hw_id, commanded value (valve: 1 open / 0 closed; actuator: %), timestamp (s)
     sensor_updated = pyqtSignal(str, float, float)      # sensor_name, val, timestamp
     system_status = pyqtSignal(str)
 
@@ -1713,6 +1714,7 @@ class GUIController:
             return      # already there (or already on its way); sequences re-issue every step
 
         self.signals.valve_updated.emit(name, "PENDING")
+        self.signals.command_sent.emit(name, float(target), QDateTime.currentMSecsSinceEpoch() / 1000.0)
         try:
             self.ethernet_client.send_actuator_command(name, target)
         except Exception:
@@ -1757,6 +1759,8 @@ class GUIController:
 
         # Internal state updates only once the MCU confirms; show PENDING until then
         self.signals.valve_updated.emit(valve_name, "PENDING")
+        self.signals.command_sent.emit(valve_name, 1.0 if new_state else 0.0,
+                                       QDateTime.currentMSecsSinceEpoch() / 1000.0)
 
         try:
             self.ethernet_client.send_valve_command(valve_name, new_state)
