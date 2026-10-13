@@ -550,6 +550,13 @@ class PIDProject:
         self.parameters:         SystemParameters = SystemParameters()
         self.rules:              list             = []    # list[AbortRule]
 
+        # --- Abort state: valve positions the abort button / rules drive to ---
+        # comp_id -> True (open on abort). Anything missing is closed, so an
+        # untouched project aborts to "all closed". The operator must confirm it
+        # (abort_state_confirmed) - an unconfirmed one only triggers a warning.
+        self.abort_state:           dict          = {}
+        self.abort_state_confirmed: bool          = False
+
         # --- Legacy flat sequence list (kept for backward-compat read paths) ---
         self.sequence:           list             = []    # list[SequenceStep]
 
@@ -640,6 +647,8 @@ class PIDProject:
             "lines":              [l.to_dict() for l in self.lines],
             "parameters":         self.parameters.to_dict(),
             "rules":              [r.to_dict() for r in self.rules],
+            "abort_state":           self.abort_state,
+            "abort_state_confirmed": self.abort_state_confirmed,
             # Legacy flat sequence kept for backward-compat readers
             "sequence":           [s.to_dict() for s in self.sequence],
             # New multi-sequence support
@@ -702,6 +711,9 @@ class PIDProject:
         if not proj.sequences:
             proj.sequences.append(NamedSequence(
                 id="seq_default", name="Default", steps=list(proj.sequence)))
+
+        proj.abort_state = {k: bool(v) for k, v in d.get("abort_state", {}).items()}
+        proj.abort_state_confirmed = bool(d.get("abort_state_confirmed", False))
 
         proj.active_sequence_id = d.get("active_sequence_id", "")
         # Fall back to the first sequence if active_sequence_id is missing or

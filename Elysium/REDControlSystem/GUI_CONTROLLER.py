@@ -311,6 +311,25 @@ class GUIController:
         for valve, want_open in targets.items():
             self._drive_valve(valve, want_open, force=valve in force)
 
+    def abort_valve_targets(self) -> dict:
+        """{hw_id: open?} for every valve on abort: the project's abort state,
+        with anything not listed (or no project / nothing configured) closed."""
+        targets = {v: False for v in self.valve_states}
+        project = self.project
+        if project is not None:
+            for cid, want_open in getattr(project, "abort_state", {}).items():
+                comp = project.components.get(cid)
+                if comp is None:
+                    continue
+                hw_id = comp.extras.get("hw_id") or comp.label
+                if hw_id in targets and hw_id not in self.igniter_hw_ids:
+                    targets[hw_id] = bool(want_open)
+        return targets
+
+    @property
+    def abort_state_confirmed(self) -> bool:
+        return bool(self.project is not None and getattr(self.project, "abort_state_confirmed", False))
+
     def enter_safe_state(self, reason: str = ""):
         """SAFE mode: every valve closed, nothing commandable."""
         self._cancel_sequence()
@@ -876,8 +895,12 @@ class GUIController:
         # while the dialog below is open and must not re-fire.
         self._set_mode(GuiMode.ABORT, abort_type)
 
-        # Abort configuration (currently: all valves closed)
-        self._apply_valve_config({v: False for v in self.valve_states}, in_flight)
+        # Abort configuration: the project's abort state (default all closed)
+        targets = self.abort_valve_targets()
+        self._apply_valve_config(targets, in_flight)
+        opened = [v for v, o in targets.items() if o]
+        if opened:
+            self.log_event("ABORT_STATE", f"open on abort: {', '.join(opened)}")
 
         # `reason` is already a specific, relevant message by this point -
         # sensor-threshold and logic-rule aborts render it from a (customizable,

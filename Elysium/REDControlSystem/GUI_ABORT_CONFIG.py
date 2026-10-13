@@ -582,6 +582,101 @@ class _LogicRulesSection(QWidget):
         for row in self._rows:
             row.flush()
 
+class _AbortStateSection(QWidget):
+    """Which valves are OPEN when the system aborts (everything else closes).
+    Must be confirmed per P&ID; until it is, abort closes all valves."""
+
+    def __init__(self, on_confirm, parent=None):
+        super().__init__(parent)
+        self._project = None
+        self._boxes: dict = {}
+        self._loading = False
+
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(8)
+        lay.addWidget(_section_title("Abort State"))
+
+        intro = QLabel(
+            "Set each valve's position when the system aborts. By default every valve closes; "
+            "check a valve to leave it open during an abort. Confirm when done."
+        )
+        intro.setWordWrap(True)
+        intro.setObjectName("sensor_unit_label")
+        lay.addWidget(intro)
+
+        self._status = QLabel()
+        self._status.setWordWrap(True)
+        lay.addWidget(self._status)
+
+        self._grid_host = QWidget()
+        self._grid = QGridLayout(self._grid_host)
+        self._grid.setContentsMargins(0, 0, 0, 0)
+        self._grid.setHorizontalSpacing(24)
+        lay.addWidget(self._grid_host)
+
+        row = QHBoxLayout()
+        row.addStretch()
+        self._confirm_btn = QPushButton("Confirm Abort State")
+        self._confirm_btn.setObjectName("primary_btn")
+        self._confirm_btn.setMinimumHeight(30)
+        self._confirm_btn.clicked.connect(on_confirm)
+        row.addWidget(self._confirm_btn)
+        lay.addLayout(row)
+
+    @staticmethod
+    def _commandable(comp) -> bool:
+        return comp.type in _VALVE_TYPES or get_actuator_spec(comp) is not None
+
+    def load_project(self, project):
+        self._project = project
+        self._loading = True
+        self._boxes.clear()
+        while self._grid.count():
+            item = self._grid.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        valves = []
+        if project is not None:
+            valves = sorted((c for c in project.components.values() if self._commandable(c)),
+                            key=lambda c: ((c.label or "").strip() or c.id))
+        cols = 3
+        for i, comp in enumerate(valves):
+            box = QCheckBox(f"{(comp.label or '').strip() or comp.id}  ({comp.type.replace('_', ' ')})")
+            box.setChecked(bool(project.abort_state.get(comp.id, False)))
+            box.toggled.connect(lambda checked, cid=comp.id: self._on_toggled(cid, checked))
+            self._grid.addWidget(box, i // cols, i % cols)
+            self._boxes[comp.id] = box
+        if not valves:
+            self._grid.addWidget(QLabel("No commandable valves in this project."), 0, 0)
+        self._confirm_btn.setEnabled(project is not None)
+        self._loading = False
+        self.refresh_status()
+
+    def _on_toggled(self, cid: str, checked: bool):
+        if self._loading or self._project is None:
+            return
+        self._project.abort_state[cid] = checked
+        self._project.abort_state_confirmed = False     # any edit needs re-confirming
+        self.refresh_status()
+
+    def refresh_status(self):
+        p = self._project
+        if p is None:
+            self._status.setText("No project loaded.")
+            return
+        n_open = sum(1 for cid, v in p.abort_state.items() if v and cid in self._boxes)
+        if p.abort_state_confirmed:
+            self._status.setText(
+                f"CONFIRMED: {n_open} valve(s) open on abort, all others closed.")
+            self._status.setStyleSheet("color: #1e8e3e; font-weight: bold;")
+        else:
+            self._status.setText(
+                "NOT CONFIRMED: abort will close ALL valves until you review and confirm "
+                f"({n_open} currently ticked open).")
+            self._status.setStyleSheet("color: #e37400; font-weight: bold;")
+
+
 class AbortConfigPage(QWidget):
 
     def __init__(self, controller, parent=None):
@@ -612,6 +707,11 @@ class AbortConfigPage(QWidget):
         intro.setWordWrap(True)
         intro.setObjectName("sensor_unit_label")
         self._main_layout.addWidget(intro)
+
+        state_card, state_card_layout = _card()
+        self._abort_state_section = _AbortStateSection(self._confirm_abort_state)
+        state_card_layout.addWidget(self._abort_state_section)
+        self._main_layout.addWidget(state_card)
 
         limits_card, limits_card_layout = _card()
         self._system_limits_section = _SystemLimitsSection()
@@ -654,12 +754,31 @@ class AbortConfigPage(QWidget):
 
     def load_project(self, project):
         self._project = project
+        self._abort_state_section.load_project(project)
         self._system_limits_section.load_project(project)
         self._sensor_section.load_project(project)
         self._logic_section.load_project(project)
 
         if self._controller:
             self._controller.reload_abort_rules(project)
+
+    def _confirm_abort_state(self):
+        if self._project is None:
+            QMessageBox.warning(self, "No Project", "No project is currently loaded.")
+            return
+        self._project.abort_state_confirmed = True
+        self._abort_state_section.refresh_status()
+        path = getattr(self._controller, "project_path", None)
+        if not path:
+            QMessageBox.warning(
+                self, "Confirmed (not saved)",
+                "Abort state is confirmed for this session, but there is no project file "
+                "path to save it to. Save the project from the P&ID editor first.")
+            return
+        try:
+            self._project.save(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Save Failed", str(e))
 
     def _save_all(self):
         if self._project is None:
@@ -791,6 +910,16 @@ class AbortWindow(QWidget):
             self._connected and self.controller.mode in (GuiMode.MANUAL, GuiMode.LOCKED))
 
     def _send_mode(self):
+        if (self._selected_mode() == GuiMode.MANUAL and self.controller.project is not None
+                and not self.controller.abort_state_confirmed):
+            answer = QMessageBox.question(
+                self, "Abort State Not Confirmed",
+                "No abort state has been confirmed for this P&ID, so an abort will close ALL "
+                "valves (the default).\n\nTo choose which valves stay open on abort, go to the "
+                "'Abort Config' tab > Abort State and confirm it.\n\nContinue to MANUAL anyway?",
+                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+            if answer != QMessageBox.Yes:
+                return
         error = self.controller.request_mode(self._selected_mode())
         if error:
             QMessageBox.warning(self, "Mode Change Refused", error)

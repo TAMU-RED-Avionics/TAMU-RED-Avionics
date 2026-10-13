@@ -35,7 +35,7 @@ class ConnectionWindow(QWidget):
         
         eth_layout = QVBoxLayout()
         eth_layout.setContentsMargins(0, 0, 0, 0)
-        eth_layout.setSpacing(10)
+        eth_layout.setSpacing(4)
 
         conn_status_layout = QHBoxLayout()
         conn_status_layout.setContentsMargins(0, 0, 0, 0)
@@ -61,15 +61,14 @@ class ConnectionWindow(QWidget):
         self.spinner_container.setVisible(False)
 
         conn_status_layout.addWidget(self.conn_status_label)
-
-        eth_layout.addLayout(conn_status_layout)
+        conn_status_layout.addStretch()
 
         eth_input_layout = QHBoxLayout()
         eth_input_layout.setContentsMargins(0, 0, 0, 0)
         eth_input_layout.setSpacing(10)
         
         self.ip_input = QLineEdit("192.168.1.174")
-        self.ip_input.setMinimumWidth(165)
+        self.ip_input.setMinimumWidth(130)
         self.port_input = QLineEdit("8888")
         self.port_input.setMinimumWidth(60)
         
@@ -80,12 +79,16 @@ class ConnectionWindow(QWidget):
         self.disconnect_btn.clicked.connect(self._confirm_disconnect)
         self.disconnect_btn.setVisible(False)
 
-        eth_input_layout.addWidget(QLabel("IP Address:"))
+        eth_input_layout.addWidget(QLabel("IP:"))
         eth_input_layout.addWidget(self.ip_input)
         eth_input_layout.addWidget(QLabel("Port:"))
         eth_input_layout.addWidget(self.port_input)
-        eth_input_layout.addWidget(self.connect_btn)
-        eth_input_layout.addWidget(self.disconnect_btn)
+
+        # Stacked: status + connect/disconnect on top, address fields below, so the
+        # action bar doesn't need to be as wide.
+        conn_status_layout.addWidget(self.connect_btn)
+        conn_status_layout.addWidget(self.disconnect_btn)
+        eth_layout.addLayout(conn_status_layout)
         eth_layout.addLayout(eth_input_layout)
 
         self.setLayout(eth_layout)

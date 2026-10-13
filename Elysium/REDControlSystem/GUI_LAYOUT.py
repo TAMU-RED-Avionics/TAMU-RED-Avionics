@@ -4,7 +4,7 @@ from PyQt5.QtWidgets import (
     QPushButton, QLabel, QFrame, QSizePolicy,
     QStackedWidget, QComboBox, QScrollArea,
     QToolButton, QMessageBox,
-    QDialog, QDialogButtonBox, QDoubleSpinBox,
+    QDialog, QDialogButtonBox, QDoubleSpinBox, QApplication,
 )
 from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QSettings
 from PyQt5.QtGui import QColor
@@ -568,6 +568,17 @@ class HomePage(QWidget):
         self.sensor_grid.set_dark_mode(dark)
 
 class ActionBar(QWidget):
+    @staticmethod
+    def _stacked(*widgets) -> QWidget:
+        """Stack widgets vertically so the bar needs less width."""
+        box = QWidget()
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+        for w in widgets:
+            lay.addWidget(w)
+        return box
+
     def __init__(self, controller: GUIController,
                  conn_widget: ConnectionWindow,
                  daq_window: DAQWindow,
@@ -593,13 +604,12 @@ class ActionBar(QWidget):
         self.active_seq_combo.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.active_seq_combo.setMinimumWidth(150)
         self.active_seq_combo.currentIndexChanged.connect(self._on_sequence_changed)
-        layout.addWidget(self.active_seq_combo)
 
         self.fire_seq_btn = QPushButton("Auto-Fire Sequence")
         self.fire_seq_btn.setObjectName("action_bar_btn")
         self.fire_seq_btn.setEnabled(False)
         self.fire_seq_btn.clicked.connect(controller.show_fire_sequence_dialog)
-        layout.addWidget(self.fire_seq_btn)
+        layout.addWidget(self._stacked(self.active_seq_combo, self.fire_seq_btn))
 
         self.fully_closed_btn = QPushButton("Fully Closed")
         self.fully_closed_btn.setObjectName("action_bar_btn")
@@ -617,13 +627,12 @@ class ActionBar(QWidget):
         self.start_rec_btn = QPushButton("▶  Start Recording")
         self.start_rec_btn.setObjectName("action_bar_btn")
         self.start_rec_btn.clicked.connect(self._on_start_recording)
-        layout.addWidget(self.start_rec_btn)
 
         self.stop_rec_btn = QPushButton("■  Stop Recording")
         self.stop_rec_btn.setObjectName("action_bar_btn")
         self.stop_rec_btn.setEnabled(False)
         self.stop_rec_btn.clicked.connect(self._on_stop_recording)
-        layout.addWidget(self.stop_rec_btn)
+        layout.addWidget(self._stacked(self.start_rec_btn, self.stop_rec_btn))
 
         # Keep a reference to daq_window so our handlers can call it
         self._daq_window = daq_window
@@ -777,11 +786,38 @@ _SETTINGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gui_s
 TEXT_SIZE_CYCLE = {12: (16, "Small Text"), 16: (8, "Medium Text"), 8: (12, "Large Text")}
 TEXT_SIZE_LABELS = {size: label for size, label in TEXT_SIZE_CYCLE.values()}
 
+class _HScrollBar(QScrollArea):
+    """Hosts a wide fixed-height bar: instead of forcing the whole window to be as
+    wide as the bar (which pushed it off small screens and blocked resizing), the
+    bar scrolls sideways when the window is narrower than it needs."""
+
+    def __init__(self, bar: QWidget, height: int, parent=None):
+        super().__init__(parent)
+        self._bar_height = height
+        self.setWidget(bar)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setFixedHeight(height)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        need = self.widget().minimumSizeHint().width() > self.viewport().width()
+        extent = self.horizontalScrollBar().sizeHint().height() if need else 0
+        self.setFixedHeight(self._bar_height + extent)
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("RED Control System")
-        self.setGeometry(10, 10, 1400, 820)
+        # Fit the window to the screen it opens on (it used to be a fixed 1400x820 at
+        # (10, 10), which spilled off smaller displays) and centre it.
+        avail = QApplication.primaryScreen().availableGeometry()
+        w, h = min(1400, avail.width() - 40), min(820, avail.height() - 40)
+        self.resize(w, h)
+        self.move(avail.x() + (avail.width() - w) // 2, avail.y() + (avail.height() - h) // 2)
 
         self._settings = QSettings(_SETTINGS_PATH, QSettings.IniFormat)
 
@@ -905,7 +941,7 @@ class MainWindow(QMainWindow):
             self.abort_menu,
         )
         self.action_bar.setObjectName("action_bar")
-        self.action_bar.setFixedHeight(72)
+        self.action_bar.setMinimumHeight(72)
 
         action_sep = QFrame()
         action_sep.setFrameShape(QFrame.HLine)
@@ -915,7 +951,8 @@ class MainWindow(QMainWindow):
         root.addWidget(sep)
         root.addWidget(self.stack, stretch=1)
         root.addWidget(action_sep)
-        root.addWidget(self.action_bar)
+        self.action_bar_scroll = _HScrollBar(self.action_bar, 72)
+        root.addWidget(self.action_bar_scroll)
 
         self.setCentralWidget(central)
 
