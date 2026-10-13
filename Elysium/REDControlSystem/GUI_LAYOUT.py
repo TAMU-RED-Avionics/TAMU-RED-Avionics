@@ -649,7 +649,7 @@ class ActionBar(QWidget):
         controller.signals.connected.connect(self.sync_fire_sequence_state)
         controller.signals.disconnected.connect(lambda _: self.sync_fire_sequence_state())
         controller.signals.abort_triggered.connect(lambda *_: self.sync_fire_sequence_state())
-        controller.signals.safe_state.connect(self.sync_fire_sequence_state)
+        controller.signals.mode_changed.connect(lambda *_: self.sync_fire_sequence_state())
 
         # "Fully Closed" unlocks whenever any valve is open
         controller.signals.valve_updated.connect(lambda *_: self.sync_fully_closed_state())
@@ -865,12 +865,11 @@ class MainWindow(QMainWindow):
         self.refresh_project_btn.setFixedHeight(26)
         self.refresh_project_btn.clicked.connect(self.refresh_current_project)
 
-        # Project is locked once the operator confirms safe state (system
-        # live) or while any valve is open; unlocked while not-yet-confirmed
-        # and fully closed. See GUIController.project_lock_required().
+        # Project is locked while the system is live (MANUAL/LOCKED) or while
+        # any valve is open; unlocked in SAFE/ABORT once fully closed. See GUIController.project_lock_required().
         self.controller.signals.connected.connect(self._refresh_project_lock)
         self.controller.signals.abort_triggered.connect(lambda *_: self._refresh_project_lock())
-        self.controller.signals.safe_state.connect(self._refresh_project_lock)
+        self.controller.signals.mode_changed.connect(lambda *_: self._refresh_project_lock())
         self.controller.signals.disconnected.connect(lambda _: self._refresh_project_lock())
         self.controller.signals.valve_updated.connect(lambda *_: self._refresh_project_lock())
 

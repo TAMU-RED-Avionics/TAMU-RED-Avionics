@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt
 
-from GUI_CONTROLLER import GUIController
+from GUI_CONTROLLER import GUIController, GuiMode
 from PID_SCHEMA import (
     AbortRule,
     COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL,
@@ -694,55 +694,49 @@ class AbortConfigPage(QWidget):
 """
 AbortWindow
 
-This window will display a massive abort button which will will trigger the engine system to stop fire
-and close valves. It must update the GUI state with the controller when a manual abort or safe state is triggered
-as well as update itself based on whether the engine automatically aborts itself
+Mode control panel: the MANUAL ABORT button, the current-mode readout, and a
+mode dropdown (Safe / Manual / Locked) with a SEND button. Choosing an entry
+does nothing until SEND is pressed (guards against mis-clicks). ABORT is not a
+selectable mode - it is entered by the abort button or an automatic abort, and
+is left by sending SAFE.
 
 INPUT DEPENDENCIES:
-    GUIController.signals.connected()
-        When we connect to the MCU, we need to enable the safe state button from its is initially
-        disabled state.
+    GUIController.signals.connected() / disconnected(reason)
+        Controls are disabled while there is no link.
 
-    GUIController.signals.disconnected(reason)
-        When we disconnect from the MCU for any reason, we need to disable the safe state button.
-        Note that an auto disconnect will also trigger an abort, so both disconnected and abort_triggered
-        signals will emit. The callbacks play nicely with each other here, the abort flips wich button is 
-        visible and this signal determines whether the safe state button is enabled, order of operations will
-        not matter thankfully.
-
-    GUIController.signals.abort_triggered(abort_type, reason)
-        Aborts can be caused by either the button in this window being pressed as well as 
-        the engine automatically hitting an abort state, therefore this window must update the buttons
-        based on this signal, rather than a local function attached to the button.
-    
-    GUIController.signals.safe_state()
-        When the system enters a safe state, the button shown in this window must switch from being the abort
-        button to the safe state button.
+    GUIController.signals.mode_changed(mode)
+        Updates the mode readout and resets the dropdown to the current mode.
 
 OUTPUT DEPENDENCIES:
     GUIController.trigger_manual_abort()
-        When the abort button in this window is updated, the state within the   controller must update 
-        accordingly. The controller emits the abort signal, which this window will receive and update to.
-    
-    GUIController.confirm_safe_state()
-        When the safe state button is pressed, it must update the state of the controller accordingly
-        Unlike the abort condition, a safe state is only confirmed by the local button in this window,
-        so there is no need for an input dependency back from the controller
-    
+        The abort button is enabled in MANUAL and LOCKED (SAFE is already safe; ABORT already aborted). The controller emits the abort
+        signal and enters ABORT.
+
+    GUIController.request_mode(mode)
+        SEND asks the controller to change mode; a returned message means the
+        change was refused and is shown to the operator.
 """
 class AbortWindow(QWidget):
+    _MODE_OPTIONS = [("Safe", GuiMode.SAFE), ("Manual", GuiMode.MANUAL), ("Locked", GuiMode.LOCKED)]
+    _MODE_COLORS = {
+        GuiMode.SAFE:   "#1e8e3e",
+        GuiMode.MANUAL: "#1a73e8",
+        GuiMode.LOCKED: "#e37400",
+        GuiMode.ABORT:  "#c62828",
+    }
+
     def __init__(self, controller: GUIController):
         super().__init__()
 
         self.controller = controller
+        self._connected = False
         self.controller.signals.connected.connect(self.connect_action)
         self.controller.signals.disconnected.connect(self.disconnect_action)
-        self.controller.signals.abort_triggered.connect(self.abort_action)
-        self.controller.signals.safe_state.connect(self.safe_state_action)
+        self.controller.signals.mode_changed.connect(self.mode_changed_action)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(0)
+        layout.setSpacing(4)
 
         self.manual_abort_btn = QPushButton("MANUAL ABORT")
         self.manual_abort_btn.setObjectName("manual_abort_btn")
@@ -758,48 +752,66 @@ class AbortWindow(QWidget):
             }
             QPushButton:hover { background-color: #e53935; }
             QPushButton:pressed { background-color: #8e0000; }
-            QPushButton:disabled { background-color: #700000; }
+            QPushButton:disabled { background-color: #700000; color: #c9a9a9; }
         """)
-
-        # This will trigger the signal, which will spin around and trigger self.abort_action here
+        # Emits the abort signal, which the controller handles in any mode
         self.manual_abort_btn.clicked.connect(self.controller.trigger_manual_abort)
-        self.manual_abort_btn.setVisible(False)
-        layout.addWidget(self.manual_abort_btn)
+        layout.addWidget(self.manual_abort_btn, 3)
 
-        self.safe_state_btn = QPushButton("CONFIRM SAFE STATE")
-        self.safe_state_btn.setObjectName("safe_state_btn")
-        self.safe_state_btn.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.safe_state_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #1e8e3e;
-                color: white;
-                border: 1px solid #0d652d;
-                border-radius: 8px;
-                font-weight: bold;
-                letter-spacing: 1px;
-            }
-            QPushButton:hover { background-color: #28a24a; }
-            QPushButton:pressed { background-color: #0d652d; }
-            QPushButton:disabled { background-color: #145c2c; color: #a9c9b2; }
-        """)
+        self.mode_label = QLabel()
+        self.mode_label.setObjectName("mode_label")
+        self.mode_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.mode_label)
 
-        self.safe_state_btn.clicked.connect(self.controller.confirm_safe_state)
-        self.safe_state_btn.setEnabled(False)
-        layout.addWidget(self.safe_state_btn)
+        row = QHBoxLayout()
+        row.setSpacing(4)
+        self.mode_combo = QComboBox()
+        self.mode_combo.setObjectName("mode_combo")
+        for text, mode in self._MODE_OPTIONS:
+            self.mode_combo.addItem(text, mode)
+        self.mode_combo.currentIndexChanged.connect(self._refresh_send)
+        row.addWidget(self.mode_combo, 1)
+
+        self.send_btn = QPushButton("SEND")
+        self.send_btn.setObjectName("mode_send_btn")
+        self.send_btn.clicked.connect(self._send_mode)
+        row.addWidget(self.send_btn)
+        layout.addLayout(row)
 
         self.setLayout(layout)
+        self.mode_changed_action(self.controller.mode)
+
+    def _selected_mode(self) -> str:
+        return self.mode_combo.currentData()
+
+    def _refresh_send(self, *_):
+        self.send_btn.setEnabled(self._connected and self._selected_mode() != self.controller.mode)
+        self.mode_combo.setEnabled(self._connected)
+        self.manual_abort_btn.setEnabled(
+            self._connected and self.controller.mode in (GuiMode.MANUAL, GuiMode.LOCKED))
+
+    def _send_mode(self):
+        error = self.controller.request_mode(self._selected_mode())
+        if error:
+            QMessageBox.warning(self, "Mode Change Refused", error)
+        self._refresh_send()
 
     def connect_action(self):
-        self.safe_state_btn.setEnabled(True)
+        self._connected = True
+        self._refresh_send()
 
     def disconnect_action(self, reason=""):
-        self.safe_state_btn.setEnabled(False)
+        self._connected = False
+        self._refresh_send()
 
-    def abort_action(self, abort_type, reason):
-        self.manual_abort_btn.setVisible(False)
-        self.safe_state_btn.setVisible(True)
-
-    # Updates the controller and the local window when a safe state is commanded
-    def safe_state_action(self):            
-        self.safe_state_btn.setVisible(False)
-        self.manual_abort_btn.setVisible(True)
+    def mode_changed_action(self, mode: str):
+        color = self._MODE_COLORS.get(mode, "#555")
+        self.mode_label.setText(f"MODE: {mode}")
+        self.mode_label.setStyleSheet(f"color: {color}; font-weight: bold;")
+        # Point the dropdown at the active mode (ABORT has no entry; offer SAFE,
+        # the only way out of it).
+        index = self.mode_combo.findData(mode)
+        self.mode_combo.blockSignals(True)
+        self.mode_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.mode_combo.blockSignals(False)
+        self._refresh_send()

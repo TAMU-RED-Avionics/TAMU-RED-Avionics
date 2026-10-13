@@ -3,7 +3,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QFileDialog, QFormLayout, QLineEdit, QCheckBox,
     QSplitter, QMessageBox, QFrame, QSizePolicy,
-    QToolButton, QScrollArea,
+    QToolButton, QScrollArea, QDialog, QPlainTextEdit, QDialogButtonBox,
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 
@@ -24,6 +24,7 @@ from PID_SCHEMA import (
 )
 
 from PID_CANVAS import PIDCanvas, snap
+from DRAWIO_IMPORT import import_drawio
 
 # Types actuated/driven through a relay command (see GUI_COMMS.VALVE_TYPES) -
 # these get the "Binding" hardware field in the property panel.
@@ -456,6 +457,8 @@ class PIDEditorWindow(QWidget):
 
         tbtn("New",      self._new_project)
         tbtn("Open…",    self._open_project)
+        tbtn("Import draw.io…", self._import_drawio,
+             tip="Build a new project from a draw.io P&ID (opens unsaved for review)")
         tbtn("Save",     self._save_project)
         tbtn("Save As…", self._save_as_project)
         tb.addWidget(_vsep())
@@ -540,6 +543,50 @@ class PIDEditorWindow(QWidget):
             self._status.setText(f"Opened: {os.path.basename(path)}")
         except Exception as e:
             QMessageBox.critical(self, "Open Failed", str(e))
+
+    def _import_drawio(self):
+        """Convert a draw.io file into a NEW, unsaved project for review. Nothing
+        is replaced unless the conversion succeeds and the operator accepts it."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import draw.io P&ID", "",
+            "draw.io diagram (*.drawio *.xml);;All Files (*)")
+        if not path:
+            return
+        try:
+            project, report = import_drawio(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Import Failed",
+                                 f"Could not import this file:\n\n{e}\n\nYour current project is unchanged.")
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("draw.io Import Report")
+        dlg.resize(640, 520)
+        lay = QVBoxLayout(dlg)
+        text = QPlainTextEdit(report.summary())
+        text.setReadOnly(True)
+        text.setStyleSheet("font-family: Menlo, Consolas, monospace;")
+        lay.addWidget(text)
+        lay.addWidget(QLabel("Opening replaces the project on the canvas. The result is not saved "
+                             "until you use Save."))
+        buttons = QDialogButtonBox()
+        open_btn = buttons.addButton("Open in editor", QDialogButtonBox.AcceptRole)
+        buttons.addButton(QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        lay.addWidget(buttons)
+        open_btn.setDefault(True)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+
+        self._project      = project
+        self._current_path = None
+        self._proj_name_edit.setText(project.name)
+        self.canvas.set_project(project)
+        self.canvas.fit_view()
+        self._status.setText(
+            f"Imported {os.path.basename(path)} (unsaved): review components, set hardware "
+            "bindings, then Save.")
 
     def _save_project(self):
         if not self._current_path:

@@ -12,6 +12,7 @@ from PID_SCHEMA import (
     COMP_LOAD_CELL, COMP_BALL_VALVE, COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER,
 )
 from PID_CANVAS import PIDCanvas
+from GUI_CONTROLLER import GuiMode
 
 _VALVE_TYPES = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
                 COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER)
@@ -92,17 +93,17 @@ class PIDViewWindow(QWidget):
         c.signals.connected.connect(self._on_connected)
         c.signals.disconnected.connect(self._on_disconnected)
         c.signals.abort_triggered.connect(self._on_abort)
-        c.signals.safe_state.connect(self._on_safe_state)
+        c.signals.mode_changed.connect(self._on_mode_changed)
         c.signals.valve_updated.connect(self._on_valve_updated)
         c.signals.actuator_updated.connect(self._on_actuator_updated)
         c.signals.sensor_updated.connect(self._on_sensor_updated)
 
-        # Same lock rule as the project selector: locked once safe state is
-        # confirmed (live) or while any valve is open. See
+        # Same lock rule as the project selector: locked while live (MANUAL /
+        # LOCKED) or while any valve is open. See
         # GUIController.project_lock_required().
         c.signals.connected.connect(self._refresh_open_lock)
         c.signals.abort_triggered.connect(lambda *_: self._refresh_open_lock())
-        c.signals.safe_state.connect(self._refresh_open_lock)
+        c.signals.mode_changed.connect(lambda *_: self._refresh_open_lock())
         c.signals.disconnected.connect(lambda _: self._refresh_open_lock())
         c.signals.valve_updated.connect(lambda *_: self._refresh_open_lock())
 
@@ -112,7 +113,7 @@ class PIDViewWindow(QWidget):
     def _set_open_locked(self, locked: bool):
         self._open_btn.setEnabled(not locked)
         self._open_btn.setToolTip(
-            "Locked while the system is live or a valve is open" if locked else "")
+            "Locked while the system is live (MANUAL/LOCKED) or a valve is open" if locked else "")
 
     def _open_project(self):
         path, _ = QFileDialog.getOpenFileName(
@@ -166,7 +167,7 @@ class PIDViewWindow(QWidget):
 
 
     def _on_connected(self):
-        self._interactive = True
+        # Connecting lands in SAFE: controls stay disabled until MANUAL is sent
         self._conn_badge.setText("● CONNECTED")
         self._conn_badge.setStyleSheet("color: #2e7d32; font-weight: bold;")
 
@@ -178,8 +179,13 @@ class PIDViewWindow(QWidget):
     def _on_abort(self, abort_type: str, reason: str):
         self._interactive = False
 
-    def _on_safe_state(self):
-        self._interactive = True
+    def _on_mode_changed(self, mode: str):
+        self._interactive = (mode == GuiMode.MANUAL)
+
+    def _controls_disabled_text(self, what: str) -> str:
+        if not self.controller.ethernet_client.connected:
+            return f"Not connected - cannot control {what}."
+        return f"Controls disabled in {self.controller.mode} mode - select MANUAL to control {what}."
 
     def _on_valve_updated(self, hw_name: str, state: str):
         """Translate hardware valve name -> project comp_id -> canvas update."""
@@ -206,7 +212,7 @@ class PIDViewWindow(QWidget):
     def _on_valve_open_requested(self, cid: str):
         hw_id = self._comp_to_valve_hw.get(cid, cid)
         if not self._interactive:
-            self._status.setText("Not connected - cannot control valves.")
+            self._status.setText(self._controls_disabled_text("valves"))
             return
         self.controller.toggle_valve(hw_id, True)
         self._status.setText(f"Opening valve: {hw_id}")
@@ -214,7 +220,7 @@ class PIDViewWindow(QWidget):
     def _on_actuator_position_requested(self, cid: str, pct: float):
         hw_id = self._comp_to_valve_hw.get(cid, cid)
         if not self._interactive:
-            self._status.setText("Not connected - cannot control actuators.")
+            self._status.setText(self._controls_disabled_text("actuators"))
             return
         self.controller.set_actuator_position(hw_id, pct)
         self._status.setText(f"Setting {hw_id} to {pct:g}")
@@ -222,7 +228,7 @@ class PIDViewWindow(QWidget):
     def _on_valve_close_requested(self, cid: str):
         hw_id = self._comp_to_valve_hw.get(cid, cid)
         if not self._interactive:
-            self._status.setText("Not connected - cannot control valves.")
+            self._status.setText(self._controls_disabled_text("valves"))
             return
         self.controller.toggle_valve(hw_id, False)
         self._status.setText(f"Closing valve: {hw_id}")
