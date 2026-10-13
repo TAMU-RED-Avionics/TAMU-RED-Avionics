@@ -616,6 +616,13 @@ class PIDEditorWindow(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Save Failed", str(e))
 
+    def load_project_object(self, project):
+        """Show an in-memory project (e.g. one streamed to a viewer GUI) with no file behind it."""
+        self._project      = project
+        self._current_path = None
+        self._proj_name_edit.setText(project.name)
+        self.canvas.set_project(project)
+
     def load_project_path(self, path: str):
         try:
             self._project      = PIDProject.load(path)

@@ -496,7 +496,10 @@ class NewPIDPage(QWidget):
             return
 
         project_path = getattr(self.controller, "project_path", "")
-        self.editor.load_project_path(project_path)
+        if project_path:
+            self.editor.load_project_path(project_path)
+        else:
+            self.editor.load_project_object(project)    # e.g. streamed to a viewer: no file on disk
 
 
 class HomePage(QWidget):

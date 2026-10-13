@@ -115,9 +115,15 @@ class ShareServer(QObject):
     def _drop(self, sock: QTcpSocket):
         if sock in self._clients:
             self._clients.remove(sock)
-            self.viewers_changed.emit(len(self._clients))
-        sock.abort()
-        sock.deleteLater()
+            try:
+                self.viewers_changed.emit(len(self._clients))
+            except RuntimeError:        # server already torn down (app shutting down)
+                pass
+        try:
+            sock.abort()
+            sock.deleteLater()
+        except RuntimeError:
+            pass
 
 
 class ViewerClient(QObject):
