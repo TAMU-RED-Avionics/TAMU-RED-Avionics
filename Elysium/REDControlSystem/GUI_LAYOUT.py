@@ -909,6 +909,9 @@ class MainWindow(QMainWindow):
         self.controller.signals.connected.connect(self._refresh_project_lock)
         self.controller.signals.abort_triggered.connect(lambda *_: self._refresh_project_lock())
         self.controller.signals.mode_changed.connect(lambda *_: self._refresh_project_lock())
+        self.controller.signals.view_only_changed.connect(lambda *_: self._refresh_project_lock())
+        # Viewer GUIs load the project the controller streams to them
+        self.controller.signals.project_received.connect(self._on_remote_project)
         self.controller.signals.disconnected.connect(lambda _: self._refresh_project_lock())
         self.controller.signals.valve_updated.connect(lambda *_: self._refresh_project_lock())
 
@@ -958,6 +961,12 @@ class MainWindow(QMainWindow):
         root.addWidget(self.action_bar_scroll)
 
         self.setCentralWidget(central)
+
+    def _on_remote_project(self, project_dict: dict):
+        from PID_SCHEMA import PIDProject
+        project = PIDProject.from_dict(project_dict, name_fallback="Remote project")
+        self.controller.project_path = None
+        self._dispatch_project(project)
 
     def _refresh_project_lock(self):
         self._set_project_locked(self.controller.project_lock_required())
@@ -1056,7 +1065,7 @@ class MainWindow(QMainWindow):
             self.live_data_page.load_project(project)
 
         # The Safe State lives in the .red file; say so loudly if it isn't defined yet.
-        if not self.controller.abort_state_confirmed:
+        if not self.controller.view_only and not self.controller.abort_state_confirmed:
             QMessageBox.warning(
                 self, "Safe State Not Defined",
                 f"'{project.name}' has no confirmed Safe State.\n\n"

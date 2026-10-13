@@ -94,6 +94,7 @@ class PIDViewWindow(QWidget):
         c.signals.disconnected.connect(self._on_disconnected)
         c.signals.abort_triggered.connect(self._on_abort)
         c.signals.mode_changed.connect(self._on_mode_changed)
+        c.signals.view_only_changed.connect(lambda _v: self._on_mode_changed(self.controller.mode))
         c.signals.valve_updated.connect(self._on_valve_updated)
         c.signals.actuator_updated.connect(self._on_actuator_updated)
         c.signals.sensor_updated.connect(self._on_sensor_updated)
@@ -180,9 +181,11 @@ class PIDViewWindow(QWidget):
         self._interactive = False
 
     def _on_mode_changed(self, mode: str):
-        self._interactive = (mode == GuiMode.MANUAL)
+        self._interactive = (mode == GuiMode.MANUAL) and not self.controller.view_only
 
     def _controls_disabled_text(self, what: str) -> str:
+        if self.controller.view_only:
+            return f"View-only mode - cannot control {what}."
         if not self.controller.ethernet_client.connected:
             return f"Not connected - cannot control {what}."
         return f"Controls disabled in {self.controller.mode} mode - select MANUAL to control {what}."

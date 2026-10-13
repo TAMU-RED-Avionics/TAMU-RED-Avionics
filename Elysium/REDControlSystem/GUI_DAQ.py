@@ -41,6 +41,8 @@ class DAQWindow(QWidget):
 
         self.controller = controller
         self.controller.signals.mode_changed.connect(self.mode_action)
+        self.controller.signals.view_only_changed.connect(
+            lambda _v: self.mode_action(self.controller.mode))
 
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -138,7 +140,7 @@ class DAQWindow(QWidget):
         self.filename_preview.setText(self._get_preview())
 
     def mode_action(self, mode: str):
-        enabled = mode == GuiMode.MANUAL
+        enabled = mode == GuiMode.MANUAL and not self.controller.view_only
         self.manual_btn.setEnabled(enabled)
         self.throttling_btn.setEnabled(enabled)
         self.gimbaling_btn.setEnabled(enabled)

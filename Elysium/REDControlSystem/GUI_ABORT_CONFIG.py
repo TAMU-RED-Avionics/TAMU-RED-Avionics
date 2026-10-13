@@ -1069,6 +1069,8 @@ class AbortWindow(QWidget):
         self.controller.signals.mode_changed.connect(self.mode_changed_action)
         self.controller.signals.safe_status_changed.connect(
             lambda: self.mode_changed_action(self.controller.mode))
+        self.controller.signals.view_only_changed.connect(
+            lambda _v: self.mode_changed_action(self.controller.mode))
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1126,10 +1128,11 @@ class AbortWindow(QWidget):
         # SAFE while it's only assumed (just connected), so it can be applied.
         pending_safe = (self._selected_mode() == GuiMode.SAFE and c.mode == GuiMode.SAFE
                         and not c.safe_applied)
-        self.send_btn.setEnabled(self._connected and (self._selected_mode() != c.mode or pending_safe))
-        self.mode_combo.setEnabled(self._connected)
+        can_command = self._connected and not c.view_only        # a viewer commands nothing
+        self.send_btn.setEnabled(can_command and (self._selected_mode() != c.mode or pending_safe))
+        self.mode_combo.setEnabled(can_command)
         self.manual_abort_btn.setEnabled(
-            self._connected and self.controller.mode in (GuiMode.MANUAL, GuiMode.LOCKED))
+            can_command and self.controller.mode in (GuiMode.MANUAL, GuiMode.LOCKED))
 
     def _send_mode(self):
         error = self.controller.request_mode(self._selected_mode())
@@ -1148,7 +1151,9 @@ class AbortWindow(QWidget):
     def mode_changed_action(self, mode: str):
         color = self._MODE_COLORS.get(mode, "#555")
         text = f"MODE: {mode}"
-        if mode == GuiMode.SAFE and self._connected and not self.controller.safe_applied:
+        if self.controller.view_only:
+            text, color = f"VIEW ONLY - controller: {mode}", "#1a73e8"
+        elif mode == GuiMode.SAFE and self._connected and not self.controller.safe_applied:
             text, color = "MODE: SAFE (not applied)", "#e37400"
         self.mode_label.setText(text)
         self.mode_label.setStyleSheet(f"color: {color}; font-weight: bold;")

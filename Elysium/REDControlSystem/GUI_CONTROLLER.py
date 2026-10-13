@@ -11,6 +11,7 @@ from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QDialog, QLabel, 
 from PyQt5.QtCore import Qt, QTimer, QDateTime, QObject, pyqtSignal
 from GUI_COMMS import EthernetClient
 from PID_SCHEMA import DEFAULT_ABORT_ID
+from GUI_SHARE import ShareServer, ViewerClient, DEFAULT_SHARE_PORT
 
 try:
     from CoolProp.CoolProp import PropsSI as _PropsSI
@@ -57,6 +58,15 @@ class Signals(QObject):
     abort_triggered = pyqtSignal(str, str, str)   # abort_type, reason, abort state id ("" = default)
     mode_changed = pyqtSignal(str)          # new GuiMode value
     safe_status_changed = pyqtSignal()      # safe_applied flipped (SAFE assumed vs applied)
+
+    # Read-only sharing (see GUI_SHARE): abort_notice fires once per abort with the abort
+    # type / reason / state name (relayed to viewers); project_changed when a project is
+    # (re)loaded; project_received carries a project dict streamed from a controller GUI;
+    # view_only_changed when the GUI is switched between controller and viewer.
+    abort_notice = pyqtSignal(str, str, str)
+    project_changed = pyqtSignal()
+    project_received = pyqtSignal(dict)
+    view_only_changed = pyqtSignal(bool)
     connected = pyqtSignal()
     disconnected = pyqtSignal(str)
     warnings_changed = pyqtSignal(list)
@@ -149,6 +159,8 @@ class GUIController:
         # SAFE on connect is only *assumed* (nothing is commanded on connect);
         # it becomes applied when the operator sends SAFE.
         self.safe_applied = False
+        # View-only (viewer) GUIs mirror a controller GUI's stream and can command nothing
+        self.view_only = False
         # Abort states already driven to during the current ABORT episode
         self._applied_abort_states: set = set()
         # System-MAWP pre-warning dialog state (see _check_system_pressure_limits)
@@ -227,6 +239,13 @@ class GUIController:
         self._calc_timer.timeout.connect(self._flush_calc_channels)
         self._calc_timer.start(100)
 
+        # Read-only sharing: the controller GUI serves viewers; a viewer GUI consumes it
+        self.share_server = ShareServer(self._share_snapshot, parent=self.signals)
+        self.viewer = ViewerClient(parent=self.signals)
+        self.viewer.message.connect(self._on_viewer_message)
+        self.viewer.linked.connect(lambda: self.signals.connected.emit())
+        self.viewer.failed.connect(lambda reason: self.signals.disconnected.emit(reason))
+
         self.setup_abort_monitor()
     
 
@@ -250,6 +269,10 @@ class GUIController:
         operator-requested disconnect just returns to SAFE. Nothing is live in
         SAFE/ABORT, so a failed connection attempt or a drop there is not an
         abort."""
+        if self.view_only:
+            # Viewer link to a controller GUI dropped: nothing to protect or abort here
+            self.signals.system_status.emit(f"Viewer disconnected: {reason}" if reason else "Viewer disconnected")
+            return
         if self.ethernet_client.intentional_disconnect:
             self.ethernet_client.intentional_disconnect = False
             self._cancel_sequence()
@@ -264,17 +287,178 @@ class GUIController:
     def _on_connected(self):
         """Every (re)connect lands in SAFE. Valves are assumed closed (nothing
         is commanded on connect)."""
+        if self.view_only:
+            return              # the viewer link's hello message carries the controller's mode
         self.ethernet_client.set_system_state("SAFE")
         self._applied_abort_states.clear()
         self._set_safe_applied(False)
         self._set_mode(GuiMode.SAFE, "connected")
+
+    # READ-ONLY SHARING --------------------------------------------------------------
+    # The controller GUI (holding the Teensy link) streams to viewer GUIs via
+    # GUI_SHARE.ShareServer; a viewer GUI (view_only) mirrors that stream and can
+    # command nothing. See GUI_SHARE for the wire format.
+
+    def set_view_only(self, view_only: bool):
+        """Switch this GUI between controller (normal) and viewer (read-only)."""
+        view_only = bool(view_only)
+        if view_only == self.view_only:
+            return
+        if view_only:
+            self.stop_sharing()
+        else:
+            self.viewer.disconnect_from_controller()
+        self.view_only = view_only
+        self.signals.view_only_changed.emit(view_only)
+        self.signals.mode_changed.emit(self.mode)       # refresh anything mode-dependent
+
+    def start_sharing(self, port: int = DEFAULT_SHARE_PORT) -> bool:
+        """Start streaming to viewers (controller GUIs only). False if the port is taken."""
+        if self.view_only or not self.share_server.start(port):
+            return False
+        s = self.signals
+        self._share_links = [
+            (s.sensor_updated,      self._share_sensor),
+            (s.valve_updated,       self._share_valve),
+            (s.actuator_updated,    self._share_actuator),
+            (s.mode_changed,        self._share_mode),
+            (s.safe_status_changed, self._share_safe_status),
+            (s.warnings_changed,    self._share_warnings),
+            (s.system_status,       self._share_status),
+            (s.abort_notice,        self._share_abort),
+            (s.project_changed,     self._share_project),
+            (s.connected,           self._share_link_up),
+            (s.disconnected,        self._share_link_down),
+        ]
+        for sig, slot in self._share_links:
+            sig.connect(slot)
+        return True
+
+    def stop_sharing(self):
+        for sig, slot in getattr(self, "_share_links", []):
+            try:
+                sig.disconnect(slot)
+            except TypeError:
+                pass
+        self._share_links = []
+        self.share_server.stop()
+
+    def _share_snapshot(self) -> dict:
+        """The hello message a newly connected viewer gets: everything needed to draw the
+        current state."""
+        return {
+            "t": "hello", "v": 1,
+            "project": self.project.to_dict() if self.project is not None else None,
+            "mode": self.mode, "safe_applied": self.safe_applied,
+            "link": bool(self.ethernet_client.connected),
+            "valves": dict(self.valve_states),
+            "actuators": dict(self.actuator_positions),
+            "sensors": dict(self.current_sensor_values),
+            "warnings": sorted(self._active_warnings.values()),
+        }
+
+    def _share_sensor(self, name, value, _ts):
+        self.share_server.publish_sensor(name, value)
+
+    def _share_valve(self, name, state):
+        self.share_server.broadcast({"t": "v", "n": name, "s": state})
+
+    def _share_actuator(self, name, pct):
+        self.share_server.broadcast({"t": "a", "n": name, "p": pct})
+
+    def _share_mode(self, mode):
+        self.share_server.broadcast({"t": "m", "mode": mode, "sa": self.safe_applied})
+
+    def _share_safe_status(self):
+        self.share_server.broadcast({"t": "m", "mode": self.mode, "sa": self.safe_applied})
+
+    def _share_warnings(self, messages):
+        self.share_server.broadcast({"t": "w", "d": list(messages)})
+
+    def _share_status(self, text):
+        self.share_server.broadcast({"t": "st", "d": text})
+
+    def _share_abort(self, abort_type, reason, state_name):
+        self.share_server.broadcast({"t": "ab", "type": abort_type, "reason": reason, "state": state_name})
+
+    def _share_project(self):
+        if self.project is not None:
+            self.share_server.broadcast({"t": "project", "project": self.project.to_dict()})
+
+    def _share_link_up(self):
+        self.share_server.broadcast({"t": "link", "up": True})
+
+    def _share_link_down(self, reason=""):
+        self.share_server.broadcast({"t": "link", "up": False, "reason": reason})
+
+    # -- viewer side ---------------------------------------------------------
+    def _on_viewer_message(self, msg: dict):
+        if not self.view_only:
+            return
+        t = msg.get("t")
+        if t in ("hello", "project") and msg.get("project"):
+            self.signals.project_received.emit(msg["project"])      # the main window loads it
+        if t == "hello":
+            for name, is_open in msg.get("valves", {}).items():
+                self.signals.valve_updated.emit(name, "OPEN" if is_open else "CLOSED")
+            for name, pct in msg.get("actuators", {}).items():
+                self._apply_actuator_position(name, pct)
+            for name, value in msg.get("sensors", {}).items():
+                self.apply_remote_sensor(name, value)
+            self.signals.warnings_changed.emit(list(msg.get("warnings", [])))
+            self.apply_remote_mode(msg.get("mode", GuiMode.SAFE), msg.get("safe_applied", False))
+            if not msg.get("link", True):
+                self.signals.system_status.emit("Controller GUI is not connected to the Teensy")
+        elif t == "s":
+            for name, value in msg.get("d", []):
+                self.apply_remote_sensor(name, value)
+        elif t == "v":
+            self.signals.valve_updated.emit(msg.get("n", ""), msg.get("s", "CLOSED"))
+        elif t == "a":
+            self._apply_actuator_position(msg.get("n", ""), float(msg.get("p", 0.0)))
+        elif t == "m":
+            self.apply_remote_mode(msg.get("mode", GuiMode.SAFE), msg.get("sa", False))
+        elif t == "w":
+            self.signals.warnings_changed.emit(list(msg.get("d", [])))
+        elif t == "st":
+            self.signals.system_status.emit(msg.get("d", ""))
+        elif t == "ab":
+            self.show_remote_abort(msg.get("type", ""), msg.get("reason", ""), msg.get("state", ""))
+        elif t == "link":
+            self.signals.system_status.emit(
+                "Controller GUI reconnected to the Teensy" if msg.get("up")
+                else f"Controller GUI lost its Teensy link: {msg.get('reason', '')}".rstrip(": "))
+
+    def apply_remote_sensor(self, name: str, value: float):
+        """A sensor value streamed from the controller (already calibrated / tared there)."""
+        now = QDateTime.currentMSecsSinceEpoch() / 1000.0
+        self.raw_sensor_values[name] = value
+        self.current_sensor_values[name] = value
+        self.sensor_last_rx[name] = now
+        self.signals.sensor_updated.emit(name, value, now)
+
+    def apply_remote_mode(self, mode: str, safe_applied: bool):
+        self.mode = mode
+        self.safe_applied = bool(safe_applied)
+        self.signals.mode_changed.emit(mode)
+        self.signals.safe_status_changed.emit()
+
+    def show_remote_abort(self, abort_type: str, reason: str, state_name: str):
+        """Abort alert on a viewer: a banner window that doesn't block the screen."""
+        box = QMessageBox(
+            QMessageBox.Critical, "ABORT (controller)",
+            f"The controller aborted.\n\nAbort Type: {abort_type}\nReason: {reason}\n"
+            f"Abort State: {state_name}", QMessageBox.Ok, self.parent)
+        box.setWindowModality(Qt.NonModal)
+        box.setAttribute(Qt.WA_DeleteOnClose)
+        box.show()
 
     # MODES --------------------------------------------------------------------------------------------------------
 
     @property
     def lockout(self) -> bool:
         """True whenever the operator may not command valves (everything but MANUAL)."""
-        return self.mode != GuiMode.MANUAL
+        return self.view_only or self.mode != GuiMode.MANUAL
 
     @property
     def sequence_running(self) -> bool:
@@ -291,6 +475,8 @@ class GUIController:
     def request_mode(self, mode: str) -> Optional[str]:
         """Operator mode change (dropdown + SEND). Returns an error message if
         the change is refused, else None."""
+        if self.view_only:
+            return "This GUI is in view-only mode and cannot change modes."
         if not self.ethernet_client.connected:
             return "Connect to the system before changing modes."
         if mode == GuiMode.SAFE:
@@ -356,6 +542,8 @@ class GUIController:
     def refresh_safe_state_warning(self):
         """Persistent warning while the project's Safe State (default abort state) is
         not confirmed; cleared as soon as it is."""
+        if self.view_only:
+            return              # warnings come from the controller's stream
         if self.project is not None and not self.abort_state_confirmed:
             self._set_warning(
                 "safe_state_undefined",
@@ -418,6 +606,7 @@ class GUIController:
         self.ethernet_client.load_project_maps(project)
         self.refresh_safe_state_warning()
         self._emit_warnings()
+        self.signals.project_changed.emit()
         self._recompute_calc_channels()
 
     def _rebuild_valve_states(self, project):
@@ -681,6 +870,8 @@ class GUIController:
 
 
     def check_abort_conditions(self):
+        if self.view_only:
+            return              # the controller GUI evaluates limits and rules
         if not self.current_sensor_values:
             return
 
@@ -996,6 +1187,8 @@ class GUIController:
 
     def trigger_manual_abort(self):
         """Manual abort button handler (Req 11)"""
+        if self.view_only:
+            return
         self.signals.abort_triggered.emit(
             "manual_abort",
             "Operator triggered manual abort",
@@ -1022,6 +1215,8 @@ class GUIController:
         a vent still fires there. While already in ABORT, only a state not yet
         applied this episode is run (an escalation, e.g. a vent after a default
         abort); the default abort never overrides a state already applied."""
+        if self.view_only:
+            return
         sid = state_id or DEFAULT_ABORT_ID
         if self.mode == GuiMode.ABORT and (
                 sid in self._applied_abort_states
@@ -1062,6 +1257,7 @@ class GUIController:
         # their reason as-is. Dumping every PT's value on every abort regardless
         # of relevance was more noise than signal, so that's gone.
         self.log_event("ABORT", f"{abort_type}:{reason}")
+        self.signals.abort_notice.emit(abort_type, reason, state_name)
         QMessageBox.critical(
             self.parent, # has to bind to a real widget
             "ABORT TRIGGERED",
@@ -1373,7 +1569,8 @@ class GUIController:
         Locked while the system is live (MANUAL or LOCKED) or while any valve
         is open. Unlocked in SAFE/ABORT once everything has actually closed.
         """
-        return self.mode in (GuiMode.MANUAL, GuiMode.LOCKED) or any(self.valve_states.values())
+        return (self.view_only or self.mode in (GuiMode.MANUAL, GuiMode.LOCKED)
+                or any(self.valve_states.values()))
 
     def close_all_valves(self):
         """Return the system to fully closed without aborting."""
@@ -1779,7 +1976,11 @@ class GUIController:
         current_time = QDateTime.currentMSecsSinceEpoch()
         valves_to_delete = []
 
-        for valve_name, info in self.pending_valve_commands.items():
+        # The comms thread pops entries on ACK/NCK while this timer runs on the GUI
+        # thread, so iterate over a snapshot (iterating the live dict could raise
+        # "dictionary changed size during iteration", and PyQt aborts the app on an
+        # uncaught exception in a slot).
+        for valve_name, info in list(self.pending_valve_commands.items()):
             if current_time - info["last_sent"] > self.valve_retry_timeout:
                 if info["retries"] < self.valve_max_retries:
 
@@ -1798,7 +1999,7 @@ class GUIController:
                     valves_to_delete.append(valve_name)
 
         for valve_name in valves_to_delete:
-            del self.pending_valve_commands[valve_name]
+            self.pending_valve_commands.pop(valve_name, None)
 
 
     def apply_operation(self, operation: str):
