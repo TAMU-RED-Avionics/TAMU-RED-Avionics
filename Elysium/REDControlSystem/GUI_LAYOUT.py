@@ -1049,6 +1049,16 @@ class MainWindow(QMainWindow):
         if hasattr(self, "abort_config_page"):
             self.abort_config_page.load_project(project)
 
+        # The Safe State lives in the .red file; say so loudly if it isn't defined yet.
+        if not self.controller.abort_state_confirmed:
+            QMessageBox.warning(
+                self, "Safe State Not Defined",
+                f"'{project.name}' has no confirmed Safe State.\n\n"
+                "Open the 'Abort Config' tab > Abort States, set the valve positions for "
+                "'Default Abort' (this is the Safe State) and press 'Confirm This State'. It is "
+                "saved in the project file.\n\nMANUAL mode stays blocked until this is done, "
+                "and SAFE / aborts will close all valves in the meantime.")
+
         # Refresh DAQ filename preview now that sensor keys are populated
         if hasattr(self, "daq_window"):
             self.daq_window.filename_preview.setText(self.daq_window._get_preview())

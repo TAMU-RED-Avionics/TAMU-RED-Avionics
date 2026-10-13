@@ -2,13 +2,13 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QLabel, QLineEdit, QCheckBox,
     QScrollArea, QFrame, QSizePolicy, QMessageBox,
-    QDoubleSpinBox, QComboBox, QToolButton,
+    QDoubleSpinBox, QComboBox, QToolButton, QInputDialog,
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 
 from GUI_CONTROLLER import GUIController, GuiMode
 from PID_SCHEMA import (
-    AbortRule,
+    AbortRule, AbortState, DEFAULT_ABORT_ID,
     COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL,
     COMP_VALVE, COMP_BALL_VALVE, COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_THROTTLE_VALVE,
     get_actuator_spec,
@@ -141,9 +141,31 @@ class _ActionCombo(QComboBox):
         self.setCurrentIndex(idx if idx >= 0 else 0)
 
 
+class _StateCombo(QComboBox):
+    """Picks one of the project's named abort states (stored as "" for the default)."""
+
+    def __init__(self, choices: list, current: str = "", parent=None):
+        super().__init__(parent)
+        self.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.set_choices(choices, current)
+
+    def set_choices(self, choices: list, current=None):
+        keep = self.state_id() if current is None else current
+        self.blockSignals(True)
+        self.clear()
+        for sid, name in choices:
+            self.addItem(name, sid)
+        self.setCurrentIndex(max(self.findData(keep or DEFAULT_ABORT_ID), 0))
+        self.blockSignals(False)
+
+    def state_id(self) -> str:
+        data = self.currentData()
+        return "" if data in (None, DEFAULT_ABORT_ID) else data
+
+
 class _SensorThresholdWidget(QWidget):
     def __init__(self, comp_id: str, comp_label: str, comp_type: str,
-                 extras: dict, valve_options: list, parent=None):
+                 extras: dict, valve_options: list, state_choices: list, parent=None):
         super().__init__(parent)
         self._extras = extras
         unit = _TYPE_UNIT.get(comp_type, "")
@@ -156,7 +178,8 @@ class _SensorThresholdWidget(QWidget):
         grid.setSpacing(6)
         grid.setContentsMargins(0, 0, 0, 0)
 
-        headers = ["Threshold", "Value", "Action", "Target Valve (open_valve)", "Close below"]
+        headers = ["Threshold", "Value", "Action", "Target Valve (open_valve)", "Close below",
+                   "Abort state (abort)"]
         for col, h in enumerate(headers):
             lbl = QLabel(h)
             lbl.setObjectName("sensor_unit_label")
@@ -198,6 +221,12 @@ class _SensorThresholdWidget(QWidget):
             close_widget.set_value(th_data.get(f"{band}_close_below"))
             grid.addWidget(close_widget, row_idx, 4)
 
+            state_combo = _StateCombo(state_choices, th_data.get(f"{band}_state", ""))
+            state_combo.setEnabled(action_combo.current_action() == "abort")
+            action_combo.currentTextChanged.connect(
+                lambda text, sc=state_combo: sc.setEnabled(text == "abort"))
+            grid.addWidget(state_combo, row_idx, 5)
+
             msg_edit = QLineEdit(th_data.get(f"{band}_message", ""))
             msg_edit.setPlaceholderText(
                 f"Default wording. Customize with {{{comp_label or comp_id}}} "
@@ -209,6 +238,7 @@ class _SensorThresholdWidget(QWidget):
                 "action":      action_combo,
                 "target":      target_combo,
                 "close_below": close_widget,
+                "state":       state_combo,
                 "action_key":  action_key,
                 "message":     msg_edit,
             }
@@ -235,6 +265,10 @@ class _SensorThresholdWidget(QWidget):
             msg_form.addWidget(self._fields[band]["message"], row_idx, 1)
         outer.addLayout(msg_form)
 
+    def set_state_choices(self, choices: list):
+        for f in self._fields.values():
+            f["state"].set_choices(choices)
+
     def flush(self):
         d = {}
         for band, f in self._fields.items():
@@ -245,6 +279,7 @@ class _SensorThresholdWidget(QWidget):
             d[f"{band}_target"]   = target or ""
             close_val = f["close_below"].value()
             d[f"{band}_close_below"] = close_val
+            d[f"{band}_state"]    = f["state"].state_id()
         d["soak_ms"] = int(self._soak_sb.value())
         self._extras["thresholds"] = d
 
@@ -267,8 +302,8 @@ class _SystemLimitsSection(QWidget):
         desc = QLabel(
             "Optional system-wide backstop applied across all PT sensors, "
             "independent of the per-sensor thresholds above. A warning fires "
-            "on any PT at or above System MEOP; an abort fires at 95% of "
-            "System MAWP."
+            "on any PT at or above System MEOP; a clear-the-area warning at the "
+            "level below; and the chosen abort state fires at 95% of System MAWP."
         )
         desc.setWordWrap(True)
         desc.setObjectName("sensor_unit_label")
@@ -284,6 +319,23 @@ class _SystemLimitsSection(QWidget):
         row.addWidget(self._meop)
         row.addStretch()
         outer.addLayout(row)
+
+        row2 = QHBoxLayout()
+        row2.addWidget(QLabel("Warn (clear the area) at:"))
+        self._prewarn = QDoubleSpinBox()
+        self._prewarn.setRange(1, 99)
+        self._prewarn.setDecimals(0)
+        self._prewarn.setSuffix(" % of MAWP")
+        self._prewarn.setToolTip(
+            "A dialog warns operators to clear the area at this level, before the system "
+            "acts at 95% of MAWP. They can vent early or cancel the auto-action.")
+        row2.addWidget(self._prewarn)
+        row2.addSpacing(24)
+        row2.addWidget(QLabel("At MAWP limit use abort state:"))
+        self._mawp_state = _StateCombo([(DEFAULT_ABORT_ID, "Default Abort")])
+        row2.addWidget(self._mawp_state)
+        row2.addStretch()
+        outer.addLayout(row2)
 
         msg_grid = QGridLayout()
         msg_grid.setSpacing(4)
@@ -311,6 +363,13 @@ class _SystemLimitsSection(QWidget):
         self._meop.set_value(getattr(params, "system_meop", None))
         self._mawp_msg.setText(getattr(params, "system_mawp_message", ""))
         self._meop_msg.setText(getattr(params, "system_meop_message", ""))
+        self._prewarn.setValue(getattr(params, "system_prewarn_pct", 90.0))
+        self._mawp_state.set_choices(
+            [(s.id, s.name) for s in project.abort_states],
+            getattr(params, "system_mawp_state", ""))
+
+    def set_state_choices(self, choices: list):
+        self._mawp_state.set_choices(choices)
 
     def flush(self):
         if not self._project:
@@ -319,6 +378,8 @@ class _SystemLimitsSection(QWidget):
         self._project.parameters.system_meop = self._meop.value()
         self._project.parameters.system_mawp_message = self._mawp_msg.text().strip()
         self._project.parameters.system_meop_message = self._meop_msg.text().strip()
+        self._project.parameters.system_prewarn_pct = float(self._prewarn.value())
+        self._project.parameters.system_mawp_state = self._mawp_state.state_id()
 
 
 class _SensorThresholdsSection(QWidget):
@@ -378,7 +439,8 @@ class _SensorThresholdsSection(QWidget):
         for cid, comp in sensor_comps:
             block = _CollapsibleBlock(comp.label or cid)
             w = _SensorThresholdWidget(cid, comp.label or cid, comp.type,
-                                       comp.extras, valve_options)
+                                       comp.extras, valve_options,
+                                       [(s.id, s.name) for s in project.abort_states])
             block.add_widget(w)
             self._container_layout.addWidget(block)
             self._widgets[cid] = w
@@ -388,12 +450,16 @@ class _SensorThresholdsSection(QWidget):
                 QLabel("No pressure / temperature / load-cell sensors found in this project.")
             )
 
+    def set_state_choices(self, choices: list):
+        for w in self._widgets.values():
+            w.set_state_choices(choices)
+
     def flush(self):
         for w in self._widgets.values():
             w.flush()
 
 class _LogicRuleRow(QWidget):
-    def __init__(self, rule: AbortRule, on_delete, parent=None):
+    def __init__(self, rule: AbortRule, on_delete, state_choices: list, parent=None):
         super().__init__(parent)
         self._rule = rule
 
@@ -418,6 +484,15 @@ class _LogicRuleRow(QWidget):
         self._action_combo.currentTextChanged.connect(lambda t: setattr(self._rule, "action", t))
         top.addWidget(QLabel("Action:"))
         top.addWidget(self._action_combo)
+
+        self._state_combo = _StateCombo(state_choices, rule.abort_state)
+        self._state_combo.setEnabled(rule.action == "abort")
+        self._state_combo.currentIndexChanged.connect(
+            lambda _i: setattr(self._rule, "abort_state", self._state_combo.state_id()))
+        self._action_combo.currentTextChanged.connect(
+            lambda t: self._state_combo.setEnabled(t == "abort"))
+        top.addWidget(QLabel("Abort state:"))
+        top.addWidget(self._state_combo)
 
         del_btn = QPushButton("✕")
         del_btn.setFixedWidth(28)
@@ -479,6 +554,10 @@ class _LogicRuleRow(QWidget):
         extra_row.addStretch()
         outer.addLayout(extra_row)
 
+    def set_state_choices(self, choices: list):
+        self._state_combo.set_choices(choices)
+        self._rule.abort_state = self._state_combo.state_id()
+
     def flush(self):
         self._rule.close_valve_below = self._close_sb.value()
         self._rule.soak_ms = int(self._soak_sb.value())
@@ -539,8 +618,17 @@ class _LogicRulesSection(QWidget):
         if not self._rows:
             self._rows_layout.addWidget(QLabel("No logic rules defined yet. Click '+ Add Logic Rule' to create one."))
 
+    def _state_choices(self) -> list:
+        if self._project is None:
+            return [(DEFAULT_ABORT_ID, "Default Abort")]
+        return [(s.id, s.name) for s in self._project.abort_states]
+
+    def set_state_choices(self, choices: list):
+        for row in self._rows:
+            row.set_state_choices(choices)
+
     def _add_row(self, rule: AbortRule):
-        row = _LogicRuleRow(rule, on_delete=self._delete_row)
+        row = _LogicRuleRow(rule, on_delete=self._delete_row, state_choices=self._state_choices())
         self._rows.append(row)
         self._rows_layout.addWidget(row)
 
@@ -583,31 +671,60 @@ class _LogicRulesSection(QWidget):
             row.flush()
 
 class _AbortStateSection(QWidget):
-    """Which valves are OPEN when the system aborts (everything else closes).
-    Must be confirmed per P&ID; until it is, abort closes all valves."""
+    """Named abort states: valve configurations the system is driven to on an
+    abort. The Default Abort is also the Safe State preset. Each state is
+    confirmed separately; until the default one is, abort/safe close ALL valves.
+    """
+    states_changed = pyqtSignal()       # added / renamed / deleted
+    confirmation_changed = pyqtSignal() # a state was edited (un-confirmed) or confirmed
 
     def __init__(self, on_confirm, parent=None):
         super().__init__(parent)
         self._project = None
+        self._on_confirm = on_confirm
         self._boxes: dict = {}
         self._loading = False
 
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(8)
-        lay.addWidget(_section_title("Abort State"))
+        lay.addWidget(_section_title("Abort States"))
 
         intro = QLabel(
             "Set each valve's position when the system aborts. By default every valve closes; "
-            "check a valve to leave it open during an abort. Confirm when done."
+            "check a valve to leave it open during an abort. The Default Abort is also the Safe "
+            "State. Add named states (e.g. a vent) and choose which one a limit or rule uses below. "
+            "Confirm each state when done."
         )
         intro.setWordWrap(True)
         intro.setObjectName("sensor_unit_label")
         lay.addWidget(intro)
 
+        row = QHBoxLayout()
+        row.addWidget(QLabel("State:"))
+        self._combo = QComboBox()
+        self._combo.setMinimumWidth(220)
+        self._combo.currentIndexChanged.connect(self._on_state_selected)
+        row.addWidget(self._combo)
+        self._new_btn = QPushButton("New")
+        self._new_btn.clicked.connect(self._new_state)
+        self._rename_btn = QPushButton("Rename")
+        self._rename_btn.clicked.connect(self._rename_state)
+        self._delete_btn = QPushButton("Delete")
+        self._delete_btn.clicked.connect(self._delete_state)
+        for b in (self._new_btn, self._rename_btn, self._delete_btn):
+            row.addWidget(b)
+        row.addStretch()
+        lay.addLayout(row)
+
         self._status = QLabel()
         self._status.setWordWrap(True)
         lay.addWidget(self._status)
+
+        self._firmware_note = QLabel()
+        self._firmware_note.setWordWrap(True)
+        self._firmware_note.setStyleSheet("color: #e37400;")
+        lay.addWidget(self._firmware_note)
 
         self._grid_host = QWidget()
         self._grid = QGridLayout(self._grid_host)
@@ -617,25 +734,50 @@ class _AbortStateSection(QWidget):
 
         row = QHBoxLayout()
         row.addStretch()
-        self._confirm_btn = QPushButton("Confirm Abort State")
+        self._confirm_btn = QPushButton("Confirm This State")
         self._confirm_btn.setObjectName("primary_btn")
         self._confirm_btn.setMinimumHeight(30)
-        self._confirm_btn.clicked.connect(on_confirm)
+        self._confirm_btn.clicked.connect(self._confirm)
         row.addWidget(self._confirm_btn)
         lay.addLayout(row)
 
+    # -- helpers -------------------------------------------------------------
     @staticmethod
     def _commandable(comp) -> bool:
         return comp.type in _VALVE_TYPES or get_actuator_spec(comp) is not None
 
-    def load_project(self, project):
+    def current_state(self):
+        if self._project is None:
+            return None
+        return self._project.get_abort_state(self._combo.currentData() or "")
+
+    def state_choices(self) -> list:
+        """[(id, name)] for rule / limit dropdowns."""
+        if self._project is None:
+            return [(DEFAULT_ABORT_ID, "Default Abort")]
+        return [(s.id, s.name) for s in self._project.abort_states]
+
+    # -- loading -------------------------------------------------------------
+    def load_project(self, project, select_id: str = ""):
         self._project = project
+        self._loading = True
+        self._combo.clear()
+        if project is not None:
+            for st in project.abort_states:
+                self._combo.addItem(st.name, st.id)
+            idx = self._combo.findData(select_id or DEFAULT_ABORT_ID)
+            self._combo.setCurrentIndex(max(idx, 0))
+        self._loading = False
+        self._rebuild_grid()
+
+    def _rebuild_grid(self):
         self._loading = True
         self._boxes.clear()
         while self._grid.count():
             item = self._grid.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
+        project, state = self._project, self.current_state()
         valves = []
         if project is not None:
             valves = sorted((c for c in project.components.values() if self._commandable(c)),
@@ -643,38 +785,102 @@ class _AbortStateSection(QWidget):
         cols = 3
         for i, comp in enumerate(valves):
             box = QCheckBox(f"{(comp.label or '').strip() or comp.id}  ({comp.type.replace('_', ' ')})")
-            box.setChecked(bool(project.abort_state.get(comp.id, False)))
+            box.setChecked(bool(state.valves.get(comp.id, False)))
             box.toggled.connect(lambda checked, cid=comp.id: self._on_toggled(cid, checked))
             self._grid.addWidget(box, i // cols, i % cols)
             self._boxes[comp.id] = box
         if not valves:
             self._grid.addWidget(QLabel("No commandable valves in this project."), 0, 0)
+        is_default = state is not None and state.id == DEFAULT_ABORT_ID
         self._confirm_btn.setEnabled(project is not None)
+        self._rename_btn.setEnabled(project is not None and not is_default)
+        self._delete_btn.setEnabled(project is not None and not is_default)
+        self._new_btn.setEnabled(project is not None)
         self._loading = False
         self.refresh_status()
 
+    def _on_state_selected(self, *_):
+        if not self._loading:
+            self._rebuild_grid()
+
+    # -- editing -------------------------------------------------------------
     def _on_toggled(self, cid: str, checked: bool):
-        if self._loading or self._project is None:
+        state = self.current_state()
+        if self._loading or state is None:
             return
-        self._project.abort_state[cid] = checked
-        self._project.abort_state_confirmed = False     # any edit needs re-confirming
+        state.valves[cid] = checked
+        state.confirmed = False         # any edit needs re-confirming
         self.refresh_status()
+        self.confirmation_changed.emit()
+
+    def _confirm(self):
+        state = self.current_state()
+        if state is not None:
+            state.confirmed = True
+            self._on_confirm(state)
+            self.refresh_status()
+            self.confirmation_changed.emit()
+
+    def _new_state(self):
+        if self._project is None:
+            return
+        name, ok = QInputDialog.getText(self, "New Abort State", "Name (e.g. Vent):")
+        name = name.strip()
+        if not ok or not name:
+            return
+        existing = {s.id for s in self._project.abort_states}
+        n = 1
+        while f"state_{n}" in existing:
+            n += 1
+        self._project.abort_states.append(AbortState(f"state_{n}", name))
+        self.load_project(self._project, select_id=f"state_{n}")
+        self.states_changed.emit()
+
+    def _rename_state(self):
+        state = self.current_state()
+        if state is None or state.id == DEFAULT_ABORT_ID:
+            return
+        name, ok = QInputDialog.getText(self, "Rename Abort State", "Name:", text=state.name)
+        if ok and name.strip():
+            state.name = name.strip()
+            self.load_project(self._project, select_id=state.id)
+            self.states_changed.emit()
+
+    def _delete_state(self):
+        state = self.current_state()
+        if state is None or state.id == DEFAULT_ABORT_ID:
+            return
+        if QMessageBox.question(
+                self, "Delete Abort State",
+                f"Delete '{state.name}'? Limits and rules that use it will fall back to the "
+                "Default Abort.", QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+            return
+        self._project.abort_states = [s for s in self._project.abort_states if s.id != state.id]
+        self.load_project(self._project)
+        self.states_changed.emit()
 
     def refresh_status(self):
-        p = self._project
-        if p is None:
+        state = self.current_state()
+        if state is None:
             self._status.setText("No project loaded.")
+            self._firmware_note.setText("")
             return
-        n_open = sum(1 for cid, v in p.abort_state.items() if v and cid in self._boxes)
-        if p.abort_state_confirmed:
-            self._status.setText(
-                f"CONFIRMED: {n_open} valve(s) open on abort, all others closed.")
+        n_open = sum(1 for cid, v in state.valves.items() if v and cid in self._boxes)
+        label = state.name
+        if state.confirmed:
+            self._status.setText(f"{label}: CONFIRMED - {n_open} valve(s) open, all others closed.")
             self._status.setStyleSheet("color: #1e8e3e; font-weight: bold;")
         else:
             self._status.setText(
-                "NOT CONFIRMED: abort will close ALL valves until you review and confirm "
-                f"({n_open} currently ticked open).")
+                f"{label}: NOT CONFIRMED - until you review and confirm, this state closes ALL "
+                f"valves ({n_open} currently ticked open).")
             self._status.setStyleSheet("color: #e37400; font-weight: bold;")
+        if n_open:
+            self._firmware_note.setText(
+                "Note: the Teensy firmware closes ALL valves on its own aborts (e.g. comms loss), "
+                "so it won't match this state there.")
+        else:
+            self._firmware_note.setText("")
 
 
 class AbortConfigPage(QWidget):
@@ -710,6 +916,9 @@ class AbortConfigPage(QWidget):
 
         state_card, state_card_layout = _card()
         self._abort_state_section = _AbortStateSection(self._confirm_abort_state)
+        self._abort_state_section.states_changed.connect(self._refresh_state_choices)
+        self._abort_state_section.confirmation_changed.connect(
+            lambda: self._controller and self._controller.refresh_safe_state_warning())
         state_card_layout.addWidget(self._abort_state_section)
         self._main_layout.addWidget(state_card)
 
@@ -762,17 +971,23 @@ class AbortConfigPage(QWidget):
         if self._controller:
             self._controller.reload_abort_rules(project)
 
-    def _confirm_abort_state(self):
+    def _refresh_state_choices(self):
+        if self._project is None:
+            return
+        choices = [(s.id, s.name) for s in self._project.abort_states]
+        self._system_limits_section.set_state_choices(choices)
+        self._sensor_section.set_state_choices(choices)
+        self._logic_section.set_state_choices(choices)
+
+    def _confirm_abort_state(self, state):
         if self._project is None:
             QMessageBox.warning(self, "No Project", "No project is currently loaded.")
             return
-        self._project.abort_state_confirmed = True
-        self._abort_state_section.refresh_status()
         path = getattr(self._controller, "project_path", None)
         if not path:
             QMessageBox.warning(
                 self, "Confirmed (not saved)",
-                "Abort state is confirmed for this session, but there is no project file "
+                f"'{state.name}' is confirmed for this session, but there is no project file "
                 "path to save it to. Save the project from the P&ID editor first.")
             return
         try:
@@ -852,6 +1067,8 @@ class AbortWindow(QWidget):
         self.controller.signals.connected.connect(self.connect_action)
         self.controller.signals.disconnected.connect(self.disconnect_action)
         self.controller.signals.mode_changed.connect(self.mode_changed_action)
+        self.controller.signals.safe_status_changed.connect(
+            lambda: self.mode_changed_action(self.controller.mode))
 
         layout = QVBoxLayout()
         layout.setContentsMargins(0, 0, 0, 0)
@@ -904,22 +1121,17 @@ class AbortWindow(QWidget):
         return self.mode_combo.currentData()
 
     def _refresh_send(self, *_):
-        self.send_btn.setEnabled(self._connected and self._selected_mode() != self.controller.mode)
+        c = self.controller
+        # SEND is live when the selection differs from the current mode - or for
+        # SAFE while it's only assumed (just connected), so it can be applied.
+        pending_safe = (self._selected_mode() == GuiMode.SAFE and c.mode == GuiMode.SAFE
+                        and not c.safe_applied)
+        self.send_btn.setEnabled(self._connected and (self._selected_mode() != c.mode or pending_safe))
         self.mode_combo.setEnabled(self._connected)
         self.manual_abort_btn.setEnabled(
             self._connected and self.controller.mode in (GuiMode.MANUAL, GuiMode.LOCKED))
 
     def _send_mode(self):
-        if (self._selected_mode() == GuiMode.MANUAL and self.controller.project is not None
-                and not self.controller.abort_state_confirmed):
-            answer = QMessageBox.question(
-                self, "Abort State Not Confirmed",
-                "No abort state has been confirmed for this P&ID, so an abort will close ALL "
-                "valves (the default).\n\nTo choose which valves stay open on abort, go to the "
-                "'Abort Config' tab > Abort State and confirm it.\n\nContinue to MANUAL anyway?",
-                QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-            if answer != QMessageBox.Yes:
-                return
         error = self.controller.request_mode(self._selected_mode())
         if error:
             QMessageBox.warning(self, "Mode Change Refused", error)
@@ -927,15 +1139,18 @@ class AbortWindow(QWidget):
 
     def connect_action(self):
         self._connected = True
-        self._refresh_send()
+        self.mode_changed_action(self.controller.mode)
 
     def disconnect_action(self, reason=""):
         self._connected = False
-        self._refresh_send()
+        self.mode_changed_action(self.controller.mode)
 
     def mode_changed_action(self, mode: str):
         color = self._MODE_COLORS.get(mode, "#555")
-        self.mode_label.setText(f"MODE: {mode}")
+        text = f"MODE: {mode}"
+        if mode == GuiMode.SAFE and self._connected and not self.controller.safe_applied:
+            text, color = "MODE: SAFE (not applied)", "#e37400"
+        self.mode_label.setText(text)
         self.mode_label.setStyleSheet(f"color: {color}; font-weight: bold;")
         # Point the dropdown at the active mode (ABORT has no entry; offer SAFE,
         # the only way out of it).
