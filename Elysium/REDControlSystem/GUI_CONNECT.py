@@ -202,7 +202,7 @@ class ConnectionWindow(QWidget):
         # action bar doesn't need to be as wide.
         self.net_btn = QPushButton("Mode")
         self.net_btn.setToolTip("Switch between Controller and Viewer mode, and share live data with viewers")
-        self.net_btn.setFixedWidth(52)
+        # no fixed width: it sizes to its label + the stylesheet's padding, whatever the font / DPI
         self.net_btn.clicked.connect(self._open_network_dialog)
         conn_status_layout.addWidget(self.net_btn)
         conn_status_layout.addWidget(self.connect_btn)

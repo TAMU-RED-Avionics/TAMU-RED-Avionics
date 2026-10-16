@@ -6,7 +6,7 @@ from PyQt5.QtWidgets import (
     QToolButton, QMessageBox,
     QDialog, QDialogButtonBox, QDoubleSpinBox, QApplication,
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QSettings
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor
 
 from GUI_LOGO import LogoWindow
@@ -780,15 +780,18 @@ class TabBar(QWidget):
         layout.addStretch()
         self._select(0, stack)
 
+    def set_tab_enabled(self, idx: int, enabled: bool, tip: str = ""):
+        self.buttons[idx].setEnabled(enabled)
+        self.buttons[idx].setToolTip("" if enabled else tip)
+
     def _select(self, idx: int, stack: QStackedWidget):
         stack.setCurrentIndex(idx)
         for i, btn in enumerate(self.buttons):
             btn.setChecked(i == idx)
 
-# saves a .ini of your text size so it loads the same on launch
-_SETTINGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gui_settings.ini")
-TEXT_SIZE_CYCLE = {12: (16, "Small Text"), 16: (8, "Medium Text"), 8: (12, "Large Text")}
-TEXT_SIZE_LABELS = {size: label for size, label in TEXT_SIZE_CYCLE.values()}
+# Base UI font size (pt). Fixed at the smallest of the sizes the old text-size button
+# offered (8 / 12 / 16): the bottom action bar is a fixed height and clips at larger ones.
+TEXT_SIZE = 8
 
 class _HScrollBar(QScrollArea):
     """Hosts a wide fixed-height bar: instead of forcing the whole window to be as
@@ -809,7 +812,8 @@ class _HScrollBar(QScrollArea):
         super().resizeEvent(event)
         need = self.widget().minimumSizeHint().width() > self.viewport().width()
         extent = self.horizontalScrollBar().sizeHint().height() if need else 0
-        self.setFixedHeight(self._bar_height + extent)
+        # at least the content's own height, so bigger fonts / DPI scaling don't clip it
+        self.setFixedHeight(max(self._bar_height, self.widget().minimumSizeHint().height()) + extent)
 
 
 class MainWindow(QMainWindow):
@@ -823,12 +827,8 @@ class MainWindow(QMainWindow):
         self.resize(w, h)
         self.move(avail.x() + (avail.width() - w) // 2, avail.y() + (avail.height() - h) // 2)
 
-        self._settings = QSettings(_SETTINGS_PATH, QSettings.IniFormat)
-
         self.dark_mode = True # change to False if you want to start in light mode
-        self.text_size = int(self._settings.value("text_size", 12))
-        if self.text_size not in TEXT_SIZE_LABELS:
-            self.text_size = 12
+        self.text_size = TEXT_SIZE
 
         self.controller = GUIController(self)
 
@@ -886,6 +886,9 @@ class MainWindow(QMainWindow):
 
         self.tab_bar = TabBar(pages, self.stack)
         chrome_layout.addWidget(self.tab_bar, stretch=1)
+        self._edit_tabs = [i for i, (label, _) in enumerate(pages)
+                           if label in ("Abort Config", "Sequencing", "New/Edit PID")]
+        self.controller.signals.view_only_changed.connect(lambda *_: self._refresh_edit_tabs())
 
         proj_label = QLabel("Project:")
         proj_label.setObjectName("proj_label")
@@ -933,12 +936,6 @@ class MainWindow(QMainWindow):
         self.dark_mode_btn.clicked.connect(self.toggle_dark_mode)
         chrome_layout.addWidget(self.dark_mode_btn)
 
-        self.text_size_btn = QPushButton(TEXT_SIZE_LABELS[self.text_size])
-        self.text_size_btn.setObjectName("small_btn")
-        self.text_size_btn.setFixedHeight(26)
-        self.text_size_btn.clicked.connect(self.change_text_size)
-        chrome_layout.addWidget(self.text_size_btn)
-
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
         sep.setObjectName("tab_separator")
@@ -970,6 +967,16 @@ class MainWindow(QMainWindow):
         project = PIDProject.from_dict(project_dict, name_fallback="Remote project")
         self.controller.project_path = None
         self._dispatch_project(project)
+
+    def _refresh_edit_tabs(self):
+        """A viewer can't command anything, so it shouldn't be editing the abort config,
+        sequences or P&ID either (the edits would only touch its own copy). Those tabs are
+        disabled while this GUI is in Viewer mode."""
+        viewing = self.controller.view_only
+        for i in self._edit_tabs:
+            self.tab_bar.set_tab_enabled(i, not viewing, "Not available in Viewer mode")
+        if viewing and self.stack.currentIndex() in self._edit_tabs:
+            self.tab_bar._select(0, self.stack)
 
     def _refresh_project_lock(self):
         self._set_project_locked(self.controller.project_lock_required())
@@ -1106,12 +1113,6 @@ class MainWindow(QMainWindow):
         if hasattr(self.telemetry_page.panel_b.graph, "set_dark_mode"):
             self.telemetry_page.panel_b.graph.set_dark_mode(self.dark_mode)
 
-    def change_text_size(self):
-        self.text_size, label = TEXT_SIZE_CYCLE.get(self.text_size, (12, "Large Text"))
-        self.text_size_btn.setText(label)
-        self._settings.setValue("text_size", self.text_size)
-        self.apply_stylesheet()
-
     def apply_stylesheet(self):
         ts = self.text_size
         if self.dark_mode:
@@ -1185,6 +1186,9 @@ class MainWindow(QMainWindow):
             QPushButton#tab_btn:hover {{
                 color: {text};
                 background-color: {bg3};
+            }}
+            QPushButton#tab_btn:disabled {{
+                color: {border2};
             }}
             QPushButton#tab_btn:checked {{
                 color: {accent};
