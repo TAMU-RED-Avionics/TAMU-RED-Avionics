@@ -1,29 +1,32 @@
 # GUI_LIVEDATA.py
-# Live Data tab: a full-size live plot of any mix of sensors and commanded
-# signals, with drag-to-zoom, hover readout and a second (right-hand) y axis.
+# Live Data tab: a grid of live plots, one per sensor type (pressure transducers,
+# thermocouples, load cells) plus a log of the commands sent to the system.
 #
-#   * Sensors come from controller.signals.sensor_updated.
-#   * Commanded signals (what the GUI sent to a valve / actuator) come from
-#     controller.signals.command_sent and are drawn as step traces.
-#   * Every series sits on axis A (left) or B (right) - flip it with the A/B
-#     button on its row - so psi and degrees (or a 0/1 command) can share a
-#     plot without one being squashed flat.
-#   * The view follows live data until you pause or drag-zoom; Back /
-#     Ctrl+Z / right-click undoes a zoom, Home / Esc returns to the live view.
+#   * Sensors come from controller.signals.sensor_updated; the sidebar ticks which
+#     ones are plotted, with All / None buttons per sensor type.
+#   * Commands (what the GUI sent to a valve / actuator) come from
+#     controller.signals.command_sent and are listed in the command log.
+#   * The grid starts as 2x2 (PT, TC, LC, Commands). The Panels buttons - or the x on
+#     a panel - add and remove panels; the rest re-flow to fill the space, down to a
+#     single full-screen panel.
+#   * Time is shared: the window / pause / zoom controls move every plot together.
+#     Drag-zoom also fixes the y range of the plot you dragged in; the others
+#     autoscale to the zoomed time span. Back / Ctrl+Z / right-click undoes a zoom,
+#     Home / Esc returns to the live view.
 #
-# The page only needs the controller's signals and its sensor / valve key
-# lists, so it can be fed by any controller-shaped object (e.g. a read-only
-# viewer controller).
+# The page only needs the controller's signals and its sensor key lists, so it can
+# be fed by any controller-shaped object (e.g. a read-only viewer controller).
 from array import array
 from bisect import bisect_left, bisect_right
 from typing import Dict, List, Optional
 
 import numpy as np
 from PyQt5.QtCore import Qt, QDateTime, QTimer
-from PyQt5.QtGui import QKeySequence
+from PyQt5.QtGui import QColor, QKeySequence
 from PyQt5.QtWidgets import (
-    QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton, QScrollArea,
-    QShortcut, QSizePolicy, QToolButton, QVBoxLayout, QWidget,
+    QAbstractItemView, QCheckBox, QComboBox, QFrame, QGridLayout, QHBoxLayout, QHeaderView,
+    QLabel, QPushButton, QScrollArea, QShortcut, QSizePolicy, QTableWidget, QTableWidgetItem,
+    QToolButton, QVBoxLayout, QWidget,
 )
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
 from matplotlib.figure import Figure
@@ -37,7 +40,16 @@ TRIM_CHUNK = 50_000
 RENDER_MS = 100
 MAX_PLOT_POINTS = 3000        # per line; denser windows are min/max-decimated
 HOVER_PX = 14
-CMD_SUFFIX = " cmd"
+MAX_COMMANDS = 5000           # command log entries kept; oldest trimmed beyond this
+
+# (panel id, title, short button label, controller attribute holding its sensor keys)
+SENSOR_PANELS = [
+    ("pt", "Pressure Transducers", "PTs", "pt_keys"),
+    ("tc", "Thermocouples", "TCs", "tc_keys"),
+    ("lc", "Load Cells", "LCs", "lc_keys"),
+]
+CMD_PANEL = ("cmd", "Commands Sent", "Commands")
+PANEL_IDS = [p[0] for p in SENSOR_PANELS] + [CMD_PANEL[0]]
 
 
 class _Series:
@@ -90,24 +102,231 @@ def _decimate(t: np.ndarray, v: np.ndarray):
     return ts, vs
 
 
-class _SeriesRow(QWidget):
-    """Checkbox + A/B axis button for one plottable series."""
+class _PanelFrame(QFrame):
+    """Bordered panel with a title bar and a close (x) button."""
 
-    def __init__(self, key: str, label: str, on_change, on_axis):
+    def __init__(self, page, pid: str, title: str):
         super().__init__()
-        self.key = key
-        lay = QHBoxLayout(self)
-        lay.setContentsMargins(2, 0, 2, 0)
-        lay.setSpacing(4)
-        self.check = QCheckBox(label)
-        self.check.toggled.connect(lambda _c: on_change())
-        lay.addWidget(self.check, stretch=1)
-        self.axis_btn = QToolButton()
-        self.axis_btn.setText("A")
-        self.axis_btn.setFixedWidth(26)
-        self.axis_btn.setToolTip("Axis: A = left y axis, B = right y axis (click to switch)")
-        self.axis_btn.clicked.connect(lambda: on_axis(key))
-        lay.addWidget(self.axis_btn)
+        self.page = page
+        self.pid = pid
+        self.setFrameShape(QFrame.StyledPanel)
+        self.outer = QVBoxLayout(self)
+        self.outer.setContentsMargins(4, 2, 4, 4)
+        self.outer.setSpacing(2)
+        bar = QHBoxLayout()
+        bar.setContentsMargins(2, 0, 0, 0)
+        lbl = QLabel(title.upper())
+        lbl.setObjectName("panel_section_title")
+        bar.addWidget(lbl)
+        bar.addStretch()
+        close = QToolButton()
+        close.setText("✕")
+        close.setAutoRaise(True)
+        close.setToolTip("Remove this panel (bring it back with the Panels buttons)")
+        close.clicked.connect(lambda: page.set_panel_visible(pid, False))
+        bar.addWidget(close)
+        self.outer.addLayout(bar)
+
+
+class _PlotPanel(_PanelFrame):
+    """Live plot of the ticked sensors of one type."""
+
+    def __init__(self, page, pid: str, title: str, noun: str):
+        super().__init__(page, pid, title)
+        self.noun = noun
+        self.keys: List[str] = []           # every sensor of this type in the project
+        self.checked: List[str] = []        # the ones plotted
+        self.lines: dict = {}
+
+        self.fig = Figure()
+        self.canvas = FigureCanvasQTAgg(self.fig)
+        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        self.canvas.setMinimumSize(160, 110)
+        self.outer.addWidget(self.canvas, stretch=1)
+
+        self.ax = self.fig.add_subplot(111)
+        self.fig.subplots_adjust(left=0.11, right=0.98, top=0.96, bottom=0.15)
+        self.annot = self.ax.annotate(
+            "", xy=(0, 0), xytext=(14, 14), textcoords="offset points", fontsize=9,
+            fontfamily="monospace", zorder=30,
+            bbox=dict(boxstyle="round,pad=0.6", fc="#2a2a38", ec="#8b1a1a", lw=1.6, alpha=0.97))
+        self.annot.set_visible(False)
+        self.note = self.ax.text(0.5, 0.5, "", transform=self.ax.transAxes, ha="center",
+                                 va="center", fontsize=10, zorder=5)
+        self.selector = RectangleSelector(
+            self.ax, lambda p, r: page._on_zoom_select(self, p, r), useblit=False, button=[1],
+            minspanx=6, minspany=6, spancoords="pixels", interactive=False,
+            props=dict(facecolor="#3b82f6", edgecolor="#3b82f6", alpha=0.25))
+        self.canvas.mpl_connect("button_press_event", self._on_press)
+        self.canvas.mpl_connect("motion_notify_event", self._on_hover)
+        self.apply_theme()
+        self.rebuild_lines()
+
+    def apply_theme(self):
+        fg, bg, grid, annot_bg = self.page._theme()
+        self.fig.set_facecolor(bg)
+        self.ax.set_facecolor(bg)
+        self.ax.tick_params(colors=fg, labelsize=8)
+        for sp in self.ax.spines.values():
+            sp.set_color(grid)
+        self.ax.grid(True, color=grid, linestyle="--", linewidth=0.5, alpha=0.7)
+        self.ax.set_xlabel("Time (s)", color=fg, fontsize=9, fontfamily="monospace")
+        self.annot.get_bbox_patch().set_facecolor(annot_bg)
+        self.annot.set_color(fg)
+        self.note.set_color(fg)
+
+    def set_keys(self, keys: List[str], checked: List[str]):
+        self.keys = list(keys)
+        self.checked = [k for k in self.keys if k in checked]
+        self.rebuild_lines()
+
+    def set_checked(self, checked: List[str]):
+        self.checked = [k for k in self.keys if k in checked]
+        self.rebuild_lines()
+
+    def color(self, key: str) -> str:
+        pal = SERIES_COLORS_DARK if self.page.dark_mode else SERIES_COLORS_LIGHT
+        return pal[self.keys.index(key) % len(pal)]
+
+    def unit(self) -> str:
+        units = []
+        for k in self.checked or self.keys:
+            u = sensor_unit(k)
+            if u and u not in units:
+                units.append(u)
+        return ", ".join(units)
+
+    def rebuild_lines(self):
+        for line in self.lines.values():
+            line.remove()
+        self.lines.clear()
+        fg, bg, grid, _ = self.page._theme()
+        for key in self.checked:
+            line, = self.ax.plot([], [], color=self.color(key), linewidth=1.8, label=key)
+            self.lines[key] = line
+        self.ax.set_ylabel(self.unit(), color=fg, fontsize=9, fontfamily="monospace")
+        leg = self.ax.get_legend()
+        if leg is not None:
+            leg.remove()
+        if self.lines:
+            leg = self.ax.legend(list(self.lines.values()), list(self.lines), loc="upper left",
+                                 fontsize=8, framealpha=0.85, facecolor=bg, edgecolor=grid,
+                                 labelcolor=fg, ncol=2 if len(self.lines) > 6 else 1)
+            for t in leg.get_texts():
+                t.set_fontfamily("monospace")
+        if not self.keys:
+            self.note.set_text(f"No {self.noun.lower()} in this project")
+        elif not self.checked:
+            self.note.set_text("Tick sensors on the left to plot them")
+        else:
+            self.note.set_text("")
+        self.annot.set_visible(False)
+        self.page._mark_dirty()
+
+    def render(self, t0: float, x0: float, x1: float, y_manual):
+        a0, a1 = t0 + x0, t0 + x1
+        lo = hi = None
+        for key, line in self.lines.items():
+            s = self.page._series.get(key)
+            if s is None:
+                line.set_data([], [])
+                continue
+            t, v = _decimate(*s.window(a0, a1))
+            line.set_data(t - t0, v)
+            vis = (t >= a0) & (t <= a1)
+            if vis.any():
+                vlo, vhi = float(v[vis].min()), float(v[vis].max())
+                lo = vlo if lo is None else min(lo, vlo)
+                hi = vhi if hi is None else max(hi, vhi)
+        self.ax.set_xlim(x0, x1)
+        if y_manual is not None:
+            self.ax.set_ylim(*y_manual)
+        elif lo is not None:
+            pad = max(0.08 * (hi - lo), 0.05 * max(abs(hi), abs(lo), 1.0) if hi == lo else 0.0)
+            self.ax.set_ylim(lo - pad, hi + pad)
+        self.canvas.draw_idle()
+
+    def idle(self):
+        """No data yet: just show a default time span."""
+        self.ax.set_xlim(0, 10)
+        self.canvas.draw_idle()
+
+    def current_xlim(self):
+        return tuple(self.ax.get_xlim())
+
+    def _on_press(self, event):
+        if event.button == 3 and event.inaxes is self.ax:
+            self.page.zoom_back()
+
+    def _hide_annot(self):
+        if self.annot.get_visible():
+            self.annot.set_visible(False)
+            self.canvas.draw_idle()
+
+    def _on_hover(self, event):
+        if event.inaxes is not self.ax or not self.lines:
+            self._hide_annot()
+            return
+        best = None   # (distance, key, t, v, display_xy)
+        for key, line in self.lines.items():
+            t, v = line.get_data()
+            if len(t) == 0:
+                continue
+            pts = self.ax.transData.transform(np.column_stack([np.asarray(t, float), np.asarray(v, float)]))
+            d = np.hypot(pts[:, 0] - event.x, pts[:, 1] - event.y)
+            i = int(d.argmin())
+            if d[i] <= HOVER_PX and (best is None or d[i] < best[0]):
+                best = (d[i], key, float(t[i]), float(v[i]), pts[i])
+        if best is None:
+            self._hide_annot()
+            return
+        _, key, t, v, disp = best
+        xy = self.ax.transData.inverted().transform(disp)
+        fg, _, _, annot_bg = self.page._theme()
+        self.annot.xy = (xy[0], xy[1])
+        self.annot.set_text(f"{key}\nt = {t:.3f} s\n{v:.4g} {sensor_unit(key)}".rstrip())
+        self.annot.get_bbox_patch().set_edgecolor(self.lines[key].get_color())
+        self.annot.set_color(fg)
+        self.annot.get_bbox_patch().set_facecolor(annot_bg)
+        self.annot.set_visible(True)
+        self.canvas.draw_idle()
+
+
+class _CommandLog(_PanelFrame):
+    """Time-stamped list of every command the GUI sent to a valve / actuator."""
+
+    def __init__(self, page, pid: str, title: str):
+        super().__init__(page, pid, title)
+        self.table = QTableWidget(0, 3)
+        self.table.setHorizontalHeaderLabels(["Time", "T+ (s)", "Command"])
+        self.table.verticalHeader().setVisible(False)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setAlternatingRowColors(True)
+        hdr = self.table.horizontalHeader()
+        hdr.setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        hdr.setSectionResizeMode(2, QHeaderView.Stretch)
+        self.outer.addWidget(self.table, stretch=1)
+
+    def add(self, wall_ts: float, rel_t: float, name: str, text: str, opening: Optional[bool]):
+        bar = self.table.verticalScrollBar()
+        at_end = bar.value() >= bar.maximum() - 2
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+        stamp = QDateTime.fromMSecsSinceEpoch(int(wall_ts * 1000)).toString("HH:mm:ss.zzz")
+        for col, txt in enumerate((stamp, f"{rel_t:.3f}", f"{name}  →  {text}")):
+            item = QTableWidgetItem(txt)
+            if col == 2 and opening is not None:
+                item.setForeground(QColor("#3fb950" if opening else "#e5534b"))
+            self.table.setItem(row, col, item)
+        while self.table.rowCount() > MAX_COMMANDS:
+            self.table.removeRow(0)
+        if at_end:
+            self.table.scrollToBottom()
+
+    def clear(self):
+        self.table.setRowCount(0)
 
 
 class LiveDataPage(QWidget):
@@ -118,23 +337,24 @@ class LiveDataPage(QWidget):
 
         self._series: Dict[str, _Series] = {}
         self._t0: Optional[float] = None
-        self._rows: Dict[str, _SeriesRow] = {}
-        self._axis_choice: Dict[str, str] = {}      # key -> "A" | "B" (user override)
-        self._color_idx: Dict[str, int] = {}
-        self._lines: dict = {}
+        self._rows: Dict[str, QCheckBox] = {}
+        self._visible = {pid: True for pid in PANEL_IDS}
 
         # View state. Following = x window tracks "now"; otherwise the view is
-        # frozen at _manual_view. _zoom_stack holds views zoomed away from
+        # frozen at _manual_view = {"x": (x0, x1), "y": {panel id: (lo, hi)}} (panels
+        # without a y entry autoscale). _zoom_stack holds views zoomed away from
         # (the string "LIVE" stands for the following view).
         self._following = True
         self._manual_view: Optional[dict] = None
         self._zoom_stack: list = []
         self._dirty = True
 
+        self.panels: Dict[str, _PlotPanel] = {}
+        self.cmd_panel: Optional[_CommandLog] = None
         self._build_ui()
-        self._build_plot()
         self._connect_controller()
         self.refresh_series()
+        self._relayout()
 
         self._timer = QTimer(self)
         self._timer.timeout.connect(self._tick)
@@ -147,10 +367,10 @@ class LiveDataPage(QWidget):
         root.setSpacing(0)
 
         side = QWidget()
-        side.setFixedWidth(250)
+        side.setFixedWidth(290)
         side_lay = QVBoxLayout(side)
         side_lay.setContentsMargins(6, 6, 6, 6)
-        title = QLabel("SERIES")
+        title = QLabel("SENSORS")
         title.setObjectName("browser_title")
         side_lay.addWidget(title)
         scroll = QScrollArea()
@@ -159,7 +379,7 @@ class LiveDataPage(QWidget):
         self._list_host = QWidget()
         self._list_lay = QVBoxLayout(self._list_host)
         self._list_lay.setContentsMargins(0, 0, 0, 0)
-        self._list_lay.setSpacing(2)
+        self._list_lay.setSpacing(0)
         scroll.setWidget(self._list_host)
         side_lay.addWidget(scroll, stretch=1)
         root.addWidget(side)
@@ -177,6 +397,23 @@ class LiveDataPage(QWidget):
         bar_lay = QHBoxLayout(bar)
         bar_lay.setContentsMargins(8, 4, 8, 4)
         bar_lay.setSpacing(8)
+        bar_lay.addWidget(QLabel("Panels:"))
+        self._panel_btns: Dict[str, QPushButton] = {}
+        buttons = [(p[0], p[2], p[1]) for p in SENSOR_PANELS] + [(CMD_PANEL[0], CMD_PANEL[2], CMD_PANEL[1])]
+        for pid, label, full in buttons:
+            btn = QPushButton(label)
+            btn.setCheckable(True)
+            btn.setChecked(True)
+            btn.setToolTip(f"Show / hide the {full} panel")
+            btn.setStyleSheet("QPushButton:checked { background-color: #3b82f6; color: white; }")
+            btn.toggled.connect(lambda on, p=pid: self.set_panel_visible(p, on))
+            bar_lay.addWidget(btn)
+            self._panel_btns[pid] = btn
+        self.all_btn = QPushButton("Show All Sensors")
+        self.all_btn.setToolTip("Tick every sensor and show the PT, TC and LC plots")
+        self.all_btn.clicked.connect(self.show_all_sensors)
+        bar_lay.addWidget(self.all_btn)
+        bar_lay.addSpacing(12)
         bar_lay.addWidget(QLabel("Window:"))
         self.window_combo = QComboBox()
         for label, secs in WINDOWS:
@@ -186,33 +423,31 @@ class LiveDataPage(QWidget):
         bar_lay.addWidget(self.window_combo)
 
         self.pause_btn = QPushButton("Pause")
-        self.pause_btn.setToolTip("Freeze the view (data keeps recording). Resume = Home.")
+        self.pause_btn.setToolTip("Freeze the view (data keeps recording). Resume jumps back to live (Home / Esc).")
         self.pause_btn.clicked.connect(self._toggle_pause)
         bar_lay.addWidget(self.pause_btn)
         self.back_btn = QPushButton("Back")
         self.back_btn.setToolTip("Undo the last zoom (Backspace / Ctrl+Z / right-click)")
         self.back_btn.clicked.connect(self.zoom_back)
         bar_lay.addWidget(self.back_btn)
-        self.home_btn = QPushButton("Live View")
-        self.home_btn.setToolTip("Clear zoom and follow live data again (Home / Esc)")
-        self.home_btn.clicked.connect(self.zoom_home)
-        bar_lay.addWidget(self.home_btn)
-        self.clear_btn = QPushButton("Clear Data")
-        self.clear_btn.setToolTip("Discard the plotted history and restart the time axis at 0")
-        self.clear_btn.clicked.connect(self.clear_data)
-        bar_lay.addWidget(self.clear_btn)
         bar_lay.addStretch()
         self.status_lbl = QLabel("")
         bar_lay.addWidget(self.status_lbl)
         right_lay.addWidget(bar)
 
-        self.fig = Figure()
-        self.canvas = FigureCanvasQTAgg(self.fig)
-        self.canvas.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        right_lay.addWidget(self.canvas, stretch=1)
+        self._grid_host = QWidget()
+        self._grid = QGridLayout(self._grid_host)
+        self._grid.setContentsMargins(4, 4, 4, 4)
+        self._grid.setSpacing(6)
+        for pid, title_txt, _short, _attr in SENSOR_PANELS:
+            self.panels[pid] = _PlotPanel(self, pid, title_txt, title_txt)
+        self.cmd_panel = _CommandLog(self, CMD_PANEL[0], CMD_PANEL[1])
+        self._empty_lbl = QLabel("No panels shown - turn some on with the Panels buttons above.")
+        self._empty_lbl.setAlignment(Qt.AlignCenter)
+        right_lay.addWidget(self._grid_host, stretch=1)
 
-        hint = QLabel("Drag on the plot to zoom to that box  ·  Back / Ctrl+Z / right-click: undo zoom"
-                      "  ·  Home / Esc: live view  ·  A/B button on a series: choose its y axis")
+        hint = QLabel("Drag on a plot to zoom (time zoom applies to every plot)  ·  Back / Ctrl+Z / right-click: undo zoom"
+                      "  ·  Home / Esc: resume live")
         hint.setContentsMargins(8, 2, 8, 2)
         right_lay.addWidget(hint)
         root.addWidget(right, stretch=1)
@@ -226,85 +461,99 @@ class LiveDataPage(QWidget):
                 sc.setContext(Qt.WidgetWithChildrenShortcut)
                 sc.activated.connect(slot)
 
-    def _build_plot(self):
-        self.fig.clear()
-        self.ax_a = self.fig.add_subplot(111)
-        self.ax_b = self.ax_a.twinx()          # topmost axes: receives mouse events
-        self.fig.subplots_adjust(left=0.07, right=0.93, top=0.95, bottom=0.11)
-        self._apply_theme()
-        self._annot = self.ax_b.annotate(
-            "", xy=(0, 0), xytext=(14, 14), textcoords="offset points", fontsize=10,
-            fontfamily="monospace", zorder=30,
-            bbox=dict(boxstyle="round,pad=0.6", fc="#2a2a38", ec="#8b1a1a", lw=1.6, alpha=0.97))
-        self._annot.set_visible(False)
-        self._lines.clear()
-        self._selector = RectangleSelector(
-            self.ax_b, self._on_zoom_select, useblit=False, button=[1],
-            minspanx=6, minspany=6, spancoords="pixels", interactive=False,
-            props=dict(facecolor="#3b82f6", edgecolor="#3b82f6", alpha=0.25))
-        self.canvas.mpl_connect("button_press_event", self._on_press)
-        self.canvas.mpl_connect("motion_notify_event", self._on_hover)
-        self._rebuild_lines()
+    def _widget(self, pid: str) -> QWidget:
+        return self.cmd_panel if pid == CMD_PANEL[0] else self.panels[pid]
+
+    # PANEL LAYOUT -------------------------------------------------------------------------------------------------
+
+    def panel_visible(self, pid: str) -> bool:
+        return self._visible[pid]
+
+    def set_panel_visible(self, pid: str, visible: bool):
+        visible = bool(visible)
+        if self._visible[pid] == visible:
+            return
+        self._visible[pid] = visible
+        btn = self._panel_btns[pid]
+        btn.blockSignals(True)
+        btn.setChecked(visible)
+        btn.blockSignals(False)
+        self._relayout()
+
+    def _relayout(self):
+        """Re-flow the visible panels: 1 -> full, 2 -> side by side, 3 -> 2 + 1 wide, 4 -> 2x2."""
+        for pid in PANEL_IDS:
+            self._grid.removeWidget(self._widget(pid))
+        self._grid.removeWidget(self._empty_lbl)
+        shown = [pid for pid in PANEL_IDS if self._visible[pid]]
+        n = len(shown)
+        for pid in PANEL_IDS:
+            if pid not in shown:
+                self._widget(pid).hide()
+        cols = 1 if n <= 1 else 2
+        rows = (n + cols - 1) // cols
+        for i, pid in enumerate(shown):
+            r, c = divmod(i, cols)
+            span = 2 if (n == 3 and i == 2) else 1
+            self._grid.addWidget(self._widget(pid), r, c, 1, span)
+            self._widget(pid).show()
+        if n == 0:
+            self._grid.addWidget(self._empty_lbl, 0, 0)
+            self._empty_lbl.show()
+        else:
+            self._empty_lbl.hide()
+        for r in range(2):
+            self._grid.setRowStretch(r, 1 if r < max(rows, 1) else 0)
+        for c in range(2):
+            self._grid.setColumnStretch(c, 1 if c < max(cols, 1) else 0)
+        self._mark_dirty()
 
     def _theme(self):
         if self.dark_mode:
             return "#e8e6e0", "#1e1e24", "#44444f", "#2a2a38"
         return "#1a1a1a", "#ffffff", "#cccccc", "#ffffff"
 
-    def _apply_theme(self):
-        fg, bg, grid, _ = self._theme()
-        self.fig.set_facecolor(bg)
-        for ax in (self.ax_a, self.ax_b):
-            ax.set_facecolor(bg if ax is self.ax_a else "none")
-            ax.tick_params(colors=fg, labelsize=9)
-            for sp in ax.spines.values():
-                sp.set_color(grid)
-        self.ax_a.grid(True, color=grid, linestyle="--", linewidth=0.5, alpha=0.7)
-        self.ax_a.set_xlabel("Time (s)", color=fg, fontsize=10, fontfamily="monospace")
-
     def set_dark_mode(self, dark: bool):
         self.dark_mode = dark
-        self._apply_theme()
-        fg, bg, grid, annot_bg = self._theme()
-        self._annot.get_bbox_patch().set_facecolor(annot_bg)
-        self._annot.set_color(fg)
-        self._rebuild_lines()
+        for panel in self.panels.values():
+            panel.apply_theme()
+            panel.rebuild_lines()
 
     # CONTROLLER ---------------------------------------------------------------------------------------------------
 
     def _connect_controller(self):
         sig = self.controller.signals
         sig.sensor_updated.connect(self._on_sensor)
+        sig.project_changed.connect(self.refresh_series)      # whichever path loaded the project
         cmd = getattr(sig, "command_sent", None)
         if cmd is not None:
             cmd.connect(self._on_command)
 
-    def _ensure_series(self, key: str, unit: str, step: bool) -> _Series:
-        s = self._series.get(key)
-        if s is None:
-            s = self._series[key] = _Series(unit, step)
-        return s
-
     def _on_sensor(self, name: str, value: float, timestamp: float):
         if self._t0 is None:
             self._t0 = timestamp
-        self._ensure_series(name, sensor_unit(name), False).append(timestamp, value)
+        s = self._series.get(name)
+        if s is None:
+            s = self._series[name] = _Series(sensor_unit(name))
+        s.append(timestamp, value)
 
     def _on_command(self, name: str, value: float, timestamp: float):
         if self._t0 is None:
             self._t0 = timestamp
-        key = name + CMD_SUFFIX
         spec = getattr(self.controller, "actuator_specs", {}).get(name)
-        unit = getattr(spec, "unit", "%") if spec is not None else "0/1"
-        self._ensure_series(key, unit, True).append(timestamp, value)
+        if spec is not None:
+            text, opening = f"{value:g} {getattr(spec, 'unit', '%')}".rstrip(), None
+        else:
+            opening = value >= 0.5
+            text = "OPEN" if opening else "CLOSE"
+        self.cmd_panel.add(timestamp, timestamp - self._t0, name.strip() or "(unnamed valve)", text, opening)
 
     def load_project(self, project=None):
         self.refresh_series()
 
     def refresh_series(self):
-        """Rebuild the series list from the controller's sensor / valve keys,
-        keeping what was ticked and its axis."""
-        ticked = {k for k, r in self._rows.items() if r.check.isChecked()}
+        """Rebuild the sensor list from the controller's sensor keys, keeping what was ticked."""
+        ticked = {k for k, cb in self._rows.items() if cb.isChecked()}
         while self._list_lay.count():
             item = self._list_lay.takeAt(0)
             w = item.widget()
@@ -313,108 +562,68 @@ class LiveDataPage(QWidget):
                 w.setParent(None)
                 w.deleteLater()
         self._rows.clear()
-        c = self.controller
-        groups = [
-            ("Pressure Transducers", [(k, k) for k in c.pt_keys]),
-            ("Thermocouples", [(k, k) for k in c.tc_keys]),
-            ("Load Cells", [(k, k) for k in c.lc_keys]),
-            ("Commands sent", [(k + CMD_SUFFIX, f"{k.strip() or '(unnamed valve)'} (sent)")
-                               for k in sorted(c.valve_states)]),
-        ]
-        for title, items in groups:
-            if not items:
+        if not any(getattr(self.controller, attr, []) for _p, _t, _n, attr in SENSOR_PANELS):
+            hint = QLabel("No sensors yet - load a project to list its sensors here.")
+            hint.setWordWrap(True)
+            self._list_lay.addWidget(hint)
+        first = True
+        for pid, title, _noun, attr in SENSOR_PANELS:
+            keys = list(getattr(self.controller, attr, []))
+            self.panels[pid].set_keys(keys, [k for k in keys if k in ticked])
+            if not keys:
                 continue
-            head = QLabel(title)
-            head.setObjectName("panel_section_title")
+            head = QWidget()
+            head_lay = QHBoxLayout(head)
+            head_lay.setContentsMargins(0, 0 if first else 12, 0, 4)
+            first = False
+            head_lay.setSpacing(2)
+            lbl = QLabel(title)
+            lbl.setObjectName("panel_section_title")
+            head_lay.addWidget(lbl, stretch=1)
+            for text, tip, on in (("All", f"Plot every {title.lower()} sensor", True),
+                                  ("None", f"Plot no {title.lower()} sensors", False)):
+                btn = QToolButton()
+                btn.setText(text)
+                btn.setToolTip(tip)
+                btn.clicked.connect(lambda _c=False, k=keys, o=on: self._set_all(k, o))
+                head_lay.addWidget(btn)
             self._list_lay.addWidget(head)
-            for key, label in items:
-                row = _SeriesRow(key, label, self._on_selection_changed, self._toggle_axis)
-                row.check.blockSignals(True)
-                row.check.setChecked(key in ticked)
-                row.check.blockSignals(False)
-                self._rows[key] = row
-                self._list_lay.addWidget(row)
+            for key in keys:
+                cb = QCheckBox(key)
+                cb.setFixedHeight(24)
+                cb.setContentsMargins(8, 0, 0, 0)
+                cb.blockSignals(True)
+                cb.setChecked(key in ticked)
+                cb.blockSignals(False)
+                cb.toggled.connect(lambda _c: self._on_selection_changed())
+                self._rows[key] = cb
+                self._list_lay.addWidget(cb)
         self._list_lay.addStretch()
-        self._sync_axis_buttons()
-        self._rebuild_lines()
 
-    # SERIES / AXES ------------------------------------------------------------------------------------------------
+    # SELECTION ----------------------------------------------------------------------------------------------------
 
     def _checked(self) -> List[str]:
-        return [k for k, r in self._rows.items() if r.check.isChecked()]
+        return [k for k, cb in self._rows.items() if cb.isChecked()]
 
-    def _unit_of(self, key: str) -> str:
-        s = self._series.get(key)
-        if s is not None:
-            return s.unit
-        return "0/1" if key.endswith(CMD_SUFFIX) else sensor_unit(key)
-
-    def _axis_of(self, key: str) -> str:
-        """User's choice, else by unit: the first ticked series' unit is axis A,
-        anything with a different unit goes to B."""
-        if key in self._axis_choice:
-            return self._axis_choice[key]
-        for other in self._checked():
-            if other == key:
-                return "A"
-            if other in self._axis_choice:
-                continue
-            return "A" if self._unit_of(key) == self._unit_of(other) else "B"
-        return "A"
-
-    def _toggle_axis(self, key: str):
-        self._axis_choice[key] = "B" if self._axis_of(key) == "A" else "A"
+    def _set_all(self, keys: List[str], on: bool):
+        for k in keys:
+            cb = self._rows.get(k)
+            if cb is not None:
+                cb.blockSignals(True)
+                cb.setChecked(on)
+                cb.blockSignals(False)
         self._on_selection_changed()
 
-    def _sync_axis_buttons(self):
-        for key, row in self._rows.items():
-            row.axis_btn.setText(self._axis_of(key))
+    def show_all_sensors(self):
+        """Tick every sensor of every type and make sure the plots for them are showing."""
+        self._set_all(list(self._rows), True)
+        for pid, *_ in SENSOR_PANELS:
+            self.set_panel_visible(pid, True)
 
     def _on_selection_changed(self):
-        self._sync_axis_buttons()
-        self._rebuild_lines()
-
-    def _color(self, key: str) -> str:
-        if key not in self._color_idx:
-            self._color_idx[key] = len(self._color_idx)
-        pal = SERIES_COLORS_DARK if self.dark_mode else SERIES_COLORS_LIGHT
-        return pal[self._color_idx[key] % len(pal)]
-
-    def _rebuild_lines(self):
-        for line in self._lines.values():
-            line.remove()
-        self._lines.clear()
-        fg, bg, grid, _ = self._theme()
-        units = {"A": [], "B": []}
-        for key in self._checked():
-            ax_name = self._axis_of(key)
-            ax = self.ax_a if ax_name == "A" else self.ax_b
-            s = self._series.get(key)
-            step = (s.step if s is not None else key.endswith(CMD_SUFFIX))
-            line, = ax.plot([], [], color=self._color(key), linewidth=2,
-                            linestyle="--" if step else "-",
-                            drawstyle="steps-post" if step else "default",
-                            label=f"{key} [{ax_name}]")
-            self._lines[key] = line
-            u = self._unit_of(key)
-            if u and u not in units[ax_name]:
-                units[ax_name].append(u)
-        self.ax_a.set_ylabel("A: " + (", ".join(units["A"]) or "-"), color=fg,
-                             fontsize=10, fontfamily="monospace")
-        self.ax_b.set_ylabel("B: " + (", ".join(units["B"]) or "-"), color=fg,
-                             fontsize=10, fontfamily="monospace")
-        self.ax_b.yaxis.set_label_position("right")
-        leg = self.ax_b.get_legend()
-        if leg is not None:
-            leg.remove()
-        if self._lines:
-            leg = self.ax_b.legend(list(self._lines.values()), [l.get_label() for l in self._lines.values()],
-                                   loc="upper left", fontsize=9, framealpha=0.85,
-                                   facecolor=bg, edgecolor=grid, labelcolor=fg)
-            for t in leg.get_texts():
-                t.set_fontfamily("monospace")
-        self._annot.set_visible(False)
-        self._mark_dirty()
+        checked = self._checked()
+        for panel in self.panels.values():
+            panel.set_checked(checked)
 
     # VIEW STATE ---------------------------------------------------------------------------------------------------
 
@@ -432,20 +641,21 @@ class LiveDataPage(QWidget):
     def _mark_dirty(self, *_):
         self._dirty = True
 
-    def _current_view(self) -> dict:
-        return {"x": tuple(self.ax_a.get_xlim()), "yA": tuple(self.ax_a.get_ylim()),
-                "yB": tuple(self.ax_b.get_ylim())}
+    def _current_x(self):
+        for pid in PANEL_IDS[:-1]:
+            if self._visible[pid]:
+                return self.panels[pid].current_xlim()
+        return self._live_x()
 
     def _sync_buttons(self):
         paused = not self._following
         self.pause_btn.setText("Resume" if paused else "Pause")
         self.back_btn.setEnabled(bool(self._zoom_stack))
-        self.home_btn.setEnabled(paused)
         self.status_lbl.setText("PAUSED / ZOOMED" if paused else "LIVE")
 
     def _toggle_pause(self):
         if self._following:
-            self._manual_view = self._current_view()
+            self._manual_view = {"x": self._current_x(), "y": {}}
             self._following = False
         else:
             self.zoom_home()
@@ -470,29 +680,28 @@ class LiveDataPage(QWidget):
         self._sync_buttons()
 
     def clear_data(self):
+        """Discard the plotted history and command log and restart the time axis at 0
+        (no button for it: a stray click mid-test would lose the plots)."""
         for s in self._series.values():
             del s.ts[:]
             del s.val[:]
+        self.cmd_panel.clear()
         self._t0 = None
         self.zoom_home()
 
-    def _on_press(self, event):
-        if event.button == 3 and event.inaxes in (self.ax_a, self.ax_b):
-            self.zoom_back()
-
-    def _on_zoom_select(self, press, release):
-        inv_a = self.ax_a.transData.inverted()
-        inv_b = self.ax_b.transData.inverted()
-        (xa0, ya0), (xa1, ya1) = inv_a.transform((press.x, press.y)), inv_a.transform((release.x, release.y))
-        (_, yb0), (_, yb1) = inv_b.transform((press.x, press.y)), inv_b.transform((release.x, release.y))
-        x0, x1 = sorted((xa0, xa1))
+    def _on_zoom_select(self, panel: _PlotPanel, press, release):
+        inv = panel.ax.transData.inverted()
+        (x0, y0), (x1, y1) = inv.transform((press.x, press.y)), inv.transform((release.x, release.y))
+        x0, x1 = sorted((x0, x1))
         if x1 <= x0:
             return
+        prev_y = {} if self._following else dict(self._manual_view["y"])
         self._zoom_stack.append("LIVE" if self._following else self._manual_view)
-        self._manual_view = {"x": (x0, x1), "yA": tuple(sorted((ya0, ya1))),
-                             "yB": tuple(sorted((yb0, yb1)))}
+        prev_y[panel.pid] = tuple(sorted((y0, y1)))
+        self._manual_view = {"x": (x0, x1), "y": prev_y}
         self._following = False
-        self._annot.set_visible(False)
+        for p in self.panels.values():
+            p.annot.set_visible(False)
         self._mark_dirty()
         self._sync_buttons()
 
@@ -515,78 +724,16 @@ class LiveDataPage(QWidget):
     def render(self):
         self._dirty = False
         t0 = self._t0
+        shown = [self.panels[pid] for pid in PANEL_IDS[:-1] if self._visible[pid]]
         if t0 is None:
-            self.ax_a.set_xlim(0, 10)
-            self.canvas.draw_idle()
+            for panel in shown:
+                panel.idle()
             return
         if self._following:
             x0, x1 = self._live_x()
+            ys = {}
         else:
             x0, x1 = self._manual_view["x"]
-        a0, a1 = t0 + x0, t0 + x1
-        ext = {"A": [None, None], "B": [None, None]}
-        for key, line in self._lines.items():
-            s = self._series.get(key)
-            if s is None:
-                line.set_data([], [])
-                continue
-            t, v = s.window(a0, a1)
-            if s.step and len(t) and t[-1] < a1:
-                t, v = np.append(t, a1), np.append(v, v[-1])      # hold the last command to the edge
-            t, v = _decimate(t, v)
-            line.set_data(t - t0, v)
-            vis = (t >= a0) & (t <= a1)
-            if vis.any():
-                lo, hi = float(v[vis].min()), float(v[vis].max())
-                e = ext["A" if line.axes is self.ax_a else "B"]
-                e[0] = lo if e[0] is None else min(e[0], lo)
-                e[1] = hi if e[1] is None else max(e[1], hi)
-        self.ax_a.set_xlim(x0, x1)
-        self.ax_b.set_xlim(x0, x1)
-        for name, ax in (("A", self.ax_a), ("B", self.ax_b)):
-            if self._following:
-                lo, hi = ext[name]
-                if lo is None:
-                    continue
-                pad = max(0.08 * (hi - lo), 0.05 * max(abs(hi), abs(lo), 1.0) if hi == lo else 0.0)
-                ax.set_ylim(lo - pad, hi + pad)
-            else:
-                ax.set_ylim(*self._manual_view["y" + name])
-        self.canvas.draw_idle()
-
-    # HOVER --------------------------------------------------------------------------------------------------------
-
-    def _on_hover(self, event):
-        if event.inaxes not in (self.ax_a, self.ax_b) or not self._lines:
-            if self._annot.get_visible():
-                self._annot.set_visible(False)
-                self.canvas.draw_idle()
-            return
-        best = None   # (distance, key, t, v, display_xy)
-        for key, line in self._lines.items():
-            t, v = line.get_data()
-            if len(t) == 0:
-                continue
-            pts = line.axes.transData.transform(np.column_stack([np.asarray(t, float), np.asarray(v, float)]))
-            d = np.hypot(pts[:, 0] - event.x, pts[:, 1] - event.y)
-            i = int(d.argmin())
-            if d[i] <= HOVER_PX and (best is None or d[i] < best[0]):
-                best = (d[i], key, float(t[i]), float(v[i]), pts[i])
-        if best is None:
-            if self._annot.get_visible():
-                self._annot.set_visible(False)
-                self.canvas.draw_idle()
-            return
-        _, key, t, v, disp = best
-        xy = self.ax_b.transData.inverted().transform(disp)
-        unit = self._unit_of(key)
-        s = self._series.get(key)
-        val_txt = f"{v:.4g}" if not (s and s.step and s.unit == "0/1") else ("1 (open)" if v >= 0.5 else "0 (closed)")
-        self._annot.xy = (xy[0], xy[1])
-        self._annot.set_text(f"{key}  [{self._axis_of(key)}]\nt = {t:.3f} s\n{val_txt} {unit if unit != '0/1' else ''}".rstrip())
-        self._annot.get_bbox_patch().set_edgecolor(self._lines[key].get_color())
-        fg, _, _, annot_bg = self._theme()
-        self._annot.set_color(fg)
-        self._annot.get_bbox_patch().set_facecolor(annot_bg)
-        self._annot.set_visible(True)
-        self.canvas.draw_idle()
+            ys = self._manual_view["y"]
+        for panel in shown:
+            panel.render(t0, x0, x1, ys.get(panel.pid))

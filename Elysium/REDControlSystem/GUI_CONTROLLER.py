@@ -245,6 +245,8 @@ class GUIController:
         self.viewer.message.connect(self._on_viewer_message)
         self.viewer.linked.connect(lambda: self.signals.connected.emit())
         self.viewer.failed.connect(lambda reason: self.signals.disconnected.emit(reason))
+        self.viewer.stale_changed.connect(self._on_viewer_stale)
+        self.share_token = ""       # shared secret: required of viewers (controller) / presented (viewer)
 
         self.setup_abort_monitor()
     
@@ -321,6 +323,7 @@ class GUIController:
             (s.sensor_updated,      self._share_sensor),
             (s.valve_updated,       self._share_valve),
             (s.actuator_updated,    self._share_actuator),
+            (s.command_sent,        self._share_command),
             (s.mode_changed,        self._share_mode),
             (s.safe_status_changed, self._share_safe_status),
             (s.warnings_changed,    self._share_warnings),
@@ -365,6 +368,9 @@ class GUIController:
 
     def _share_actuator(self, name, pct):
         self.share_server.broadcast({"t": "a", "n": name, "p": pct})
+
+    def _share_command(self, name, value, _ts):
+        self.share_server.broadcast({"t": "c", "n": name, "v": value})
 
     def _share_mode(self, mode):
         self.share_server.broadcast({"t": "m", "mode": mode, "sa": self.safe_applied})
@@ -416,6 +422,9 @@ class GUIController:
             self.signals.valve_updated.emit(msg.get("n", ""), msg.get("s", "CLOSED"))
         elif t == "a":
             self._apply_actuator_position(msg.get("n", ""), float(msg.get("p", 0.0)))
+        elif t == "c":      # stamped on arrival: the two laptops' clocks are not synchronised
+            self.signals.command_sent.emit(msg.get("n", ""), float(msg.get("v", 0.0)),
+                                           QDateTime.currentMSecsSinceEpoch() / 1000.0)
         elif t == "m":
             self.apply_remote_mode(msg.get("mode", GuiMode.SAFE), msg.get("sa", False))
         elif t == "w":
@@ -428,6 +437,10 @@ class GUIController:
             self.signals.system_status.emit(
                 "Controller GUI reconnected to the Teensy" if msg.get("up")
                 else f"Controller GUI lost its Teensy link: {msg.get('reason', '')}".rstrip(": "))
+
+    def _on_viewer_stale(self, stale: bool, why: str):
+        self.signals.system_status.emit(
+            f"VIEWER DATA STALE: {why}" if stale else "Viewer link live again")
 
     def apply_remote_sensor(self, name: str, value: float):
         """A sensor value streamed from the controller (already calibrated / tared there)."""

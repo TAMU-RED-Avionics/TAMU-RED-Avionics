@@ -43,6 +43,13 @@ class NetworkDialog(QDialog):
         row.addWidget(self._port)
         row.addStretch()
         lay.addLayout(row)
+        tok_row = QHBoxLayout()
+        tok_row.addWidget(QLabel("Access token:"))
+        self._token = QLineEdit(controller.share_token)
+        self._token.setPlaceholderText("optional - must match on controller and viewers")
+        self._token.textChanged.connect(self._on_token_changed)
+        tok_row.addWidget(self._token)
+        lay.addLayout(tok_row)
         self._share_status = QLabel()
         self._share_status.setWordWrap(True)
         lay.addWidget(self._share_status)
@@ -87,9 +94,10 @@ class NetworkDialog(QDialog):
         self._port.setEnabled(not c.view_only and not c.share_server.listening)
         self._viewer_hint.setVisible(c.view_only)
         if c.share_server.listening:
+            names = f" ({', '.join(c.share_server.viewer_names)})" if c.share_server.viewer_count else ""
             self._share_status.setText(
                 f"Sharing on port {c.share_server.port} - {c.share_server.viewer_count} viewer(s) "
-                f"connected. Viewers connect to: {self._lan_addresses()}")
+                f"connected{names}. Viewers connect to: {self._lan_addresses()}")
         elif c.share_server.last_error:
             self._share_status.setText(f"Could not share: {c.share_server.last_error}")
         else:
@@ -98,6 +106,10 @@ class NetworkDialog(QDialog):
     def _on_mode_toggled(self, controller_selected: bool):
         self.controller.set_view_only(not controller_selected)
         self._refresh()
+
+    def _on_token_changed(self, text: str):
+        self.controller.share_token = text
+        self.controller.share_server.token = text       # applies to viewers that connect from now on
 
     def _on_share_toggled(self, on: bool):
         if on:
@@ -132,6 +144,7 @@ class ConnectionWindow(QWidget):
         self.controller.signals.connected.connect(self.connect_action)
         self.controller.signals.disconnected.connect(self.disconnect_action)
         self.controller.signals.view_only_changed.connect(self._on_view_only_changed)
+        self.controller.viewer.stale_changed.connect(self._on_viewer_stale)
         self._addr = {False: ("192.168.1.174", "8888"), True: ("", str(DEFAULT_SHARE_PORT))}
         
         eth_layout = QVBoxLayout()
@@ -187,9 +200,9 @@ class ConnectionWindow(QWidget):
 
         # Stacked: status + connect/disconnect on top, address fields below, so the
         # action bar doesn't need to be as wide.
-        self.net_btn = QPushButton("⚙")
-        self.net_btn.setToolTip("Controller / Viewer mode and live-data sharing")
-        self.net_btn.setFixedWidth(28)
+        self.net_btn = QPushButton("Mode")
+        self.net_btn.setToolTip("Switch between Controller and Viewer mode, and share live data with viewers")
+        self.net_btn.setFixedWidth(52)
         self.net_btn.clicked.connect(self._open_network_dialog)
         conn_status_layout.addWidget(self.net_btn)
         conn_status_layout.addWidget(self.connect_btn)
@@ -210,6 +223,12 @@ class ConnectionWindow(QWidget):
         self.port_input.setText(port)
         self.ip_input.setPlaceholderText("controller GUI IP" if view_only else "")
         self.conn_status_label.setText("Viewer mode (read-only)" if view_only else "Not Connected")
+
+    def _on_viewer_stale(self, stale: bool, why: str):
+        if not self.controller.view_only:
+            return
+        self.conn_status_label.setText(
+            f"STALE - {why}" if stale else "Viewing (read-only)")
 
     def connect_action(self):
         self.spinner.stop()
@@ -273,7 +292,7 @@ class ConnectionWindow(QWidget):
 
         # Use asynchronous connection to avoid blocking the UI
         if self.controller.view_only:
-            self.controller.viewer.connect_to(ip, port)
+            self.controller.viewer.connect_to(ip, port, self.controller.share_token)
         else:
             self.controller.ethernet_client.connect(ip, port)
 
