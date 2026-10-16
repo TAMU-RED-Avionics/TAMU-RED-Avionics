@@ -21,12 +21,13 @@ class EGCPPacket:
     PKT_STA = 0xA   # Connection Start/Handshake
     PKT_POS = 0xB   # Actuator Position: body = [actuator id:1][position:2, big-endian, 0.01 % units]
     
-    # Sensor ID mapping
+    # Sensor ID mapping. The ID is the ADC channel the GUI's project binds each sensor to
+    # (hardware.adc in the .red file), so these must match PIDs/Elysium.red or the GUI
+    # shows the reading under the wrong name / not at all.
     SENSOR_MAP = {
-        "P1": 0x01, "P2": 0x02, "P3": 0x03, "P4": 0x04, "P5": 0x05, "P6": 0x06,
-        "P7": 0x07, "P8": 0x08,
-        "TC1": 0x09, "TC2": 0x0A, "TC3": 0x0B,
-        "LC1": 0x0C, "LC2": 0x0D, "LC3": 0x0E,
+        "P1": 1, "P2": 2, "P3": 3, "P4": 4, "P5": 5, "P6": 6, "P7": 7, "P8": 8,
+        "LC1": 25, "LC2": 26, "LC3": 27, "LC4": 28, "LC5": 29, "LC6": 30,
+        "TC3": 109, "TC2": 110, "TC1": 111,
         "B1": 0x0F, "B2": 0x10,
     }
     
@@ -114,7 +115,7 @@ class VTComms(QObject):
         self.sensor_data = {
             "P1": 0.0, "P2": 0.0, "P3": 0.0, "P4": 0.0, "P5": 0.0, "P6": 0.0, "P7": 0.0, "P8": 0.0,
             "TC1": 0.0, "TC2": 0.0, "TC3": 0.0,
-            "LC1": 0.0, "LC2": 0.0, "LC3": 0.0,
+            "LC1": 0.0, "LC2": 0.0, "LC3": 0.0, "LC4": 0.0, "LC5": 0.0, "LC6": 0.0,
             "B1": 0.0, "B2": 0.0,
         }
         self.start_time = time.time()

@@ -42,7 +42,7 @@ class VirtualTeensy(QMainWindow):
         self.sensor_inputs = {}
         sensor_names = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", 
                        "TC1", "TC2", "TC3", 
-                       "LC1", "LC2", "LC3",
+                       "LC1", "LC2", "LC3", "LC4", "LC5", "LC6",
                        "B1", "B2"]
         
         for name in sensor_names:
