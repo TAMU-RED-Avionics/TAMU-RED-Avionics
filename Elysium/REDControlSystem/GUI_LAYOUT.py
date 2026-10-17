@@ -166,7 +166,8 @@ class SensorRow(QWidget):
         super().mousePressEvent(event)
 
     def set_value(self, val: float, status: str = ""):
-        self.value_lbl.setText(f"{val:.2f}")
+        # NaN from the firmware = sensor loop open / unplugged (< 3.5 mA)
+        self.value_lbl.setText("NO SIGNAL" if val != val else f"{val:.2f}")
         # setStyleSheet forces a style re-polish; only touch it on change.
         if status != getattr(self, "_last_status", None):
             self._last_status = status

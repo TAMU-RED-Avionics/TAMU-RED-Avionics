@@ -45,113 +45,105 @@ const int BAUD = 115200;
 const int NCS1_PIN   = 31;   // relay 1
 const int NCS2_PIN   = 30;   // relay 2
 const int NCS3_PIN   = 29;   // relay 3
-// NCS4 is a manual switch
+// NCS4 is a manual switch (no relay). NCS5 is wired to relay 4 (ID 0x04).
 const int NCS5_PIN   = 28;
-const int PA_BV3_PIN = 27;
-const int PA_BV1_PIN = 26;
+// Pins 26/27 are SPI1 MOSI/SCK, which the AD5420 (Bray valve) needs, so
+// PA-BV1/PA-BV3 are unavailable while the Bray valve is wired.
+const int PA_BV3_PIN = -1;   // was 27
+const int PA_BV1_PIN = -1;   // was 26
 const int PA_BV2_PIN = 24;
+const int PNEUMA_PIN = -1;   // relay 13 - TODO: set to the Teensy pin wired to this relay
+const int BRAY_AUX_PIN = -1;  // relay 14 - TODO: set to the Teensy pin wired to this relay
 const int GV1_PIN    = 25;
 const int GV2_PIN    = -1;
 const int IGN1_PIN   = -1;
 const int IGN2_PIN   = -1;
 const int GIMBAL_PIN = -1;
 
-const int ADS_CS_PIN  = 10;   // GPIO10 = CS1   <-- UNVERIFIED
-const int ADS_MOSI    = 11;   // GPIO11 = SDI1  <-- UNVERIFIED
-const int ADS_MISO    = 12;   // GPIO12 = SDO1  <-- UNVERIFIED
-const int ADS_SCK     = 13;   // GPIO13 = SCLK1 <-- UNVERIFIED
 
-// ADS7953 channel assignments
-const float PT_SLOPE[12]     = { 0.1692f, 0.1692f, 0.1692f, 0.1692f,
-                                  0.1692f, 0.1692f,
-                                  0.1692f, 0.1692f,
-                                  0.1692f, 0.1692f, 0.1692f, 0.1692f };   // 2-point fit: atmospheric + 50psig
-const float PT_INTERCEPT[12] = { -171.9f, -171.9f, -171.9f, -171.9f,
-                                   -171.9f, -171.9f,
-                                   -171.9f, -171.9f,
-                                   -171.9f, -171.9f, -171.9f, -171.9f };  // <-- USER INPUT, verify across more points
+const int ADS_CS_PIN  = 10;   // -> J6 pin 49 (CS1)    (verified)
+const int ADS_MOSI    = 11;   // -> J6 pin 25 (SDI1)   (verified)
+const int ADS_MISO    = 12;   // -> J6 pin 24 (SDO1)   (verified)
+const int ADS_SCK     = 13;   // -> J6 pin 50 (SCLK1)  (verified)
 
-// ADS7953 channel i is NOT physical PTi - board routing is rotated
+const bool     ADS_RANGE2     = true;      // true: 0..2xVREF (0-5 V), false: 0..VREF (0-2.5 V)
+const float    ADS_VREF       = 2.5f;      // REF5025
+const uint32_t ADS_SPI_HZ     = 1000000;   // sweep showed MODE0 is clean from 250 kHz to 4 MHz
+
+// Same math as the pt_read bring-up sketch: 160 ohm shunt, 4-20 mA -> 0-1000 psig,
+// no per-channel calibration. PT_ATM_PSI is added so the GUI shows absolute pressure.
+const float    PT_SHUNT_OHMS   = 160.0f;
+const float    PT_PSI_AT_4MA   = 0.0f;
+const float    PT_PSI_AT_20MA  = 1000.0f;
+const float    PT_ATM_PSI      = 14.7f;
+const float    PT_NO_SIGNAL_MA = 3.5f;     // below this = unplugged / broken loop
+
+// ADS channel -> PT index (0-based; 0 = P1), traced from the PCB netlist:
+//   J10 pins 1-4 = ch0-3  = PT6, PT0, PT7, PT1
+//   J15 pins 1-4 = ch4-7  = PT8, PT2, PT9, PT3
+//   J19 pins 1-4 = ch8-11 = PT10, PT4, PT11, PT5
+// Confirmed on the bench: P2 = ch3, P6 = ch11, P8 = ch2.
 const uint8_t PT_NUM_FOR_CH[12] = { 6, 0, 7, 1, 8, 2, 9, 3, 10, 4, 11, 5 };
 
 const float PT_EMA_ALPHA = 0.2f;   // 0=infinitely smooth/slow, 1=no smoothing
 float pt_filtered[12] = { NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN };
+float pt_mA[12]       = { 0 };     // last loop current per ADS channel (for diagnostics)
+uint32_t pt_addr_mismatch = 0;     // channels whose echoed address didn't match (reset every 1 s log)
 
-const int ADS_PAD_PINS[4] = { ADS_CS_PIN, ADS_MOSI, ADS_MISO, ADS_SCK };
-uint32_t ads_pad_saved[4];
-
-void ads7953_save_pads() {
-    for (int i = 0; i < 4; i++) ads_pad_saved[i] = *portControlRegister(ADS_PAD_PINS[i]);
+// One 16-bit SPI frame. A transaction per frame (the working sketch does the same).
+static uint16_t ads_frame(uint16_t tx) {
+    SPI.beginTransaction(SPISettings(ADS_SPI_HZ, MSBFIRST, SPI_MODE0));
+    digitalWriteFast(ADS_CS_PIN, LOW);
+    uint16_t rx = SPI.transfer16(tx);
+    digitalWriteFast(ADS_CS_PIN, HIGH);
+    SPI.endTransaction();
+    return rx;
 }
 
-void ads7953_set_slow_edges() {
-    for (int i = 0; i < 4; i++) {
-        volatile uint32_t* pad = portControlRegister(ADS_PAD_PINS[i]);
-        if (ADS_PAD_PINS[i] == ADS_MISO) { *pad = ads_pad_saved[i] | IOMUXC_PAD_HYS; continue; }
-        uint32_t v = ads_pad_saved[i] & ~(IOMUXC_PAD_DSE(7) | IOMUXC_PAD_SPEED(3) | IOMUXC_PAD_SRE);
-        *pad = v | IOMUXC_PAD_DSE(1) | IOMUXC_PAD_SPEED(0);
-    }
+// Manual mode: DI15-12 = 0001, DI11 = 1 (program), DI10-07 = channel, DI06 = range,
+// DI05 = 0 (no power-down), DI04 = 0 (SDO returns channel address + 12-bit result).
+static uint16_t ads_cmd(uint8_t ch) {
+    return 0x1800 | ((uint16_t)ch << 7) | (ADS_RANGE2 ? 0x0040 : 0);
 }
 
-uint16_t ads7953_read(uint8_t channel) {
-    uint16_t cmd = 0x1800 | ((uint16_t)(channel & 0x0F) << 7);
-
-    digitalWrite(ADS_CS_PIN, LOW);
-    SPI.transfer16(cmd);
-    digitalWrite(ADS_CS_PIN, HIGH);
-
-    // Result trails the channel select by two frames (verified on this board via
-    // pt_4to20_test.ino's SPI sweep) - must repeat the SAME command, not send a
-    // bogus 0x0000 frame, or the pipeline returns a neighboring channel's stale
-    // conversion. That crosstalk is what was showing up as random spikes/dips.
-    digitalWrite(ADS_CS_PIN, LOW);
-    SPI.transfer16(cmd);
-    digitalWrite(ADS_CS_PIN, HIGH);
-
-    delayMicroseconds(10);   // let the internal sampling cap settle
-
-    digitalWrite(ADS_CS_PIN, LOW);
-    uint16_t val = SPI.transfer16(cmd);
-    digitalWrite(ADS_CS_PIN, HIGH);
-
-    return val & 0x0FFF;   // strip the echoed channel id, keep the 12-bit reading
-}
-
-// ---- ADS7953 bring-up diagnostic (prints once at boot) ----
-// Reads a few channels and prints the FULL 16-bit words. In manual mode the top
-// 4 bits echo the channel address of the conversion, so:
-//   * echo bits match the channel      -> SPI is working. If the 12-bit value is still
-//                                         ~0 the ADC INPUTS are at 0 V (PT loop supply
-//                                         off / sense resistor open or shorted).
-//   * every word is 0x0000 (or 0xFFFF) -> the chip is not answering: check MISO (pin 12),
-//                                         CS (pin 10), SCK (13), MOSI (11), ADC power/ref.
-// A healthy 0 psi PT on a 4-20 mA loop reads raw ~1016 (0.1692*1016 - 171.9 = 0).
-void ads7953_diagnostic() {
-    DBG_PRINTLN("ADS7953 diagnostic (channel: full16 -> echo, 12-bit):");
-    uint8_t chans[3] = { 0, 5, 11 };
-    bool any_echo = false;
-    for (uint8_t i = 0; i < 3; i++) {
-        uint8_t ch = chans[i];
-        uint16_t cmd = 0x1800 | ((uint16_t)(ch & 0x0F) << 7);
-        uint16_t w = 0;
-        for (int k = 0; k < 3; k++) {          // same 3-frame pipeline as ads7953_read()
-            digitalWrite(ADS_CS_PIN, LOW);
-            w = SPI.transfer16(cmd);
-            digitalWrite(ADS_CS_PIN, HIGH);
-            delayMicroseconds(10);
+static bool ads_scan(uint16_t word[12], bool ok[12]) {
+    bool all_ok = true;
+    for (int i = 0; i < 14; i++) {
+        uint16_t rx = ads_frame(ads_cmd(i < 12 ? i : 0));
+        if (i >= 2) {
+            uint8_t k = i - 2;
+            ok[k] = ((rx >> 12) == k);
+            if (!ok[k]) all_ok = false;
+            word[k] = rx;
         }
-        uint8_t echo = (w >> 12) & 0xF;
-        if (echo == ch) any_echo = true;
-        DBG_PRINT("  ch"); DBG_PRINT(ch); DBG_PRINT(": 0x"); DBG_PRINT(w, HEX);
-        DBG_PRINT(" echo="); DBG_PRINT(echo); DBG_PRINT(" raw12="); DBG_PRINTLN(w & 0x0FFF);
     }
-    DBG_PRINTLN(any_echo ? "  -> ADC IS responding over SPI. If raw12 ~0, check PT loop power / sense resistors."
-                         : "  -> NO channel echo: ADC not answering. Check MISO/CS/SCK/MOSI wiring and ADC power.");
+    return all_ok;
 }
 
-inline float pt_psi(uint8_t channel) {
-    uint16_t raw = ads7953_read(channel);
-    return PT_SLOPE[channel] * raw + PT_INTERCEPT[channel];
+static void ads_flush() { for (int i = 0; i < 4; i++) ads_frame(ads_cmd(0)); }
+
+// raw 12-bit count -> loop current (mA) -> psi, for ADS channel ch.
+static float ads_counts_to_mA(uint16_t raw12) {
+    float lsb = (ADS_RANGE2 ? 2.0f : 1.0f) * ADS_VREF / 4096.0f;
+    return raw12 * lsb / PT_SHUNT_OHMS * 1000.0f;
+}
+static float ads_mA_to_psi(float mA) {
+    return PT_PSI_AT_4MA + (mA - 4.0f) / 16.0f * (PT_PSI_AT_20MA - PT_PSI_AT_4MA) + PT_ATM_PSI;
+}
+
+// Boot-time report: proves SPI is talking to the ADC and shows each loop's current.
+static void ads_boot_report() {
+    uint16_t word[12]; bool ok[12];
+    bool all_ok = ads_scan(word, ok);
+    DBG_PRINTLN(all_ok ? "ADS7953 link OK: SPI_MODE0 @ 1 MHz, all channel addresses echoed correctly"
+                       : "ADS7953 link BAD: channel address mismatch (check MISO/CS/SCK/MOSI, GND, VA+ at TP6)");
+    for (int k = 0; k < 12; k++) {
+        float mA = ads_counts_to_mA(word[k] & 0x0FFF);
+        DBG_PRINT("  breakout "); DBG_PRINT(k + 1); DBG_PRINT(" (ADS ch"); DBG_PRINT(k); DBG_PRINT(" -> P"); DBG_PRINT(PT_NUM_FOR_CH[k] + 1);
+        DBG_PRINT("): raw="); DBG_PRINT(word[k] & 0x0FFF);
+        DBG_PRINT(" "); DBG_PRINT(mA); DBG_PRINT("mA ");
+        DBG_PRINTLN(mA < PT_NO_SIGNAL_MA ? "(no signal)" : "");
+    }
 }
 
 #define NAU7802_ADDR     0x2A
@@ -412,11 +404,13 @@ void send_adc_packet(uint8_t sensor_id, float value) {
 
 int get_pin_from_valve_id(uint8_t id) {
     switch (id) {
-        case 0x01: return NCS1_PIN;
-        case 0x02: return NCS2_PIN;
-        case 0x03: return NCS3_PIN;
-        case 0x05: return NCS5_PIN;
+        case 0x0A: return NCS1_PIN;   // NCS1 = relay 10
+        case 0x0B: return NCS2_PIN;   // NCS2 = relay 11
+        case 0x0C: return NCS3_PIN;   // NCS3 = relay 12
+        case 0x04: return NCS5_PIN;   // NCS5 is relay 4
         case 0x06: return PA_BV3_PIN;   // was NCS6
+        case 0x0D: return PNEUMA_PIN;   // Pneuma = relay 13
+        case 0x0E: return BRAY_AUX_PIN;  // relay 14, also follows the Bray valve
         case 0x10: return PA_BV1_PIN;   // was LA-BV1
         case 0x11: return PA_BV2_PIN;   // was LA-BV2
         case 0x20: return GV1_PIN;
@@ -430,11 +424,13 @@ int get_pin_from_valve_id(uint8_t id) {
 
 const char* get_valve_name(uint8_t id) {
     switch (id) {
-        case 0x01: return "NCS1";
-        case 0x02: return "NCS2";
-        case 0x03: return "NCS3";
-        case 0x05: return "NCS5";
+        case 0x0A: return "NCS1";
+        case 0x0B: return "NCS2";
+        case 0x0C: return "NCS3";
+        case 0x04: return "NCS5";
         case 0x06: return "PA-BV3";
+        case 0x0D: return "PNEUMA";
+        case 0x0E: return "BRAY-AUX";
         case 0x10: return "PA-BV1";
         case 0x11: return "PA-BV2";
         case 0x20: return "GV-1";
@@ -464,7 +460,49 @@ const char* get_valve_name(uint8_t id) {
 // pin = -1 means "not wired yet": commands are still ACK'd (same convention
 // as the valve pins above) so the GUI can be exercised on the bench.
 // ---------------------------------------------------------------------------
-enum ActuatorDriver : uint8_t { ACT_RC_SERVO, ACT_PWM_ANALOG };
+enum ActuatorDriver : uint8_t { ACT_RC_SERVO, ACT_PWM_ANALOG, ACT_AD5420 };
+
+// ---- AD5420 4-20 mA DAC on SPI1 (FMV / Bray valve) ----
+// Ported from the standalone sketch that is KNOWN TO WORK. Position 0..100 %
+// -> 16-bit code -> 4..20 mA. Not wired through ActuatorConfig::pin (the SPI
+// pins are fixed here); the row's pin field is just the LATCH pin.
+const int AD5420_LATCH_PIN = 0;    // CS1
+const int AD5420_MOSI_PIN  = 26;   // MOSI1
+const int AD5420_MISO_PIN  = 1;    // MISO1
+const int AD5420_SCK_PIN   = 27;   // SCK1
+const int AD5420_CLEAR_PIN = 19;   // CLEAR (held low)
+
+const uint8_t  AD5420_ADDR_DATA    = 0x01;
+const uint8_t  AD5420_ADDR_CONTROL = 0x55;
+const uint8_t  AD5420_ADDR_RESET   = 0x56;
+const uint16_t AD5420_CTRL_WORD    = 0x3005;   // REXT | OUTEN | 4-20 mA range
+
+const SPISettings ad5420Settings(1000000, MSBFIRST, SPI_MODE0);
+
+static void ad5420_write(uint8_t address, uint16_t data) {
+    SPI1.beginTransaction(ad5420Settings);
+    digitalWrite(AD5420_LATCH_PIN, LOW);
+    SPI1.transfer(address);
+    SPI1.transfer((data >> 8) & 0xFF);
+    SPI1.transfer(data & 0xFF);
+    digitalWrite(AD5420_LATCH_PIN, HIGH);
+    SPI1.endTransaction();
+}
+
+static void ad5420_begin() {
+    pinMode(AD5420_CLEAR_PIN, OUTPUT);
+    digitalWrite(AD5420_CLEAR_PIN, LOW);
+    pinMode(AD5420_LATCH_PIN, OUTPUT);
+    digitalWrite(AD5420_LATCH_PIN, HIGH);
+    SPI1.setMOSI(AD5420_MOSI_PIN);
+    SPI1.setMISO(AD5420_MISO_PIN);
+    SPI1.setSCK(AD5420_SCK_PIN);
+    SPI1.begin();
+    delay(10);
+    ad5420_write(AD5420_ADDR_RESET, 0x0001);
+    delay(1);
+    ad5420_write(AD5420_ADDR_CONTROL, AD5420_CTRL_WORD);
+}
 
 struct ActuatorConfig {
     uint8_t        id;
@@ -499,9 +537,9 @@ const ActuatorConfig ACTUATORS[] = {
     // boot it is driven to safe_pct, so expect it to snap to its us_min position
     // when the Teensy starts. (After the direction flip that is the 2000 us end, i.e. CLOSED.)
     //
-    // The Bray modulating valve + PWM-to-analog slave card is NOT in use right
-    // now, so there is no ACT_PWM_ANALOG row. The driver code is still above if
-    // we want it back later.
+    // The FMV (Bray) modulating valve is driven by an AD5420 over SPI1
+    // (ACT_AD5420 row below). There is no ACT_PWM_ANALOG row; that driver is
+    // kept in case the PWM-to-analog slave card comes back.
     //
     // DIRECTION FLIP (test setup): us_min/us_max are deliberately "backwards"
     // (2000, 1000) so that 0 % = CLOSED = 2000 us and 100 % = OPEN = 1000 us. With
@@ -524,6 +562,11 @@ const ActuatorConfig ACTUATORS[] = {
     // SV-2: servo #2, same setup but signal on Teensy pin 22
     { EGCPPacket::ACTUATOR_SV2, "SV-2", ACT_RC_SERVO, 22, 0.0f,
       2000, 1000,   0.0f, 0.0f, 0 },
+
+    // FMV (Bray): modulating valve driven 4-20 mA by the AD5420 on SPI1.
+    // 0 % = 4 mA, 100 % = 20 mA. pin = AD5420 LATCH (CS1).
+    { EGCPPacket::ACTUATOR_BRAY, "FMV (Bray)", ACT_AD5420, AD5420_LATCH_PIN, 0.0f,
+      0, 0,   0.0f, 0.0f, 0 },
 };
 const int NUM_ACTUATORS = sizeof(ACTUATORS) / sizeof(ACTUATORS[0]);
 
@@ -541,6 +584,11 @@ void act_apply(int i) {
     float frac = act_pct[i] / 100.0f;
     if (a.driver == ACT_RC_SERVO) {
         act_servo[i].writeMicroseconds((int)(a.us_min + (a.us_max - a.us_min) * frac + 0.5f));
+    } else if (a.driver == ACT_AD5420) {
+        ad5420_write(AD5420_ADDR_DATA, (uint16_t)(frac * 65535.0f + 0.5f));
+        // Relay 14 rides along with the Bray valve: on whenever it is commanded
+        // above 0 %, off at 0 % (which is also the safe position).
+        if (BRAY_AUX_PIN >= 0) digitalWrite(BRAY_AUX_PIN, act_pct[i] > 0.0f ? HIGH : LOW);
     } else {
         float duty = a.duty_min_pct + (a.duty_max_pct - a.duty_min_pct) * frac;   // percent
         analogWrite(a.pin, (int)(duty / 100.0f * 4095.0f + 0.5f));                // 12-bit, see setup()
@@ -560,6 +608,8 @@ void act_init() {
         if (a.pin < 0) continue;
         if (a.driver == ACT_RC_SERVO) {
             act_servo[i].attach(a.pin, a.us_min < 500 ? a.us_min : 500, a.us_max > 2500 ? a.us_max : 2500);
+        } else if (a.driver == ACT_AD5420) {
+            ad5420_begin();
         } else {
             pinMode(a.pin, OUTPUT);
             analogWriteFrequency(a.pin, a.pwm_hz);
@@ -596,7 +646,7 @@ void send_nck(uint32_t nacked_id) {
 }
 
 void safe_all_valves() {
-    const int pins[] = {NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
+    const int pins[] = {NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PNEUMA_PIN, BRAY_AUX_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
     for (int pin : pins) {
         if (pin >= 0) digitalWrite(pin, LOW);
     }
@@ -705,17 +755,12 @@ void setup() {
         DBG_PRINT("UDP listening on port "); DBG_PRINTLN(UDP_PORT);
     }
 
-    // ---- SPI for ADS7953 ----
+    // ---- SPI for ADS7953 (PTs) - same init as the proven standalone sketch ----
     pinMode(ADS_CS_PIN, OUTPUT);
     digitalWrite(ADS_CS_PIN, HIGH);
     SPI.begin();
-    ads7953_save_pads();
-    ads7953_set_slow_edges();
-    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
-    // Dummy read to put ADS7953 into manual mode (each read() already runs the full frame handshake)
-    ads7953_read(0);
-    DBG_PRINTLN("ADS7953 SPI initialized");
-    ads7953_diagnostic();
+    ads_flush();            // prime the 2-frame pipeline so the first real scan is valid
+    ads_boot_report();
 
     // ---- I2C for NAU7802 load cells (LC1-LC6, all muxed, bit-banged) ----
     lc_i2c_begin();
@@ -767,7 +812,7 @@ void setup() {
     }
 
     {
-        const int output_pins[] = {NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
+        const int output_pins[] = {NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PNEUMA_PIN, BRAY_AUX_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
         for (int pin : output_pins) {
             if (pin >= 0) { pinMode(pin, OUTPUT); digitalWrite(pin, LOW); }
         }
@@ -788,12 +833,19 @@ uint32_t pt_us_accum = 0, tc_us_accum = 0, lc_us_accum = 0;
 void loop() {
     loop_iter_count++;
 
+
     unsigned long now_ms = millis();
     if (now_ms - last_loop_log_ms >= 1000) {
         last_loop_log_ms = now_ms;
         DBG_PRINT("Loop alive; iters/sec="); DBG_PRINT(loop_iter_count);
         loop_iter_count = 0;
         DBG_PRINT("; PT_us="); DBG_PRINT(pt_us_accum);
+        DBG_PRINT(" PT_addr_bad="); DBG_PRINT(pt_addr_mismatch);
+        pt_addr_mismatch = 0;
+        { int nosig = 0; for (int i = 0; i < 12; i++) if (pt_mA[i] < PT_NO_SIGNAL_MA) nosig++;
+          DBG_PRINT(" PT_nosignal="); DBG_PRINT(nosig); }
+        DBG_PRINT(" mA[ch0-11]=");
+        for (int i = 0; i < 12; i++) { DBG_PRINT(pt_mA[i], 2); DBG_PRINT(i < 11 ? "," : ""); }
         DBG_PRINT(" TC_us="); DBG_PRINT(tc_us_accum);
         DBG_PRINT(" LC_us="); DBG_PRINT(lc_us_accum);
         pt_us_accum = 0; tc_us_accum = 0; lc_us_accum = 0;
@@ -947,14 +999,26 @@ void loop() {
         LAST_SENSOR_UPDATE = micros();
 
         uint32_t t0 = micros();
-        for (int i = 0; i < 12; i++) {
-            uint16_t raw = ads7953_read(i);
-            float psi = PT_SLOPE[i] * raw + PT_INTERCEPT[i];
-            // Light EMA smoothing on top of the crosstalk fix above - trims
-            // remaining sample-to-sample jitter without adding much lag at
-            // the 10ms sensor rate.
-            pt_filtered[i] = isnan(pt_filtered[i]) ? psi : (PT_EMA_ALPHA * psi + (1.0f - PT_EMA_ALPHA) * pt_filtered[i]);
-            send_adc_packet(0x01 + PT_NUM_FOR_CH[i], pt_filtered[i]);
+        {
+            uint16_t word[12]; bool ok[12];
+            ads_scan(word, ok);
+            for (int i = 0; i < 12; i++) {
+                if (!ok[i]) { pt_addr_mismatch++; continue; }   // bad echo: skip this sample, GUI keeps the last value
+                float mA  = ads_counts_to_mA(word[i] & 0x0FFF);
+                float psi = ads_mA_to_psi(mA);
+                pt_mA[i]  = mA;
+                // An unplugged / broken loop (< 3.5 mA) is sent as NaN, which the
+                // GUI shows as "NO SIGNAL" instead of a bogus negative psi.
+                if (mA < PT_NO_SIGNAL_MA) {
+                    pt_filtered[i] = NAN;
+                    send_adc_packet(0x01 + PT_NUM_FOR_CH[i], NAN);
+                    continue;
+                }
+                // Light EMA smoothing - trims sample-to-sample jitter without much
+                // lag at the 10 ms sensor rate.
+                pt_filtered[i] = isnan(pt_filtered[i]) ? psi : (PT_EMA_ALPHA * psi + (1.0f - PT_EMA_ALPHA) * pt_filtered[i]);
+                send_adc_packet(0x01 + PT_NUM_FOR_CH[i], pt_filtered[i]);
+            }
         }
         pt_us_accum += micros() - t0;
 

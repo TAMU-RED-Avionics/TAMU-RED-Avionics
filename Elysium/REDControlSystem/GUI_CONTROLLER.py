@@ -20,16 +20,6 @@ _TEMPLATE_TOKEN_RE = re.compile(r"\{([A-Za-z0-9_]+)\}")
 
 
 def render_message_template(template: str, context: dict) -> str:
-    """Substitute {TOKEN} placeholders in a user-authored abort/warn message.
-
-    `context` maps both special keywords (e.g. "soak_ms", "threshold",
-    "value") and sensor names (e.g. "P5") to their current values. Lookup is
-    case-sensitive first (so a lowercase keyword like {soak_ms} isn't shadowed
-    by an unrelated sensor), then falls back to an upper-cased match so sensor
-    tokens work regardless of the case the user typed. Unknown tokens are left
-    as literal text (e.g. "{TYPO}") so a mistake is visible rather than silently
-    dropped.
-    """
     def _repl(m: "re.Match") -> str:
         key = m.group(1)
         value = context.get(key)
@@ -1067,11 +1057,14 @@ class GUIController:
             self.signals.sensor_updated.emit(name, raw, timestamp)
         self.log_event("TARE_CLEARED", name)
 
-    def set_calibration(self, sensor_name: str, gain: float, offset: float):
-        """Install a linear calibration (display = gain·wire + offset) and
-        refresh the sensor's displayed value from its latest wire sample."""
-        name = sensor_name.upper()
-        self.calibrations[name] = (gain, offset)
+    # TEMPORARY (test setup): until each PT has its own calibration, the calibration
+    # of this PT is applied to EVERY pressure transducer. Calibrating (or loading a
+    # saved calibration for) the source PT copies it to all other PTs, overwriting
+    # whatever they had. Set to None to go back to fully independent per-PT calibration.
+    SHARED_PT_CAL_SOURCE = "P1"
+
+    def _refresh_calibrated_value(self, name: str, gain: float, offset: float):
+        """Recompute a sensor's displayed value from its latest wire sample."""
         recent = self.sensor_recent.get(name)
         if recent:
             raw = recent[-1] * gain + offset
@@ -1080,7 +1073,29 @@ class GUIController:
             self.current_sensor_values[name] = value
             self.signals.sensor_updated.emit(
                 name, value, QDateTime.currentMSecsSinceEpoch() / 1000.0)
+
+    def _share_pt_calibration(self):
+        """Copy the shared-source PT's calibration (if it has one) to every other PT."""
+        src = (self.SHARED_PT_CAL_SOURCE or "").upper()
+        cal = self.calibrations.get(src)
+        if not src or cal is None:
+            return
+        for key in self.pt_keys:
+            name = str(key).upper()
+            if name != src:
+                self.calibrations[name] = cal
+                self._refresh_calibrated_value(name, *cal)
+
+    def set_calibration(self, sensor_name: str, gain: float, offset: float):
+        """Install a linear calibration (display = gain·wire + offset) and
+        refresh the sensor's displayed value from its latest wire sample."""
+        name = sensor_name.upper()
+        self.calibrations[name] = (gain, offset)
+        self._refresh_calibrated_value(name, gain, offset)
         self.log_event("CALIBRATION", f"{name}: gain={gain:.6g} offset={offset:.6g}")
+        if name == (self.SHARED_PT_CAL_SOURCE or "").upper():
+            self._share_pt_calibration()
+            self.log_event("CALIBRATION", f"{name} calibration applied to all PTs (shared, temporary)")
 
     def clear_calibrations(self):
         self.calibrations.clear()
@@ -1098,6 +1113,7 @@ class GUIController:
             except (KeyError, TypeError, ValueError):
                 continue
             self.calibrations[str(hw_id).upper()] = (gain, offset)
+        self._share_pt_calibration()
 
     def project_lock_required(self) -> bool:
         """Whether project selection / Open P&ID should be locked right now.

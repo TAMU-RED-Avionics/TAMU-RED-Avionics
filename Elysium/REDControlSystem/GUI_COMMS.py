@@ -29,16 +29,13 @@ class EGCPPacket:
         self.packet_length = len(body)         # 4-bit length in bytes (0-15)
     
     def encode(self) -> bytes:
-        """Encode packet into binary format: 32-bit header + body"""
-        # Build header: [24-bit ID][4-bit type][4-bit length]
+        # header: [24-bit ID][4-bit type][4-bit length]
         header = (self.packet_id << 8) | (self.packet_type << 4) | (self.packet_length & 0xF)
-        # Pack as big-endian 32-bit integer
         packet = struct.pack('>I', header)
         return packet + self.body
     
     @staticmethod
     def decode(data: bytes) -> 'EGCPPacket':
-        """Decode binary packet from bytes"""
         if len(data) < 4:
             raise ValueError("Packet too short")
         
