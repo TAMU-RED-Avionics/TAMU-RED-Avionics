@@ -105,6 +105,7 @@ class Component:
     extras:   dict            = field(default_factory=dict)
     rotation: int             = 0
     hide_lbl: bool            = False
+    flip:     bool            = False          # mirrored left-right (as seen on screen), applied before rotation
 
     def to_dict(self):
         return {
@@ -115,6 +116,7 @@ class Component:
             "extras":   self.extras,
             "rotation": self.rotation,
             "hide_lbl": self.hide_lbl,
+            "flip":     self.flip,
         }
 
     @staticmethod
@@ -127,6 +129,7 @@ class Component:
             extras   = d.get("extras", {}),
             rotation = d.get("rotation", 0),
             hide_lbl = d.get("hide_lbl", False),
+            flip     = d.get("flip", False),
         )
 
 

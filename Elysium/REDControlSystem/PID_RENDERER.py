@@ -15,7 +15,7 @@ from PID_SCHEMA import (
     COMP_IGNITER,
     COMP_ORIFICE, COMP_FILTER,
     COMP_ACTUATED_VALVE, COMP_ACTUATED_VALVE_LS, COMP_NEEDLE_VALVE, COMP_THREE_WAY_VALVE,
-    COMP_EP_THROTTLE_VALVE, COMP_BURST_DISK, COMP_BULKHEAD, COMP_QUICK_DISCONNECT,
+    COMP_EP_THROTTLE_VALVE, COMP_THROTTLE_VALVE, COMP_BURST_DISK, COMP_BULKHEAD, COMP_QUICK_DISCONNECT,
     COMP_CAP_PLUG, COMP_HAND_REGULATOR, COMP_DOME_REGULATOR, COMP_EP_CONVERTER,
     COMP_PUMP, COMP_PRESSURE_GAUGE, COMP_DIFF_PRESSURE, COMP_FLOW_METER,
     COMP_TO_ATMOSPHERE, COMP_FLEX_HOSE, COMP_BELLOWS, COMP_HEAT_EXCHANGER, COMP_PANEL,
@@ -108,7 +108,24 @@ def _component_scale(comp: Component) -> tuple[float, float]:
     return _read("scale_x"), _read("scale_y")
 
 
-def world_rect(pos: LayoutPoint, ctype: str, comp: Component | None = None) -> QRectF:
+def label_text_rect(pos: LayoutPoint, comp: Component, zoom: float = 1.0) -> QRectF:
+    """Where a free-text label's text is actually drawn (world coordinates). The text sits
+    ~34 units below its anchor point and keeps a constant on-screen size, so its world size
+    depends on the zoom. This is the label's clickable / selection area."""
+    scale_x, scale_y = _component_scale(comp)
+    fs = max(scale_x, scale_y)
+    offset = (VLV_HH + 20) * max(scale_y, 0.8)
+    fm = QFontMetrics(QFont("Segoe UI", max(int(8 * fs / max(zoom, 1e-6)), 6)))
+    tw = fm.horizontalAdvance(comp.label or comp.id)
+    return QRectF(pos.x - tw / 2, pos.y + offset - fm.ascent(), tw, fm.height())
+
+
+def world_rect(pos: LayoutPoint, ctype: str, comp: Component | None = None,
+               zoom: float | None = None) -> QRectF:
+    """Bounding box of a component. Pass `zoom` to get a free-text label's text box
+    (its size depends on the zoom); without it a label gets a small box at its anchor."""
+    if ctype == COMP_LABEL and comp is not None and zoom is not None:
+        return label_text_rect(pos, comp, zoom)
     x, y = pos.x, pos.y
     scale_x, scale_y = (1.0, 1.0)
     if comp is not None:
@@ -121,7 +138,7 @@ def world_rect(pos: LayoutPoint, ctype: str, comp: Component | None = None) -> Q
                  COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_PSV, COMP_PRV,
                  COMP_NEEDLE_VALVE, COMP_THREE_WAY_VALVE):
         return QRectF(x - VLV_HW * scale_x, y - VLV_HH * scale_y, VLV_HW * 2 * scale_x, VLV_HH * 2 * scale_y)
-    if ctype in (COMP_ACTUATED_VALVE, COMP_ACTUATED_VALVE_LS, COMP_EP_THROTTLE_VALVE,
+    if ctype in (COMP_ACTUATED_VALVE, COMP_ACTUATED_VALVE_LS, COMP_EP_THROTTLE_VALVE, COMP_THROTTLE_VALVE,
                  COMP_HAND_REGULATOR, COMP_DOME_REGULATOR):
         # Taller bounding box: these stack an actuator/dome/E-P box above the
         # valve body itself.
@@ -166,6 +183,8 @@ class Renderer:
 
         p.save()
         p.translate(pos.x, pos.y)
+        if getattr(comp, "flip", False):
+            p.scale(-1, 1)              # mirror on screen, then rotate: Flip always looks left-right
         p.rotate(comp.rotation)
         p.translate(-pos.x, -pos.y)
 
@@ -217,7 +236,7 @@ class Renderer:
             Renderer._needle_valve(p, pos, state, zoom, scale_x, scale_y)
         elif t == COMP_THREE_WAY_VALVE:
             Renderer._three_way_valve(p, pos, state, zoom, scale_x, scale_y)
-        elif t == COMP_EP_THROTTLE_VALVE:
+        elif t in (COMP_EP_THROTTLE_VALVE, COMP_THROTTLE_VALVE):   # the older plain type has no symbol of its own
             Renderer._ep_throttle_valve(p, pos, state, value, zoom, scale_x, scale_y)
         elif t == COMP_BURST_DISK:
             Renderer._burst_disk(p, pos, zoom, scale_x, scale_y)
@@ -257,7 +276,7 @@ class Renderer:
         # Live position readout for proportional actuators. Globe / E-P throttle
         # symbols already print their own value; every other type gets this badge.
         actuator_pct = kwargs.get("actuator_pct")
-        if actuator_pct is not None and t not in (COMP_GLOBE_VALVE, COMP_EP_THROTTLE_VALVE):
+        if actuator_pct is not None and t not in (COMP_GLOBE_VALVE, COMP_EP_THROTTLE_VALVE, COMP_THROTTLE_VALVE):
             txt = f"{actuator_pct:.0f}%"
             f = QFont("Courier New", max(int(6 / zoom), 4))
             p.setFont(f)
@@ -277,11 +296,37 @@ class Renderer:
             Renderer._lbl(p, pos, lbl, zoom, offset, comp, font_scale=font_scale)
 
         if selected or hovered:
-            r = world_rect(pos, t, comp).adjusted(-6, -6, 6, 6)
+            r = world_rect(pos, t, comp, zoom).adjusted(-6 / zoom, -6 / zoom, 6 / zoom, 6 / zoom) \
+                if t == COMP_LABEL else world_rect(pos, t, comp).adjusted(-6, -6, 6, 6)
             c = C_SELECT if selected else C_HOVER
             p.setPen(QPen(c, 1.5 / zoom, Qt.DashLine))
             p.setBrush(Qt.NoBrush)
             p.drawRect(r)
+
+    @staticmethod
+    def label_offset_xy(comp) -> tuple:
+        """User-set nudge of a component's label (world units), stored in extras["label_offset"]."""
+        off = comp.extras.get("label_offset") if comp is not None else None
+        try:
+            return float(off[0]), float(off[1])
+        except (TypeError, ValueError, IndexError):
+            return 0.0, 0.0
+
+    @staticmethod
+    def label_rect(pos, comp, zoom):
+        """World-space box of a component's name label as drawn by Renderer.draw, or None if it
+        has no movable label (hidden, free-text, panel)."""
+        if comp is None or comp.type in (COMP_LABEL, COMP_PANEL) or getattr(comp, 'hide_lbl', False):
+            return None
+        text = comp.label or comp.id
+        if not text:
+            return None
+        _sx, sy = _component_scale(comp)
+        offset = (VLV_HH + 20) * max(sy, 0.8)
+        fm = QFontMetrics(QFont("Segoe UI", max(int(8 / zoom), 6)))
+        tw = fm.horizontalAdvance(text)
+        dx, dy = Renderer.label_offset_xy(comp)
+        return QRectF(pos.x - tw / 2 + dx, pos.y + offset + dy - fm.ascent(), tw, fm.height())
 
     @staticmethod
     def _lbl(p, pos, label, zoom, offset, comp, font_scale=1.0):
@@ -294,8 +339,9 @@ class Renderer:
 
         fm = QFontMetrics(f)
         tw = fm.horizontalAdvance(label)
+        dx, dy = Renderer.label_offset_xy(comp)
 
-        p.drawText(QPointF(pos.x - tw / 2, pos.y + offset), label)
+        p.drawText(QPointF(pos.x - tw / 2 + dx, pos.y + offset + dy), label)
 
     # Drawing Methods (this is how we draw icons, could be replaced with image assets)
 
@@ -569,24 +615,25 @@ class Renderer:
         p.drawPolygon(left_tri)
         p.drawPolygon(right_tri)
 
-        # Solenoid coil: a smooth curled spring directly off the valve top,
-        # matching the spec's "S" squiggle rather than a sharp zigzag.
+        # Solenoid coil: a straight stem from the valve centre up, with a smooth
+        # S-wave winding along it (a sharp zigzag reads as a relief valve).
         p.setBrush(Qt.NoBrush)
-        p.setPen(QPen(C_SYMBOL, 1.3 / zoom))
-        sy = y - hh
-        coil = QPainterPath()
-        coil.moveTo(x, sy)
-        loop_h = 4.2 * scale_y
-        for i in range(3):
-            top = sy - loop_h * (i + 1)
-            mid = sy - loop_h * (i + 0.5)
+        p.setPen(QPen(C_SYMBOL, 1.4 / zoom))
+        stem_top = y - 26 * scale_y
+        p.drawLine(QPointF(x, y), QPointF(x, stem_top))
+
+        wave = QPainterPath()
+        z0, z1 = y - 3 * scale_y, y - 25 * scale_y
+        half = (z1 - z0) / 6                 # three full S-waves
+        amp = 4 * scale_x
+        wave.moveTo(x, z0)
+        for i in range(6):
             sign = 1 if i % 2 == 0 else -1
-            coil.cubicTo(
-                QPointF(x + sign * 5 * scale_x, mid + loop_h * 0.15),
-                QPointF(x + sign * 5 * scale_x, mid - loop_h * 0.15),
-                QPointF(x, top),
-            )
-        p.drawPath(coil)
+            ya, yb = z0 + half * i, z0 + half * (i + 1)
+            wave.cubicTo(QPointF(x + sign * amp * 1.4, ya + half * 0.25),
+                         QPointF(x + sign * amp * 1.4, yb - half * 0.25),
+                         QPointF(x, yb))
+        p.drawPath(wave)
 
     @staticmethod
     def _globe_valve(p, pos, state, value, zoom, scale_x=1.0, scale_y=1.0):
@@ -658,31 +705,9 @@ class Renderer:
 
     @staticmethod
     def _prv(p, pos, state, zoom, scale_x=1.0, scale_y=1.0):
-        x, y = pos.x, pos.y
-        hh = VLV_HH * scale_y
-
-        p.setBrush(Qt.NoBrush)
-        p.setPen(QPen(C_SYMBOL, 1.8 / zoom))
-
-        p.drawLine(QPointF(x, y - hh - 5), QPointF(x, y + hh + 5))
-
-        spring = QPainterPath()
-        sy = y - 10
-        spring.moveTo(x, sy)
-        for i in range(4):
-            spring.lineTo(x - 5, sy + (i * 4) + 1)
-            spring.lineTo(x + 5, sy + (i * 4) + 3)
-        spring.lineTo(x, sy + 16)
-        p.drawPath(spring)
-
-        ay = y + 6
-        head = QPolygonF([
-            QPointF(x - 4, ay),
-            QPointF(x + 4, ay),
-            QPointF(x, ay + 7)
-        ])
-        p.setBrush(QBrush(C_SYMBOL))
-        p.drawPolygon(head)
+        """Pressure relief valve: same symbol as the draw.io P&ID / RED-001 relief
+        valve (bowtie with a hatched spring stem). Rotate it to put the spring beside the body."""
+        Renderer._relief_valve(p, pos, state, zoom, scale_x, scale_y)
 
 
     @staticmethod
@@ -726,23 +751,23 @@ class Renderer:
 
     @staticmethod
     def _orifice(p, pos, zoom, scale_x=1.0, scale_y=1.0):
-        """RED-001 3.3 Orifice: two thin stacked arcs pinching toward each
-        other, like a restriction plate seen edge-on."""
+        """RED-001 3.3 Orifice: two arcs pinching toward each other (top arc
+        sags, bottom arc bulges), as in the draw.io P&ID."""
         x, y = pos.x, pos.y
-        hw = VLV_HW * 0.9 * scale_x
-        gap = 3 * scale_y
+        hw = 20 * scale_x
+        end, mid = 6 * scale_y, 1.7 * scale_y
 
         p.setBrush(Qt.NoBrush)
-        p.setPen(QPen(C_SYMBOL, 1.4 / zoom))
+        p.setPen(QPen(C_SYMBOL, 1.6 / zoom))
 
         top = QPainterPath()
-        top.moveTo(x - hw, y - gap * 1.6)
-        top.quadTo(x, y + gap * 0.4, x + hw, y - gap * 1.6)
+        top.moveTo(x - hw, y - end)
+        top.quadTo(x, y - 2 * mid + end, x + hw, y - end)
         p.drawPath(top)
 
         bottom = QPainterPath()
-        bottom.moveTo(x - hw, y + gap * 1.6)
-        bottom.quadTo(x, y - gap * 0.4, x + hw, y + gap * 1.6)
+        bottom.moveTo(x - hw, y + end)
+        bottom.quadTo(x, y + 2 * mid - end, x + hw, y + end)
         p.drawPath(bottom)
 
     @staticmethod
@@ -1005,31 +1030,29 @@ class Renderer:
 
     @staticmethod
     def _hand_regulator(p, pos, zoom, scale_x=1.0, scale_y=1.0):
-        """RED-001 3.3 Hand Regulator: valve stem rises to the LEFT corner
-        of a horizontal bar; the bar's right corner drops as a dangling
-        sense-line stub; the pilot circle branches upward from partway
-        along the bar; the hand icon floats above-left of the circle."""
+        """RED-001 3.3 Hand Regulator (draw.io layout): the stem rises from the
+        valve to a horizontal bar that runs through the pilot circle and then
+        drops as a sense-line stub; the hand icon sits above-left of the circle
+        and points at it."""
         x, y = pos.x, pos.y
-        hh = Renderer._reg_valve(p, x, y, zoom, scale_x, scale_y)
+        Renderer._reg_valve(p, x, y, zoom, scale_x, scale_y)
 
         p.setPen(QPen(C_SYMBOL, 1.6 / zoom))
-        stem_top = y - hh
-        bar_y = stem_top - 9 * scale_y
-        right_x = x + 24 * scale_x
-        branch_x = x + 13 * scale_x
-        pilot_y = bar_y - 9 * scale_y
+        bar_y = y - 27 * scale_y
+        circle_x = x + 18 * scale_x
+        right_x = x + 36 * scale_x
         pilot_r = 4.5 * max(scale_x, scale_y)
 
-        p.drawLine(QPointF(x, stem_top), QPointF(x, bar_y))
-        p.drawLine(QPointF(x, bar_y), QPointF(right_x, bar_y))
-        p.drawLine(QPointF(right_x, bar_y), QPointF(right_x, bar_y + 14 * scale_y))
-        p.drawLine(QPointF(branch_x, bar_y), QPointF(branch_x, pilot_y))
+        p.drawLine(QPointF(x, y), QPointF(x, bar_y))
+        p.drawLine(QPointF(x, bar_y), QPointF(circle_x - pilot_r, bar_y))
+        p.drawLine(QPointF(circle_x + pilot_r, bar_y), QPointF(right_x, bar_y))
+        p.drawLine(QPointF(right_x, bar_y), QPointF(right_x, y))
 
         p.setBrush(QBrush(C_AUX_FILL))
-        p.drawEllipse(QPointF(branch_x, pilot_y), pilot_r, pilot_r)
+        p.drawEllipse(QPointF(circle_x, bar_y), pilot_r, pilot_r)
         p.setBrush(Qt.NoBrush)
 
-        Renderer._hand_icon(p, branch_x - 10 * scale_x, pilot_y - 9 * scale_y, zoom, scale_x, scale_y)
+        Renderer._hand_icon(p, circle_x - 13 * scale_x, bar_y - 14 * scale_y, zoom, scale_x, scale_y)
 
     @staticmethod
     def _dome_regulator(p, pos, zoom, scale_x=1.0, scale_y=1.0):
@@ -1144,31 +1167,13 @@ class Renderer:
 
     @staticmethod
     def _to_atmosphere(p, pos, zoom, scale_x=1.0, scale_y=1.0):
-        """RED-001 3.3 To Atmosphere: a single arrowhead at a point with
-        three dashed lines fanning outward from that same point."""
+        """RED-001 3.3 To Atmosphere: three dashed lines fanning out from the
+        connection point (straight ahead and +/-27 deg), as in the draw.io P&ID."""
         x, y = pos.x, pos.y
-
+        p.setBrush(Qt.NoBrush)
         p.setPen(QPen(C_SYMBOL, 1.6 / zoom, Qt.DashLine))
-        angles = (35, 55, 75)  # degrees from horizontal, fanning up-right
-        for deg in angles:
-            rad = math.radians(deg)
-            dx, dy = math.cos(rad), -math.sin(rad)
-            p.drawLine(QPointF(x + 6 * scale_x * dx, y + 6 * scale_y * dy),
-                       QPointF(x + 16 * scale_x * dx, y + 16 * scale_y * dy))
-
-        p.setPen(QPen(C_SYMBOL, 1.6 / zoom, Qt.SolidLine))
-        p.setBrush(QBrush(C_SYMBOL))
-        arrow = QPolygonF([
-            QPointF(x - 5 * scale_x, y - 3 * scale_y),
-            QPointF(x + 5 * scale_x, y - 3 * scale_y),
-            QPointF(x, y + 5 * scale_y),
-        ])
-        p.save()
-        p.translate(x, y)
-        p.rotate(-55)
-        p.translate(-x, -y)
-        p.drawPolygon(arrow)
-        p.restore()
+        for dx in (-10, 0, 10):
+            p.drawLine(QPointF(x, y), QPointF(x + dx * scale_x, y - 20 * scale_y))
 
     @staticmethod
     def _flex_hose(p, pos, zoom, scale_x=1.0, scale_y=1.0):

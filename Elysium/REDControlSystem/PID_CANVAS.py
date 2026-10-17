@@ -23,10 +23,10 @@ from PID_SCHEMA import (
     COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL,
     COMP_CHECK_VALVE, COMP_RELIEF_VALVE,
     COMP_BALL_VALVE, COMP_PSV, COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_PRV,
-    COMP_VALVE, COMP_IGNITER,
+    COMP_VALVE, COMP_IGNITER, COMP_LABEL,
     COMP_ACTUATED_VALVE, COMP_ACTUATED_VALVE_LS, COMP_NEEDLE_VALVE,
     COMP_THREE_WAY_VALVE, COMP_EP_THROTTLE_VALVE,
-    COMP_DIFF_PRESSURE, COMP_FLOW_METER,
+    COMP_DIFF_PRESSURE, COMP_FLOW_METER, COMP_JUNCTION,
 )
 
 import PID_RENDERER as PR
@@ -382,8 +382,10 @@ class PIDCanvas(QWidget):
     component_clicked    = pyqtSignal(str)
     component_moved      = pyqtSignal(str, float, float)
     component_resized    = pyqtSignal(str)
+    label_moved          = pyqtSignal(str)          # cid whose label was dragged / reset
     canvas_clicked       = pyqtSignal(float, float)
     line_clicked         = pyqtSignal(str)
+    line_edited          = pyqtSignal(str)      # a pipe's corner / end / segment was dragged
     line_finished        = pyqtSignal(object)
     valve_open_requested  = pyqtSignal(str)
     valve_close_requested = pyqtSignal(str)
@@ -413,6 +415,9 @@ class PIDCanvas(QWidget):
         self._resizing_comp:    str     = None
         self._resize_base_half: tuple   = None   # (half_w, half_h) at scale 1.0
         self._resize_center:    QPointF = None
+        self._dragging_label:   str     = None   # cid whose name label is being dragged
+        self._label_drag_start_world: QPointF = None
+        self._label_drag_start_off:   tuple   = None
         self._dragging_callout: str     = None   # cid of callout being dragged
         self._callout_drag_start_world: QPointF = None
         self._callout_drag_start_off:   tuple   = None
@@ -420,6 +425,9 @@ class PIDCanvas(QWidget):
         self._selected_comps:   set     = set()
         self._selected_lines:   set     = set()
         self._hovered_line:     str     = None
+        # pipe editing: drag a selected pipe's corner / end (kind "pt") or a whole segment (kind "seg")
+        self._line_drag:        tuple   = None   # (kind, line id, index)
+        self._line_drag_orig:   list    = None   # [(x, y)] of the pipe when the drag began
 
         self._drawing_line     = False
         self._line_fluid       = FLUID_GENERIC
@@ -740,9 +748,29 @@ class PIDCanvas(QWidget):
     def _comp_at(self, world: QPointF) -> "str | None":
         if not self.project:
             return None
-        for cid, pos in self.project.layout.items():
+        pad = 4 / self._zoom
+        for cid, pos in reversed(list(self.project.layout.items())):      # topmost (drawn last) first
             comp = self.project.components.get(cid)
-            if comp and world_rect(pos, comp.type, comp).contains(world):
+            if not comp:
+                continue
+            rect = world_rect(pos, comp.type, comp, self._zoom)
+            if comp.type == COMP_LABEL:
+                rect = rect.adjusted(-pad, -pad, pad, pad)               # text is small: easier to hit
+            if rect.contains(world):
+                return cid
+        return None
+
+    def _label_at(self, world: QPointF) -> "str | None":
+        """Selected component whose name label is under `world`. Labels only unlock once their
+        component is selected, so a stray click never drags one."""
+        if not self.project or not self.interactive:
+            return None
+        for cid in reversed(list(self.project.layout.keys())):
+            if cid not in self._selected_comps:
+                continue
+            comp = self.project.components.get(cid)
+            rect = Renderer.label_rect(self.project.layout[cid], comp, self._zoom)
+            if rect is not None and rect.adjusted(-3, -3, 3, 3).contains(world):
                 return cid
         return None
 
@@ -754,7 +782,7 @@ class PIDCanvas(QWidget):
         cid = next(iter(self._selected_comps))
         comp = self.project.components.get(cid)
         pos = self.project.layout.get(cid)
-        if not comp or not pos:
+        if not comp or not pos or comp.type == COMP_LABEL:     # labels have no corner handles
             return None
         rect = world_rect(pos, comp.type, comp)
         thr = self._RESIZE_HANDLE_PX / self._zoom
@@ -764,6 +792,79 @@ class PIDCanvas(QWidget):
             if abs(world.x() - hx) <= thr and abs(world.y() - hy) <= thr:
                 return (cid, sx, sy)
         return None
+
+    _LINE_HANDLE_PX = 8     # screen-pixel hit radius for pipe handles
+
+    def _line_handle_at(self, world: QPointF):
+        """Handle of the single selected pipe under the cursor: ("pt", lid, i) for a
+        corner / end, ("seg", lid, i) for the middle of segment i -> i+1."""
+        if not self.project or not self.interactive or len(self._selected_lines) != 1:
+            return None
+        lid = next(iter(self._selected_lines))
+        line = next((l for l in self.project.lines if l.id == lid), None)
+        if line is None or len(line.points) < 2:
+            return None
+        thr = self._LINE_HANDLE_PX / self._zoom
+        pts = line.points
+        for i, pt in enumerate(pts):
+            if abs(world.x() - pt.x) <= thr and abs(world.y() - pt.y) <= thr:
+                return ("pt", lid, i)
+        for i in range(len(pts) - 1):
+            mx, my = (pts[i].x + pts[i + 1].x) / 2, (pts[i].y + pts[i + 1].y) / 2
+            if abs(world.x() - mx) <= thr and abs(world.y() - my) <= thr:
+                return ("seg", lid, i)
+        return None
+
+    def _drag_line_handle(self, world: QPointF, free: bool):
+        """Apply the active pipe drag. Pipes stay orthogonal like draw.io: moving a corner
+        drags its neighbours' shared coordinate along, dragging an end only slides it along
+        its own segment (hold Shift to move it freely), and a segment handle slides the
+        whole segment sideways."""
+        kind, lid, idx = self._line_drag
+        line = next((l for l in self.project.lines if l.id == lid), None)
+        if line is None:
+            return
+        orig = self._line_drag_orig
+        n = len(orig)
+        sx, sy = snap(world.x(), world.y())
+        pts = [list(p) for p in orig]
+        eps = 0.5
+
+        def axis(a, b):
+            if abs(orig[a][1] - orig[b][1]) < eps:
+                return "h"
+            if abs(orig[a][0] - orig[b][0]) < eps:
+                return "v"
+            return None
+
+        if kind == "seg":
+            ax = axis(idx, idx + 1)
+            for j in (idx, idx + 1):
+                if ax == "h":
+                    pts[j][1] = sy
+                elif ax == "v":
+                    pts[j][0] = sx
+                else:                                   # a diagonal segment: move it freely
+                    pts[j] = [orig[j][0] + (sx - (orig[idx][0] + orig[idx + 1][0]) / 2),
+                              orig[j][1] + (sy - (orig[idx][1] + orig[idx + 1][1]) / 2)]
+        else:
+            end = idx in (0, n - 1)
+            nb = idx + 1 if idx == 0 else idx - 1 if idx == n - 1 else None
+            if end and not free and nb is not None and axis(idx, nb):
+                ax = axis(idx, nb)                       # slide along the pipe's own direction
+                pts[idx] = [sx, orig[idx][1]] if ax == "h" else [orig[idx][0], sy]
+            else:
+                pts[idx] = [sx, sy]
+                if not end and not free:
+                    for j in (idx - 1, idx + 1):
+                        ax = axis(idx, j)
+                        if ax == "h":
+                            pts[j][1] = sy
+                        elif ax == "v":
+                            pts[j][0] = sx
+        for lp, (x, y) in zip(line.points, pts):
+            lp.x, lp.y = x, y
+        self.update()
 
     def _line_at(self, world: QPointF, thr: float = 8.0) -> "str | None":
         if not self.project:
@@ -824,6 +925,17 @@ class PIDCanvas(QWidget):
         # Sensor callouts are drawn in screen-space (reset transform first)
         p.resetTransform()
         self._paint_sensor_callouts(p)
+        self._paint_zoom_hint(p)
+
+    ZOOM_HINT = "Zoom: + / − buttons, mouse wheel, or Ctrl/⌘ + scroll  ·  trackpad scroll pans"
+
+    def _paint_zoom_hint(self, p: QPainter):
+        p.setPen(QPen(QColor("#777777")))
+        f = QFont()
+        f.setPointSizeF(8)
+        p.setFont(f)
+        p.drawText(QRectF(8, self.height() - 22, self.width() - 16, 16),
+                   Qt.AlignLeft | Qt.AlignVCenter, self.ZOOM_HINT)
 
     def _paint_resize_handles(self, p: QPainter):
         if not self.interactive:
@@ -835,7 +947,7 @@ class PIDCanvas(QWidget):
         cid = self._resizing_comp or next(iter(self._selected_comps))
         comp = self.project.components.get(cid)
         pos = self.project.layout.get(cid)
-        if not comp or not pos:
+        if not comp or not pos or comp.type == COMP_LABEL:
             return
         rect = world_rect(pos, comp.type, comp)
         hw, hh = rect.width() / 2, rect.height() / 2
@@ -1017,14 +1129,64 @@ class PIDCanvas(QWidget):
         off_y = (self._pan.y() * self._zoom) % step - step
         p.drawPixmap(int(off_x), int(off_y), self._grid_pixmap)
 
+    def _pipe_stop_rects(self) -> list:
+        """Footprints that pipe ends stop at instead of running to the component's centre:
+        the symbol body only (no actuator stack), rotated with the component. Tanks, labels and
+        junctions are left out - pipes meet a tank's outline, and a junction is a pipe node."""
+        rects = []
+        for cid, comp in self.project.components.items():
+            pos = self.project.layout.get(cid)
+            if not pos or comp.type in (COMP_LABEL, COMP_JUNCTION):
+                continue
+            r = world_rect(pos, comp.type, comp)
+            if max(r.width(), r.height()) > 60:
+                continue                # tank / panel
+            if r.height() > 2 * PR.VLV_HH * 1.5:
+                # actuator / dome stack above the body: keep the body slab only
+                _sx, _sy = PR._component_scale(comp)
+                r = QRectF(pos.x - PR.VLV_HW * _sx, pos.y - PR.VLV_HH * _sy,
+                           PR.VLV_HW * 2 * _sx, PR.VLV_HH * 2 * _sy)
+            if comp.rotation % 180 == 90:
+                r = QRectF(pos.x - r.height() / 2, pos.y - r.width() / 2, r.height(), r.width())
+            rects.append(r)
+        return rects
+
+    @staticmethod
+    def _trim_pipe_ends(pts: list, rects: list) -> list:
+        """Pull each end of a pipe back from a component's centre to its edge."""
+        if len(pts) < 2:
+            return [QPointF(pt.x, pt.y) for pt in pts]
+        out = [QPointF(pt.x, pt.y) for pt in pts]
+        for end, nb in ((0, 1), (len(out) - 1, len(out) - 2)):
+            e, n = out[end], out[nb]
+            for r in rects:
+                if not r.contains(e) or r.contains(n):
+                    continue
+                dx, dy = e.x() - n.x(), e.y() - n.y()
+                ts = []
+                if dx:
+                    ts += [(r.left() - n.x()) / dx, (r.right() - n.x()) / dx]
+                if dy:
+                    ts += [(r.top() - n.y()) / dy, (r.bottom() - n.y()) / dy]
+                ts = [t for t in ts if 0.0 <= t <= 1.0
+                      and r.adjusted(-0.01, -0.01, 0.01, 0.01).contains(n.x() + dx * t, n.y() + dy * t)]
+                if ts:
+                    t = min(ts)
+                    out[end] = QPointF(n.x() + dx * t, n.y() + dy * t)
+                break
+        return out
+
     def _paint_lines(self, p):
         pressure_values = self._line_pressure_values()
+        stop_rects = self._pipe_stop_rects()
         pressurized = self._pressurized_line_ids() if not self.interactive else set()
 
         for line in self.project.lines:
             pts = line.points
             if len(pts) < 2:
                 continue
+            full_pts = pts                  # selection handles stay on the real vertices
+            pts = [LayoutPoint(q.x(), q.y()) for q in self._trim_pipe_ends(pts, stop_rects)]
             color = FLUID_QC.get(line.fluid, QColor("#c8c8c8"))
 
             pressure = pressure_values.get(line.id)
@@ -1105,11 +1267,17 @@ class PIDCanvas(QWidget):
                 p.drawLine(QPointF(pts[i].x,   pts[i].y),
                            QPointF(pts[i+1].x, pts[i+1].y))
 
+            pts = full_pts
             if is_selected:
                 p.setPen(QPen(PR.C_SELECT, 1.5 / self._zoom))
                 p.setBrush(QBrush(PR.C_SELECT))
                 for pt in pts:
                     p.drawEllipse(QPointF(pt.x, pt.y), 5 / self._zoom, 5 / self._zoom)
+                if self.interactive:
+                    # square handles mid-segment: drag to slide the whole segment sideways
+                    r = 4 / self._zoom
+                    for a, b in zip(pts, pts[1:]):
+                        p.drawRect(QRectF((a.x + b.x) / 2 - r, (a.y + b.y) / 2 - r, 2 * r, 2 * r))
 
     def _paint_components(self, p):
         for cid, comp in self.project.components.items():
@@ -1138,6 +1306,18 @@ class PIDCanvas(QWidget):
                         show_label  = show_label,
                         alert_color = alert_color,
                         actuator_pct = actuator_pct)
+
+        if self.interactive:
+            # Selected components show a dashed box round their name label: drag it to move
+            # the label, double-click it to put it back.
+            p.setBrush(Qt.NoBrush)
+            p.setPen(QPen(PR.C_SELECT, 1.0 / self._zoom, Qt.DotLine))
+            for cid in self._selected_comps:
+                comp = self.project.components.get(cid)
+                pos = self.project.layout.get(cid)
+                rect = Renderer.label_rect(pos, comp, self._zoom) if pos else None
+                if rect is not None:
+                    p.drawRect(rect.adjusted(-2, -1, 2, 1))
 
     def _paint_line_preview(self, p):
         fluid_color = FLUID_QC.get(self._line_fluid, QColor("#c8c8c8"))
@@ -1209,6 +1389,23 @@ class PIDCanvas(QWidget):
                 sx, sy = snap(world.x(), world.y())
                 self._line_points.append(LayoutPoint(sx, sy))
                 self.update()
+                return
+
+            handle = self._line_handle_at(world)
+            if handle:
+                line = next(l for l in self.project.lines if l.id == handle[1])
+                self._line_drag = handle
+                self._line_drag_orig = [(p.x, p.y) for p in line.points]
+                self.setCursor(Qt.SizeAllCursor)
+                event.accept()
+                return
+
+            label_cid = self._label_at(world)
+            if label_cid:
+                self._dragging_label = label_cid
+                self._label_drag_start_world = world
+                self._label_drag_start_off = Renderer.label_offset_xy(self.project.components[label_cid])
+                self.setCursor(Qt.SizeAllCursor)
                 return
 
             # Check callout drag first (sensor labels)
@@ -1284,6 +1481,13 @@ class PIDCanvas(QWidget):
             self.update()
 
     def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.LeftButton and not self._drawing_line:
+            cid = self._label_at(self._to_world(event.x(), event.y()))
+            if cid and "label_offset" in self.project.components[cid].extras:
+                del self.project.components[cid].extras["label_offset"]     # snap back to default spot
+                self.label_moved.emit(cid)
+                self.update()
+                return
         if event.button() == Qt.LeftButton and self._drawing_line:
             world = self._to_world(event.x(), event.y())
             sx, sy = snap(world.x(), world.y())
@@ -1304,6 +1508,10 @@ class PIDCanvas(QWidget):
             self.update()
             return
 
+        if self._line_drag and self.interactive:
+            self._drag_line_handle(world, bool(event.modifiers() & Qt.ShiftModifier))
+            return
+
         if self._resizing_comp and self.interactive:
             base_hw, base_hh = self._resize_base_half
             cx, cy = self._resize_center.x(), self._resize_center.y()
@@ -1311,6 +1519,16 @@ class PIDCanvas(QWidget):
             if comp and base_hw > 0 and base_hh > 0:
                 comp.extras["scale_x"] = round(max(0.2, abs(world.x() - cx) / base_hw), 3)
                 comp.extras["scale_y"] = round(max(0.2, abs(world.y() - cy) / base_hh), 3)
+                self.update()
+            return
+
+        if self._dragging_label and self.interactive:
+            comp = self.project.components.get(self._dragging_label)
+            if comp:
+                ox, oy = self._label_drag_start_off
+                comp.extras["label_offset"] = [
+                    round(ox + world.x() - self._label_drag_start_world.x(), 1),
+                    round(oy + world.y() - self._label_drag_start_world.y(), 1)]
                 self.update()
             return
 
@@ -1334,6 +1552,10 @@ class PIDCanvas(QWidget):
             sx, sy = snap(world.x(), world.y())
             self._line_cursor = QPointF(sx, sy)
             self.update()
+            return
+
+        if self._line_handle_at(world):
+            self.setCursor(Qt.SizeAllCursor)
             return
 
         cid = self._comp_at(world)
@@ -1372,6 +1594,12 @@ class PIDCanvas(QWidget):
             self._pan_start = None
             self.setCursor(Qt.ArrowCursor)
             return
+        if self._line_drag:
+            lid = self._line_drag[1]
+            self._line_drag = self._line_drag_orig = None
+            self.setCursor(Qt.ArrowCursor)
+            self.line_edited.emit(lid)
+            return
         if self._resizing_comp:
             cid = self._resizing_comp
             self._resizing_comp    = None
@@ -1379,6 +1607,11 @@ class PIDCanvas(QWidget):
             self._resize_center    = None
             self.setCursor(Qt.ArrowCursor)
             self.component_resized.emit(cid)
+            return
+        if self._dragging_label:
+            cid, self._dragging_label = self._dragging_label, None
+            self.setCursor(Qt.ArrowCursor)
+            self.label_moved.emit(cid)
             return
         if self._dragging_callout:
             self._dragging_callout = None
@@ -1419,6 +1652,14 @@ class PIDCanvas(QWidget):
         factor = math.exp((delta / 120.0) * math.log(1.15))
         self._zoom_at(event.pos().x(), event.pos().y(), factor)
         event.accept()
+        self.update()
+
+    def zoom_in(self):
+        self._zoom_at(self.width() / 2, self.height() / 2, 1.25)
+        self.update()
+
+    def zoom_out(self):
+        self._zoom_at(self.width() / 2, self.height() / 2, 1 / 1.25)
         self.update()
 
     def _zoom_at(self, screen_x: float, screen_y: float, factor: float):

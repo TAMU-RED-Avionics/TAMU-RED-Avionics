@@ -35,7 +35,7 @@ from PID_SCHEMA import (
     PIDProject, Component, PipeLine, LayoutPoint,
     FLUID_OXIDIZER, FLUID_FUEL, FLUID_PRESSURANT, FLUID_PURGE, FLUID_GENERIC,
     COMP_VALVE, COMP_BALL_VALVE, COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_CHECK_VALVE,
-    COMP_THROTTLE_VALVE, COMP_ACTUATED_VALVE, COMP_NEEDLE_VALVE, COMP_THREE_WAY_VALVE,
+    COMP_THROTTLE_VALVE, COMP_EP_THROTTLE_VALVE, COMP_ACTUATED_VALVE, COMP_NEEDLE_VALVE, COMP_THREE_WAY_VALVE,
     COMP_PSV, COMP_PRV, COMP_REGULATOR, COMP_HAND_REGULATOR, COMP_DOME_REGULATOR,
     COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL, COMP_PRESSURE_GAUGE,
     COMP_DIFF_PRESSURE, COMP_FLOW_METER, COMP_TANK, COMP_PUMP, COMP_REDUCER,
@@ -45,7 +45,7 @@ from PID_SCHEMA import (
 )
 
 GRID = 10
-TAG_RE = re.compile(r"^(?:[A-Z]{1,5}-\d{2,5}[A-Za-z0-9]*|[A-Z]{2,5}_[A-Z0-9]{1,5})$")
+TAG_RE = re.compile(r"^(?:[A-Z]{1,5}-\d{2,5}[A-Za-z0-9]*|[A-Z]{2,5}_[A-Z0-9]{1,5}|[A-Z]{2,4}V)$")   # NV-1101, MCC_P, MOV
 TAG_MAX_DIST = 120.0        # px between a tag's text and its symbol
 SNAP_DIST = 18.0            # px from a pipe end to a component's outline
 BIG_COMPONENT = 60.0        # pipes keep their own end point on components larger than this
@@ -55,7 +55,7 @@ _TANK_BASE = (56.0, 100.0)
 
 _PREFIX = {
     COMP_BALL_VALVE: "BV", COMP_SOLENOID: "SV", COMP_GLOBE_VALVE: "GV", COMP_CHECK_VALVE: "CV",
-    COMP_THROTTLE_VALVE: "TV", COMP_PSV: "PSV", COMP_PRV: "PRV", COMP_REGULATOR: "REG",
+    COMP_THROTTLE_VALVE: "TV", COMP_EP_THROTTLE_VALVE: "EPTV", COMP_PSV: "PSV", COMP_PRV: "PRV", COMP_REGULATOR: "REG",
     COMP_PRESSURE: "PT", COMP_TEMPERATURE: "TC", COMP_LOAD_CELL: "LC", COMP_REDUCER: "RED",
     COMP_TANK: "TK", COMP_IGNITER: "IGN", COMP_ACTUATED_VALVE: "AV", COMP_NEEDLE_VALVE: "NV",
     COMP_THREE_WAY_VALVE: "3WV", COMP_BURST_DISK: "BD", COMP_BULKHEAD: "BH",
@@ -69,7 +69,7 @@ _PREFIX = {
 # Description keywords -> component type. First match wins, so order matters
 # (more specific phrases first).
 _DESCRIPTION_RULES = [
-    ("throttling",       COMP_THROTTLE_VALVE),
+    ("throttling",       COMP_EP_THROTTLE_VALVE),   # the plain throttle type has no symbol; this is the legend's E/P throttle valve
     ("solenoid",         COMP_SOLENOID),
     ("check valve",      COMP_CHECK_VALVE),
     ("needle valve",     COMP_NEEDLE_VALVE),
@@ -89,12 +89,16 @@ _DESCRIPTION_RULES = [
     ("igniter",          COMP_IGNITER),
     ("quick disconnect", COMP_QUICK_DISCONNECT),
     ("hose",             COMP_FLEX_HOSE),
-    ("coil",             COMP_FLEX_HOSE),
+    ("coil",             COMP_HEAT_EXCHANGER),
     ("compressor",       COMP_PUMP),
     ("pump",             COMP_PUMP),
     ("bottle",           COMP_TANK),
     ("tank",             COMP_TANK),
 ]
+
+# Types that are kinds of valve (a description naming one of these can refine a valve symbol)
+_VALVE_KINDS = {COMP_SOLENOID, COMP_CHECK_VALVE, COMP_NEEDLE_VALVE, COMP_GLOBE_VALVE, COMP_BALL_VALVE,
+                COMP_PRV, COMP_REGULATOR, COMP_THROTTLE_VALVE, COMP_EP_THROTTLE_VALVE, COMP_BURST_DISK}
 
 _VALVE_TYPE = {
     "gate": COMP_VALVE, "ball": COMP_BALL_VALVE, "check": COMP_CHECK_VALVE,
@@ -128,6 +132,8 @@ class ImportReport:
     unassigned_tags: list = field(default_factory=list)
     labels_created: int = 0
     notes: list = field(default_factory=list)
+    sources: dict = field(default_factory=dict)         # component id -> draw.io cell id (audit / debugging)
+    line_sources: dict = field(default_factory=dict)    # pipe id -> draw.io edge id
 
     def summary(self) -> str:
         out = [f"Imported page: {self.page}", ""]
@@ -191,8 +197,14 @@ class _Cell:
     def description(self) -> str:
         """Joined description attributes of the wrapping object (e.g. _01_Description,
         _02_Valve_Description, ...), lower-cased for keyword matching."""
-        parts = [v for k, v in self.meta.items() if "escription" in k and v]
+        parts = [v for k, v in self.meta.items()
+                 if v and k not in ("id", "label", "placeholders") and "link" not in k.lower()]
         return " | ".join(parts)
+
+    @property
+    def valve_body_description(self) -> str:
+        """Description of the valve body in a grouped assembly (valve + actuator + solenoid ...)."""
+        return " | ".join(v for k, v in self.meta.items() if v and "valve_description" in k.lower())
 
 
 def _strip_html(text: str) -> str:
@@ -299,6 +311,46 @@ def _orthogonalize(pts: list) -> list:
     return out
 
 
+def _close_gaps(project: PIDProject, reach: float = 80.0):
+    """A pipe that stops just short of a symbol (draw.io drew the symbol bigger, or a decoration we
+    drop sat in between) is extended along its own direction until it meets the first component."""
+    from PID_RENDERER import world_rect
+
+    def rect_of(cid):
+        c = project.components[cid]
+        return world_rect(project.layout[cid], c.type, c)
+
+    rects = {cid: rect_of(cid) for cid, c in project.components.items()
+             if c.type not in (COMP_LABEL, COMP_JUNCTION)}
+    for line in project.lines:
+        pts = line.points
+        if len(pts) < 2:
+            continue
+        for end, nb in ((0, 1), (len(pts) - 1, len(pts) - 2)):
+            e, n = pts[end], pts[nb]
+            if any(r.adjusted(-14, -14, 14, 14).contains(e.x, e.y) for r in rects.values()):
+                continue                                    # already meets a symbol
+            dx = (e.x > n.x) - (e.x < n.x) if abs(e.y - n.y) < 0.5 else 0
+            dy = (e.y > n.y) - (e.y < n.y) if abs(e.x - n.x) < 0.5 else 0
+            if not (dx or dy):
+                continue                                    # diagonal: leave it alone
+            best = None
+            for cid, r in rects.items():
+                if dx:
+                    if not (r.top() <= e.y <= r.bottom()):
+                        continue
+                    d = (r.left() - e.x) if dx > 0 else (e.x - r.right())
+                else:
+                    if not (r.left() <= e.x <= r.right()):
+                        continue
+                    d = (r.top() - e.y) if dy > 0 else (e.y - r.bottom())
+                if 0 < d <= reach and (best is None or d < best):
+                    best = d
+            if best is not None:
+                e.x += dx * best
+                e.y += dy * best
+
+
 def _declutter(project: PIDProject, comp_rects: dict):
     """Nudge free-text labels so they don't sit on top of component tags or symbols.
     Text geometry mirrors PID_RENDERER (label baseline = centre + (VLV_HH+20)*scale)."""
@@ -390,12 +442,21 @@ def _pick_page(root: ET.Element, page: Optional[str]) -> ET.Element:
 def _classify(cell: _Cell) -> Optional[str]:
     """Component type for a vertex, or None if it is not a recognisable symbol."""
     desc = cell.description.lower()
-    if desc:
-        for kw, ctype in _DESCRIPTION_RULES:
-            if kw in desc:
-                return ctype
     st = cell.style
-    if "mxgraph.pid2valves.valve" in st:
+    is_valve_shape = "mxgraph.pid2valves.valve" in st
+    if desc:
+        if "throttling" in desc:            # a throttling valve is proportional whatever its body is
+            return COMP_EP_THROTTLE_VALVE
+        body = cell.valve_body_description.lower()
+        if body:                            # valve + actuator + solenoid: the body decides, not the pilot
+            for kw, ctype in _DESCRIPTION_RULES:
+                if ctype in _VALVE_KINDS and kw in body:
+                    return ctype
+        for kw, ctype in _DESCRIPTION_RULES:
+            # a plain valve symbol is a valve: "Part of the K-bottle" must not turn it into a tank
+            if kw in desc and (not is_valve_shape or ctype in _VALVE_KINDS):
+                return ctype
+    if is_valve_shape:
         vt = cell.style_get("valveType", "gate")
         actuator = cell.style_get("actuator", "none")
         ctype = _VALVE_TYPE.get(vt, COMP_VALVE)
@@ -414,6 +475,39 @@ def _classify(cell: _Cell) -> Optional[str]:
         text = _strip_html(cell.value).upper()
         if text in _LETTER_TYPE:
             return _LETTER_TYPE[text]
+    return None
+
+
+def _is_vent(cell: _Cell, children: list) -> bool:
+    """The legend's 'To Atmosphere': a small group holding only dashed lines."""
+    return (len(children) >= 2 and all(c.edge and "dashed=1" in c.style for c in children)
+            and not any(c.vertex for c in children))
+
+
+# Letters of a tag (after the working-fluid letter) -> the component types they can mean. Used so a
+# tag lands on a symbol of the right kind instead of just the nearest one.
+_TAG_SUFFIX_TYPES = [
+    ("HEX", {COMP_HEAT_EXCHANGER}), ("PG", {COMP_PRESSURE_GAUGE}), ("PT", {COMP_PRESSURE}),
+    ("TH", {COMP_TEMPERATURE}), ("RV", {COMP_PRV, COMP_PSV}), ("OR", {COMP_ORIFICE}),
+    ("DP", {COMP_DIFF_PRESSURE}), ("FM", {COMP_FLOW_METER}), ("LC", {COMP_LOAD_CELL}),
+    ("H", {COMP_FLEX_HOSE}), ("C", {COMP_CHECK_VALVE}), ("R", {COMP_REGULATOR, COMP_HAND_REGULATOR,
+                                                                COMP_DOME_REGULATOR}),
+    ("V", {COMP_VALVE, COMP_BALL_VALVE, COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_NEEDLE_VALVE,
+           COMP_THREE_WAY_VALVE, COMP_THROTTLE_VALVE, COMP_EP_THROTTLE_VALVE, COMP_ACTUATED_VALVE,
+           COMP_PRV, COMP_PSV, COMP_CHECK_VALVE}),
+    ("P", {COMP_PUMP}), ("F", {COMP_FILTER}), ("T", {COMP_TANK}),
+]
+
+
+def _tag_types(tag: str):
+    """Component types a tag like 'NPG-1101' can belong to, or None if its letters aren't recognised."""
+    if "_" in tag:                          # engine style 'MCC_P' / 'OMI_T': the part after _ is the measurement
+        return {"P": {COMP_PRESSURE}, "T": {COMP_TEMPERATURE}, "DP": {COMP_DIFF_PRESSURE}}.get(tag.split("_")[-1])
+    letters = tag.split("-")[0]
+    body = letters[1:] if len(letters) > 1 else letters       # first letter = working fluid
+    for suffix, types in sorted(_TAG_SUFFIX_TYPES, key=lambda t: -len(t[0])):
+        if body.endswith(suffix):
+            return types
     return None
 
 
@@ -467,7 +561,7 @@ def import_drawio(path: str, page: Optional[str] = None, spacing: float = 1.5) -
         cx, cy = x + w / 2, y + h / 2
         comp_id = new_id(ctype)
         comp = Component(id=comp_id, type=ctype, label=label_text or comp_id,
-                         rotation=_rotation(cell.style))
+                         rotation=_rotation(cell.style), flip="flipH=1" in cell.style)
         notes = cell.description
         if notes:
             comp.extras["notes"] = notes
@@ -481,6 +575,7 @@ def import_drawio(path: str, page: Optional[str] = None, spacing: float = 1.5) -
             if abs(sy - 1) > 0.05:
                 comp.extras["scale_y"] = round(sy, 3)
         project.add_component(comp, _snap(cx), _snap(cy))
+        report.sources[comp_id] = cell.id
         comp_rects[comp_id] = (cx - w / 2, cy - h / 2, w, h)
         claim_subtree(cell.id, comp_id)
         report.components[ctype] = report.components.get(ctype, 0) + 1
@@ -509,6 +604,9 @@ def import_drawio(path: str, page: Optional[str] = None, spacing: float = 1.5) -
                 if rect and max(rect[2], rect[3]) <= 12 and not _strip_html(cell.value):
                     junction_like.append(cell)
                     continue
+            if _is_vent(cell, children_of(cell.id)):
+                add_component(cell, COMP_TO_ATMOSPHERE)
+                continue
             # a container: look inside it
             if children_of(cell.id):
                 walk(cell.id)
@@ -534,16 +632,28 @@ def import_drawio(path: str, page: Optional[str] = None, spacing: float = 1.5) -
         add_component(cell, COMP_JUNCTION)
 
     # -- 2. Match tag text to the nearest unlabelled symbol ----------------------
-    tag_cells = [t for t in texts if TAG_RE.match(_strip_html(t.value).replace(" ", ""))]
+    def tag_of(cell):
+        """(tag, trailing text) when the text starts with a tag like 'NV-1101', else (None, '')."""
+        parts = _strip_html(cell.value).split()
+        if parts and TAG_RE.match(parts[0]):
+            return parts[0], " ".join(parts[1:])
+        joined = "".join(parts)
+        return (joined, "") if TAG_RE.match(joined) else (None, "")
+
+    tag_cells = [t for t in texts if tag_of(t)[0]]
     other_texts = [t for t in texts if t not in tag_cells]
     pairs = []
     for t in tag_cells:
         tc = geo.center(t.id)
         if tc is None:
             continue
+        kinds = _tag_types(tag_of(t)[0])
         for comp_id, (x, y, w, h) in comp_rects.items():
-            if project.components[comp_id].type in (COMP_LABEL, COMP_JUNCTION):
+            ctype = project.components[comp_id].type
+            if ctype in (COMP_LABEL, COMP_JUNCTION):
                 continue
+            if kinds is not None and ctype not in kinds:
+                continue                    # NPG-1101 is a gauge: never hand it to the reducer next to it
             d = math.hypot(tc[0] - (x + w / 2), tc[1] - (y + h / 2))
             if d <= TAG_MAX_DIST:
                 pairs.append((d, t.id, comp_id))
@@ -552,7 +662,11 @@ def import_drawio(path: str, page: Optional[str] = None, spacing: float = 1.5) -
     for d, tid, comp_id in pairs:
         if tid in used_tags or comp_id in labelled:
             continue
-        project.components[comp_id].label = _strip_html(cells[tid].value).replace(" ", "")
+        tag, extra = tag_of(cells[tid])
+        comp = project.components[comp_id]
+        comp.label = tag
+        if extra:                           # e.g. "GN2" / "ETH" under a tank's tag: the fluid, not part of the tag
+            comp.extras["notes"] = (comp.extras["notes"] + " | " if comp.extras.get("notes") else "") + extra
         used_tags.add(tid)
         labelled.add(comp_id)
 
@@ -680,6 +794,7 @@ def import_drawio(path: str, page: Optional[str] = None, spacing: float = 1.5) -
             connects=[c0, c1] if (c0 and c1 and c0 != c1) else [],
         )
         project.add_line(line)
+        report.line_sources[line.id] = cell.id
         n_lines += 1
         if line.connects:
             report.lines_connected += 1
@@ -692,6 +807,7 @@ def import_drawio(path: str, page: Optional[str] = None, spacing: float = 1.5) -
             for pt in line.points:
                 pt.x, pt.y = _snap(pt.x * spacing), _snap(pt.y * spacing)
 
+    _close_gaps(project)
     _declutter(project, comp_rects)
 
     if not project.components:

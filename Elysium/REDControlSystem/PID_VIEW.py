@@ -56,6 +56,11 @@ class PIDViewWindow(QWidget):
         # "&&" renders a literal ampersand (a single "&" becomes a mnemonic underline)
         self._open_btn = tb_btn("Open P&&ID…", self._open_project)
         tb_btn("Fit View [F]", self._fit_view)
+        zi = tb_btn("+", lambda: self.canvas.zoom_in())
+        zo = tb_btn("\u2212", lambda: self.canvas.zoom_out())
+        for b, tip in ((zi, "Zoom in"), (zo, "Zoom out")):
+            b.setFixedWidth(34)
+            b.setToolTip(tip + "  (or mouse wheel / Ctrl or \u2318 + scroll)")
         tb_layout.addWidget(_vsep())
 
         self._conn_badge = QLabel("● DISCONNECTED")
