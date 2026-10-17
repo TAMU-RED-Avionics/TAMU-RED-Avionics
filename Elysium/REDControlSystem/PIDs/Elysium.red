@@ -1758,6 +1758,28 @@
       "soak_ms": 0
     }
   ],
+  "abort_states": [
+    {
+      "id": "default",
+      "name": "Default Abort",
+      "valves": {
+        "BV_1": false,
+        "GV_1": false,
+        "BV_2": false,
+        "VAL_1": false,
+        "VAL_2": false,
+        "VAL_3": false,
+        "VAL_4": false,
+        "VAL_5": false,
+        "VAL_6": false,
+        "BV_3": false,
+        "GV_2": false,
+        "SV_1": false,
+        "SV_2": false
+      },
+      "confirmed": true
+    }
+  ],
   "sequence": [],
   "sequences": [
     {

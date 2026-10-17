@@ -650,7 +650,8 @@ void safe_all_valves() {
     for (int pin : pins) {
         if (pin >= 0) digitalWrite(pin, LOW);
     }
-    // if (NCS2_PIN >= 0) digitalWrite(NCS2_PIN, HIGH); // check ops
+    // E2 abort state (confirmed): every valve closed, including NCS2 - no valve
+    // is left open on abort/comms loss.
     safe_all_actuators();
 }
 

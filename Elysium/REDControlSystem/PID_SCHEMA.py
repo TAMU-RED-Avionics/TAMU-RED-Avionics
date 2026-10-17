@@ -105,6 +105,7 @@ class Component:
     extras:   dict            = field(default_factory=dict)
     rotation: int             = 0
     hide_lbl: bool            = False
+    flip:     bool            = False          # mirrored left-right (as seen on screen), applied before rotation
 
     def to_dict(self):
         return {
@@ -115,6 +116,7 @@ class Component:
             "extras":   self.extras,
             "rotation": self.rotation,
             "hide_lbl": self.hide_lbl,
+            "flip":     self.flip,
         }
 
     @staticmethod
@@ -127,6 +129,7 @@ class Component:
             extras   = d.get("extras", {}),
             rotation = d.get("rotation", 0),
             hide_lbl = d.get("hide_lbl", False),
+            flip     = d.get("flip", False),
         )
 
 
@@ -286,6 +289,13 @@ class SystemParameters:
     system_mawp_message: str = ""
     system_meop_message: str = ""
 
+    # Abort state (see PIDProject.abort_states) applied when the system MAWP
+    # backstop trips; "" = the default abort state. And the "approaching MAWP"
+    # warning level, as a percentage of system_mawp, where the operator is told
+    # to clear the area before the auto-action.
+    system_mawp_state: str   = ""
+    system_prewarn_pct: float = 90.0
+
     # Length (seconds) of the pre-ignition terminal-count hold used by
     # show_fire_sequence_dialog().
     terminal_count_s: float = 10.0
@@ -304,6 +314,8 @@ class SystemParameters:
             system_meop          = _f("system_meop"),
             system_mawp_message  = d.get("system_mawp_message", ""),
             system_meop_message  = d.get("system_meop_message", ""),
+            system_mawp_state    = d.get("system_mawp_state", ""),
+            system_prewarn_pct   = float(d.get("system_prewarn_pct", 90.0)),
             terminal_count_s     = float(d.get("terminal_count_s", 10.0)),
         )
 
@@ -334,6 +346,11 @@ class SensorThresholds:
     meop_action:    str = "warn"
     relief_action:  str = "open_valve"  # almost always open_valve
 
+    # Which named abort state an "abort" action applies ("" = default abort)
+    mawp_state:     str = ""
+    meop_state:     str = ""
+    relief_state:   str = ""
+
     # ---- open_valve details (used by relief_action / meop_action) --------
     target_valve:       str            = ""    # component ID of the valve to open
     close_valve_below:  Optional[float]= None  # hysteresis close threshold
@@ -354,6 +371,9 @@ class SensorThresholds:
             mawp_action       = d.get("mawp_action",   "abort"),
             meop_action       = d.get("meop_action",   "warn"),
             relief_action     = d.get("relief_action", "open_valve"),
+            mawp_state        = d.get("mawp_state", ""),
+            meop_state        = d.get("meop_state", ""),
+            relief_state      = d.get("relief_state", ""),
             target_valve      = d.get("target_valve",  ""),
             close_valve_below = _f("close_valve_below"),
             soak_ms           = int(d.get("soak_ms", 0)),
@@ -403,9 +423,13 @@ class AbortRule:
     # Soak time (ms) - violation must persist this long before firing
     soak_ms: int = 0
 
+    # Named abort state an "abort" action applies ("" = default abort)
+    abort_state: str = ""
+
     def to_dict(self) -> dict:
         return {
             "id":               self.id,
+            "abort_state":      self.abort_state,
             "condition_type":   self.condition_type,
             "action":           self.action,
             "enabled":          self.enabled,
@@ -433,6 +457,7 @@ class AbortRule:
             target_valve     = d.get("target_valve", ""),
             close_valve_below= float(cvb) if cvb is not None else None,
             soak_ms          = int(d.get("soak_ms", 0)),
+            abort_state      = d.get("abort_state", ""),
         )
 
 
@@ -536,6 +561,36 @@ class NamedSequence:
         )
 
 
+@dataclass
+class AbortState:
+    """A named valve configuration the system is driven to on an abort.
+
+    valves maps component id -> True (open); anything missing is closed. The
+    project's default state (id DEFAULT_ABORT_ID) doubles as the Safe State
+    preset. confirmed=False means the operator hasn't reviewed it yet.
+    """
+    id:        str
+    name:      str
+    valves:    dict = field(default_factory=dict)
+    confirmed: bool = False
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "name": self.name, "valves": dict(self.valves),
+                "confirmed": self.confirmed}
+
+    @staticmethod
+    def from_dict(d: dict) -> "AbortState":
+        return AbortState(
+            id        = d["id"],
+            name      = d.get("name", d["id"]),
+            valves    = {k: bool(v) for k, v in d.get("valves", {}).items()},
+            confirmed = bool(d.get("confirmed", False)),
+        )
+
+
+DEFAULT_ABORT_ID = "default"
+
+
 class PIDProject:
 
     VERSION = "1.0"
@@ -549,6 +604,12 @@ class PIDProject:
         self.lines:              list             = []    # list[PipeLine]
         self.parameters:         SystemParameters = SystemParameters()
         self.rules:              list             = []    # list[AbortRule]
+
+        # --- Named abort states ---------------------------------------------
+        # Valve configurations the system is driven to on an abort. Always
+        # contains the default state (DEFAULT_ABORT_ID), which is also the Safe
+        # State preset. Rules / thresholds pick a state by id ("" = default).
+        self.abort_states: list = [AbortState(DEFAULT_ABORT_ID, "Default Abort")]
 
         # --- Legacy flat sequence list (kept for backward-compat read paths) ---
         self.sequence:           list             = []    # list[SequenceStep]
@@ -592,6 +653,21 @@ class PIDProject:
 
     def remove_line(self, line_id: str):
         self.lines = [l for l in self.lines if l.id != line_id]
+
+    def get_abort_state(self, state_id: str = "") -> "AbortState":
+        """The named state, falling back to the default for "" / unknown ids."""
+        for st in self.abort_states:
+            if st.id == (state_id or DEFAULT_ABORT_ID):
+                return st
+        return self.default_abort_state()
+
+    def default_abort_state(self) -> "AbortState":
+        for st in self.abort_states:
+            if st.id == DEFAULT_ABORT_ID:
+                return st
+        st = AbortState(DEFAULT_ABORT_ID, "Default Abort")
+        self.abort_states.insert(0, st)
+        return st
 
     def add_abort_rule(self, rule: AbortRule):
         self.rules.append(rule)
@@ -640,6 +716,7 @@ class PIDProject:
             "lines":              [l.to_dict() for l in self.lines],
             "parameters":         self.parameters.to_dict(),
             "rules":              [r.to_dict() for r in self.rules],
+            "abort_states":       [s.to_dict() for s in self.abort_states],
             # Legacy flat sequence kept for backward-compat readers
             "sequence":           [s.to_dict() for s in self.sequence],
             # New multi-sequence support
@@ -702,6 +779,15 @@ class PIDProject:
         if not proj.sequences:
             proj.sequences.append(NamedSequence(
                 id="seq_default", name="Default", steps=list(proj.sequence)))
+
+        if "abort_states" in d:
+            proj.abort_states = [AbortState.from_dict(sd) for sd in d["abort_states"]]
+        elif "abort_state" in d:        # single-state files from before named aborts
+            proj.abort_states = [AbortState(
+                DEFAULT_ABORT_ID, "Default Abort",
+                {k: bool(v) for k, v in d["abort_state"].items()},
+                bool(d.get("abort_state_confirmed", False)))]
+        proj.default_abort_state()      # guarantee the default exists
 
         proj.active_sequence_id = d.get("active_sequence_id", "")
         # Fall back to the first sequence if active_sequence_id is missing or

@@ -19,13 +19,15 @@ class EGCPPacket:
     PKT_SFE = 0x8   # Enter Safe Mode
     PKT_ADC = 0x9   # ADC Reading
     PKT_STA = 0xA   # Connection Start/Handshake
+    PKT_POS = 0xB   # Actuator Position: body = [actuator id:1][position:2, big-endian, 0.01 % units]
     
-    # Sensor ID mapping
+    # Sensor ID mapping. The ID is the ADC channel the GUI's project binds each sensor to
+    # (hardware.adc in the .red file), so these must match PIDs/Elysium.red or the GUI
+    # shows the reading under the wrong name / not at all.
     SENSOR_MAP = {
-        "P1": 0x01, "P2": 0x02, "P3": 0x03, "P4": 0x04, "P5": 0x05, "P6": 0x06,
-        "P7": 0x07, "P8": 0x08,
-        "TC1": 0x09, "TC2": 0x0A, "TC3": 0x0B,
-        "LC1": 0x0C, "LC2": 0x0D, "LC3": 0x0E,
+        "P1": 1, "P2": 2, "P3": 3, "P4": 4, "P5": 5, "P6": 6, "P7": 7, "P8": 8,
+        "LC1": 25, "LC2": 26, "LC3": 27, "LC4": 28, "LC5": 29, "LC6": 30,
+        "TC3": 109, "TC2": 110, "TC1": 111,
         "B1": 0x0F, "B2": 0x10,
     }
     
@@ -66,6 +68,11 @@ class VTComms(QObject):
     log_signal = pyqtSignal(str)
     valve_update_signal = pyqtSignal(str, bool)
     connected_signal = pyqtSignal(str)
+    actuator_position_signal = pyqtSignal(str, float)   # name, simulated position (%)
+    actuator_target_signal = pyqtSignal(str, float)     # name, commanded target (%)
+
+    # Proportional (position-commanded) actuators, addressed by PKT_POS.
+    ACTUATOR_IDS = {0x51: "SV-1", 0x52: "SV-2"}
 
     def __init__(self, port=8889, target_port=8888):
         super().__init__()
@@ -95,13 +102,20 @@ class VTComms(QObject):
             0x21: False,  # GV-2
             0x30: False,  # IG1
             0x31: False,  # IG2
+            0x51: False,  # SV-1 (actuator)
+            0x52: False,  # SV-2 (actuator)
         }
+        # Simulated actuators: they travel from their current position to the commanded
+        # target at actuator_speed (% of full stroke per second), like a real motor would.
+        self.actuator_speed = 50.0
+        self.actuator_pos = {name: 0.0 for name in self.ACTUATOR_IDS.values()}
+        self.actuator_target = dict(self.actuator_pos)
         self.ack_enabled = {} # component_name -> bool
 
         self.sensor_data = {
             "P1": 0.0, "P2": 0.0, "P3": 0.0, "P4": 0.0, "P5": 0.0, "P6": 0.0, "P7": 0.0, "P8": 0.0,
             "TC1": 0.0, "TC2": 0.0, "TC3": 0.0,
-            "LC1": 0.0, "LC2": 0.0, "LC3": 0.0,
+            "LC1": 0.0, "LC2": 0.0, "LC3": 0.0, "LC4": 0.0, "LC5": 0.0, "LC6": 0.0,
             "B1": 0.0, "B2": 0.0,
         }
         self.start_time = time.time()
@@ -173,6 +187,16 @@ class VTComms(QObject):
                             self.log_signal.emit(f"RX: VSC (valve close) packet ID {pkt.packet_id}, valve 0x{valve_id:02X}")
                             self.handle_valve_command(valve_id, False, pkt.packet_id, addr)
                     
+                    elif pkt.packet_type == EGCPPacket.PKT_POS:
+                        # Actuator position command
+                        if len(pkt.body) >= 3:
+                            actuator_id = pkt.body[0]
+                            pct = struct.unpack('>H', pkt.body[1:3])[0] / 100.0
+                            self.log_signal.emit(
+                                f"RX: POS (set position) packet ID {pkt.packet_id}, "
+                                f"{self.get_valve_name(actuator_id)} -> {pct:.2f}%")
+                            self.handle_actuator_command(actuator_id, pct, pkt.packet_id, addr)
+
                     elif pkt.packet_type == EGCPPacket.PKT_HRT:
                         # Heartbeat - just acknowledge
                         # Don't log every heartbeat to reduce spam, but send ACK
@@ -211,6 +235,7 @@ class VTComms(QObject):
 
     def heartbeat_loop(self):
         last_sensor_time = 0
+        last_step_time = 0
         while self.running:
             try:
                 current_time = time.time()
@@ -219,6 +244,9 @@ class VTComms(QObject):
                     self.send_sensors()
                     last_sensor_time = current_time
                 
+                self.step_actuators(current_time - last_step_time if last_step_time else 0.01)
+                last_step_time = current_time
+
                 # Wait 10ms
                 time.sleep(0.01)
             except Exception as e:
@@ -240,6 +268,57 @@ class VTComms(QObject):
         self.send_ack(cmd_packet_id, addr)
         self.log_signal.emit(f"✓ {valve_name} -> {'OPEN' if is_open else 'CLOSED'}")
 
+    def handle_actuator_command(self, actuator_id, pct, cmd_packet_id, addr):
+        """The GUI commanded an actuator to a position. ACK straight away (the GUI only
+        waits ~60 ms per try), then travel there over time in step_actuators()."""
+        name = self.get_valve_name(actuator_id)
+        if self.valve_failures.get(actuator_id, False):
+            self.log_signal.emit(f"SIMULATING FAILURE: {name} (packet {cmd_packet_id}) - NO ACK SENT")
+            return
+        pct = max(0.0, min(100.0, pct))
+        self.actuator_pos.setdefault(name, 0.0)
+        self.actuator_target[name] = pct
+        self.send_ack(cmd_packet_id, addr)
+        self.actuator_target_signal.emit(name, pct)
+        self.log_signal.emit(f"✓ {name} moving to {pct:.1f}%")
+
+    def step_actuators(self, dt):
+        """Advance every actuator toward its target; report once it arrives."""
+        for name, target in list(self.actuator_target.items()):
+            pos = self.actuator_pos.get(name, 0.0)
+            if abs(pos - target) < 1e-6:
+                continue
+            step = self.actuator_speed * dt
+            pos = target if abs(target - pos) <= step else pos + (step if target > pos else -step)
+            self.actuator_pos[name] = pos
+            self.actuator_position_signal.emit(name, pos)
+            if pos == target:
+                self.log_signal.emit(f"{name} reached {pos:.1f}%")
+                self.send_position(name)
+
+    def actuate(self, name, pct):
+        """Move an actuator by hand from this side (as if locally overridden): it jumps to
+        pct and the position is reported to the GUI."""
+        pct = max(0.0, min(100.0, float(pct)))
+        self.actuator_pos[name] = self.actuator_target[name] = pct
+        self.actuator_position_signal.emit(name, pct)
+        self.actuator_target_signal.emit(name, pct)
+        self.send_position(name)
+        self.log_signal.emit(f"Manual: {name} set to {pct:.1f}%")
+
+    def send_position(self, name):
+        """Unsolicited position report to the GUI."""
+        actuator_id = next((i for i, n in self.ACTUATOR_IDS.items() if n == name), None)
+        if actuator_id is None or not self.last_addr or not self.sock:
+            return
+        raw = int(round(self.actuator_pos.get(name, 0.0) * 100))
+        pkt = EGCPPacket(self.packet_id_counter, EGCPPacket.PKT_POS, struct.pack('>BH', actuator_id, raw))
+        self.packet_id_counter = (self.packet_id_counter + 1) & 0xFFFFFF
+        try:
+            self.sock.sendto(pkt.encode(), self.last_addr)
+        except Exception as e:
+            self.log_signal.emit(f"Send error: {e}")
+
     def get_valve_name(self, valve_id: int) -> str:
         """Convert valve ID to name"""
         valve_names = {
@@ -247,6 +326,7 @@ class VTComms(QObject):
             0x10: "LA-BV1", 0x11: "LA-BV2",
             0x20: "GV-1", 0x21: "GV-2",
             0x30: "IG1", 0x31: "IG2",
+            **self.ACTUATOR_IDS,
         }
         return valve_names.get(valve_id, f"VALVE_{valve_id:02X}")
 

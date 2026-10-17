@@ -10,6 +10,8 @@ from openpyxl.styles import Font, PatternFill, Alignment
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QDialog, QLabel, QDialogButtonBox, QMessageBox
 from PyQt5.QtCore import Qt, QTimer, QDateTime, QObject, pyqtSignal
 from GUI_COMMS import EthernetClient
+from PID_SCHEMA import DEFAULT_ABORT_ID
+from GUI_SHARE import ShareServer, ViewerClient, DEFAULT_SHARE_PORT
 
 try:
     from CoolProp.CoolProp import PropsSI as _PropsSI
@@ -32,15 +34,36 @@ def render_message_template(template: str, context: dict) -> str:
     return _TEMPLATE_TOKEN_RE.sub(_repl, template)
 
 
+class GuiMode:
+    """Operating mode of the GUI. SAFE/MANUAL/LOCKED are operator-selectable;
+    ABORT is entered only by an abort (button, rule, comms failure) and is left
+    only by sending SAFE."""
+    SAFE   = "SAFE"     # nothing commandable; all valves closed. Default on connect.
+    MANUAL = "MANUAL"   # operator may command valves, sequences, throttling
+    LOCKED = "LOCKED"   # keeps current valve configuration, commands disabled
+    ABORT  = "ABORT"    # abort configuration applied, commands disabled
+
+
 class Signals(QObject):
-    abort_triggered = pyqtSignal(str, str)
-    safe_state = pyqtSignal()
+    abort_triggered = pyqtSignal(str, str, str)   # abort_type, reason, abort state id ("" = default)
+    mode_changed = pyqtSignal(str)          # new GuiMode value
+    safe_status_changed = pyqtSignal()      # safe_applied flipped (SAFE assumed vs applied)
+
+    # Read-only sharing (see GUI_SHARE): abort_notice fires once per abort with the abort
+    # type / reason / state name (relayed to viewers); project_changed when a project is
+    # (re)loaded; project_received carries a project dict streamed from a controller GUI;
+    # view_only_changed when the GUI is switched between controller and viewer.
+    abort_notice = pyqtSignal(str, str, str)
+    project_changed = pyqtSignal()
+    project_received = pyqtSignal(dict)
+    view_only_changed = pyqtSignal(bool)
     connected = pyqtSignal()
     disconnected = pyqtSignal(str)
     warnings_changed = pyqtSignal(list)
     
     valve_updated = pyqtSignal(str, str)     # can be open, closed, or pending a response from the MCU
     actuator_updated = pyqtSignal(str, float)  # proportional actuator hw_id, confirmed position (%)
+    command_sent = pyqtSignal(str, float, float)  # hw_id, commanded value (valve: 1 open / 0 closed; actuator: %), timestamp (s)
     sensor_updated = pyqtSignal(str, float, float)      # sensor_name, val, timestamp
     system_status = pyqtSignal(str)
 
@@ -87,6 +110,7 @@ class GUIController:
         # thread, so a signal is used to hop back onto the main thread before
         # touching any UI state.
         self.signals.disconnected.connect(self._on_disconnected)
+        self.signals.connected.connect(self._on_connected)
         self.signals.abort_triggered.connect(self.handle_abort)
         self.signals.valve_updated.connect(self.update_valve_state)
         
@@ -121,7 +145,18 @@ class GUIController:
         self.sensor_recent: dict = {}       # name -> deque of wire values
 
         # These are constants and dictionaries that the UI needs to be tracked
-        self.lockout = True                     # default to lockout until a connection starts
+        self.mode = GuiMode.SAFE                # SAFE until connected, and again on every connect
+        # SAFE on connect is only *assumed* (nothing is commanded on connect);
+        # it becomes applied when the operator sends SAFE.
+        self.safe_applied = False
+        # View-only (viewer) GUIs mirror a controller GUI's stream and can command nothing
+        self.view_only = False
+        # Abort states already driven to during the current ABORT episode
+        self._applied_abort_states: set = set()
+        # System-MAWP pre-warning dialog state (see _check_system_pressure_limits)
+        self._prewarn_dialog = None
+        self._prewarn_shown = False
+        self._vent_inhibited = False
 
         self.pre_abort_valve_states: dict = {}
         self.current_sensor_values: dict = {}
@@ -194,6 +229,15 @@ class GUIController:
         self._calc_timer.timeout.connect(self._flush_calc_channels)
         self._calc_timer.start(100)
 
+        # Read-only sharing: the controller GUI serves viewers; a viewer GUI consumes it
+        self.share_server = ShareServer(self._share_snapshot, parent=self.signals)
+        self.viewer = ViewerClient(parent=self.signals)
+        self.viewer.message.connect(self._on_viewer_message)
+        self.viewer.linked.connect(lambda: self.signals.connected.emit())
+        self.viewer.failed.connect(lambda reason: self.signals.disconnected.emit(reason))
+        self.viewer.stale_changed.connect(self._on_viewer_stale)
+        self.share_token = ""       # shared secret: required of viewers (controller) / presented (viewer)
+
         self.setup_abort_monitor()
     
 
@@ -213,14 +257,322 @@ class GUIController:
         return "Connection Failed"
     
     def _on_disconnected(self, reason: str):
-        """A dropped link is treated as an abort; an operator-requested
-        disconnect (graceful_disconnect) just returns to the idle state."""
+        """A dropped link while live (MANUAL/LOCKED) is treated as an abort; an
+        operator-requested disconnect just returns to SAFE. Nothing is live in
+        SAFE/ABORT, so a failed connection attempt or a drop there is not an
+        abort."""
+        if self.view_only:
+            # Viewer link to a controller GUI dropped: nothing to protect or abort here
+            self.signals.system_status.emit(f"Viewer disconnected: {reason}" if reason else "Viewer disconnected")
+            return
         if self.ethernet_client.intentional_disconnect:
             self.ethernet_client.intentional_disconnect = False
-            self.lockout = True   # same as pre-connection: nothing commandable
+            self._cancel_sequence()
+            self._set_safe_applied(False)
+            self._set_mode(GuiMode.SAFE, "operator disconnect")
             self.signals.system_status.emit("Disconnected (safe)")
             return
-        self.signals.abort_triggered.emit("DISCONNECTED", reason)
+        if self.mode in (GuiMode.SAFE, GuiMode.ABORT):
+            return
+        self.signals.abort_triggered.emit("DISCONNECTED", reason, "")
+
+    def _on_connected(self):
+        """Every (re)connect lands in SAFE. Valves are assumed closed (nothing
+        is commanded on connect)."""
+        if self.view_only:
+            return              # the viewer link's hello message carries the controller's mode
+        self.ethernet_client.set_system_state("SAFE")
+        self._applied_abort_states.clear()
+        self._set_safe_applied(False)
+        self._set_mode(GuiMode.SAFE, "connected")
+
+    # READ-ONLY SHARING --------------------------------------------------------------
+    # The controller GUI (holding the Teensy link) streams to viewer GUIs via
+    # GUI_SHARE.ShareServer; a viewer GUI (view_only) mirrors that stream and can
+    # command nothing. See GUI_SHARE for the wire format.
+
+    def set_view_only(self, view_only: bool):
+        """Switch this GUI between controller (normal) and viewer (read-only)."""
+        view_only = bool(view_only)
+        if view_only == self.view_only:
+            return
+        if view_only:
+            self.stop_sharing()
+        else:
+            self.viewer.disconnect_from_controller()
+        self.view_only = view_only
+        self.signals.view_only_changed.emit(view_only)
+        self.signals.mode_changed.emit(self.mode)       # refresh anything mode-dependent
+
+    def start_sharing(self, port: int = DEFAULT_SHARE_PORT) -> bool:
+        """Start streaming to viewers (controller GUIs only). False if the port is taken."""
+        if self.view_only or not self.share_server.start(port):
+            return False
+        s = self.signals
+        self._share_links = [
+            (s.sensor_updated,      self._share_sensor),
+            (s.valve_updated,       self._share_valve),
+            (s.actuator_updated,    self._share_actuator),
+            (s.command_sent,        self._share_command),
+            (s.mode_changed,        self._share_mode),
+            (s.safe_status_changed, self._share_safe_status),
+            (s.warnings_changed,    self._share_warnings),
+            (s.system_status,       self._share_status),
+            (s.abort_notice,        self._share_abort),
+            (s.project_changed,     self._share_project),
+            (s.connected,           self._share_link_up),
+            (s.disconnected,        self._share_link_down),
+        ]
+        for sig, slot in self._share_links:
+            sig.connect(slot)
+        return True
+
+    def stop_sharing(self):
+        for sig, slot in getattr(self, "_share_links", []):
+            try:
+                sig.disconnect(slot)
+            except TypeError:
+                pass
+        self._share_links = []
+        self.share_server.stop()
+
+    def _share_snapshot(self) -> dict:
+        """The hello message a newly connected viewer gets: everything needed to draw the
+        current state."""
+        return {
+            "t": "hello", "v": 1,
+            "project": self.project.to_dict() if self.project is not None else None,
+            "mode": self.mode, "safe_applied": self.safe_applied,
+            "link": bool(self.ethernet_client.connected),
+            "valves": dict(self.valve_states),
+            "actuators": dict(self.actuator_positions),
+            "sensors": dict(self.current_sensor_values),
+            "warnings": sorted(self._active_warnings.values()),
+        }
+
+    def _share_sensor(self, name, value, _ts):
+        self.share_server.publish_sensor(name, value)
+
+    def _share_valve(self, name, state):
+        self.share_server.broadcast({"t": "v", "n": name, "s": state})
+
+    def _share_actuator(self, name, pct):
+        self.share_server.broadcast({"t": "a", "n": name, "p": pct})
+
+    def _share_command(self, name, value, _ts):
+        self.share_server.broadcast({"t": "c", "n": name, "v": value})
+
+    def _share_mode(self, mode):
+        self.share_server.broadcast({"t": "m", "mode": mode, "sa": self.safe_applied})
+
+    def _share_safe_status(self):
+        self.share_server.broadcast({"t": "m", "mode": self.mode, "sa": self.safe_applied})
+
+    def _share_warnings(self, messages):
+        self.share_server.broadcast({"t": "w", "d": list(messages)})
+
+    def _share_status(self, text):
+        self.share_server.broadcast({"t": "st", "d": text})
+
+    def _share_abort(self, abort_type, reason, state_name):
+        self.share_server.broadcast({"t": "ab", "type": abort_type, "reason": reason, "state": state_name})
+
+    def _share_project(self):
+        if self.project is not None:
+            self.share_server.broadcast({"t": "project", "project": self.project.to_dict()})
+
+    def _share_link_up(self):
+        self.share_server.broadcast({"t": "link", "up": True})
+
+    def _share_link_down(self, reason=""):
+        self.share_server.broadcast({"t": "link", "up": False, "reason": reason})
+
+    # -- viewer side ---------------------------------------------------------
+    def _on_viewer_message(self, msg: dict):
+        if not self.view_only:
+            return
+        t = msg.get("t")
+        if t in ("hello", "project") and msg.get("project"):
+            self.signals.project_received.emit(msg["project"])      # the main window loads it
+        if t == "hello":
+            for name, is_open in msg.get("valves", {}).items():
+                self.signals.valve_updated.emit(name, "OPEN" if is_open else "CLOSED")
+            for name, pct in msg.get("actuators", {}).items():
+                self._apply_actuator_position(name, pct)
+            for name, value in msg.get("sensors", {}).items():
+                self.apply_remote_sensor(name, value)
+            self.signals.warnings_changed.emit(list(msg.get("warnings", [])))
+            self.apply_remote_mode(msg.get("mode", GuiMode.SAFE), msg.get("safe_applied", False))
+            if not msg.get("link", True):
+                self.signals.system_status.emit("Controller GUI is not connected to the Teensy")
+        elif t == "s":
+            for name, value in msg.get("d", []):
+                self.apply_remote_sensor(name, value)
+        elif t == "v":
+            self.signals.valve_updated.emit(msg.get("n", ""), msg.get("s", "CLOSED"))
+        elif t == "a":
+            self._apply_actuator_position(msg.get("n", ""), float(msg.get("p", 0.0)))
+        elif t == "c":      # stamped on arrival: the two laptops' clocks are not synchronised
+            self.signals.command_sent.emit(msg.get("n", ""), float(msg.get("v", 0.0)),
+                                           QDateTime.currentMSecsSinceEpoch() / 1000.0)
+        elif t == "m":
+            self.apply_remote_mode(msg.get("mode", GuiMode.SAFE), msg.get("sa", False))
+        elif t == "w":
+            self.signals.warnings_changed.emit(list(msg.get("d", [])))
+        elif t == "st":
+            self.signals.system_status.emit(msg.get("d", ""))
+        elif t == "ab":
+            self.show_remote_abort(msg.get("type", ""), msg.get("reason", ""), msg.get("state", ""))
+        elif t == "link":
+            self.signals.system_status.emit(
+                "Controller GUI reconnected to the Teensy" if msg.get("up")
+                else f"Controller GUI lost its Teensy link: {msg.get('reason', '')}".rstrip(": "))
+
+    def _on_viewer_stale(self, stale: bool, why: str):
+        self.signals.system_status.emit(
+            f"VIEWER DATA STALE: {why}" if stale else "Viewer link live again")
+
+    def apply_remote_sensor(self, name: str, value: float):
+        """A sensor value streamed from the controller (already calibrated / tared there)."""
+        now = QDateTime.currentMSecsSinceEpoch() / 1000.0
+        self.raw_sensor_values[name] = value
+        self.current_sensor_values[name] = value
+        self.sensor_last_rx[name] = now
+        self.signals.sensor_updated.emit(name, value, now)
+
+    def apply_remote_mode(self, mode: str, safe_applied: bool):
+        self.mode = mode
+        self.safe_applied = bool(safe_applied)
+        self.signals.mode_changed.emit(mode)
+        self.signals.safe_status_changed.emit()
+
+    def show_remote_abort(self, abort_type: str, reason: str, state_name: str):
+        """Abort alert on a viewer: a banner window that doesn't block the screen."""
+        box = QMessageBox(
+            QMessageBox.Critical, "ABORT (controller)",
+            f"The controller aborted.\n\nAbort Type: {abort_type}\nReason: {reason}\n"
+            f"Abort State: {state_name}", QMessageBox.Ok, self.parent)
+        box.setWindowModality(Qt.NonModal)
+        box.setAttribute(Qt.WA_DeleteOnClose)
+        box.show()
+
+    # MODES --------------------------------------------------------------------------------------------------------
+
+    @property
+    def lockout(self) -> bool:
+        """True whenever the operator may not command valves (everything but MANUAL)."""
+        return self.view_only or self.mode != GuiMode.MANUAL
+
+    @property
+    def sequence_running(self) -> bool:
+        return any(t.isActive() for t in self._sequence_timers)
+
+    def _set_mode(self, mode: str, reason: str = ""):
+        if mode == self.mode:
+            return
+        previous = self.mode
+        self.mode = mode
+        self.log_event("MODE_CHANGE", f"{previous}->{mode}" + (f" ({reason})" if reason else ""))
+        self.signals.mode_changed.emit(mode)
+
+    def request_mode(self, mode: str) -> Optional[str]:
+        """Operator mode change (dropdown + SEND). Returns an error message if
+        the change is refused, else None."""
+        if self.view_only:
+            return "This GUI is in view-only mode and cannot change modes."
+        if not self.ethernet_client.connected:
+            return "Connect to the system before changing modes."
+        if mode == GuiMode.SAFE:
+            if self.mode == GuiMode.SAFE and self.safe_applied:
+                return None
+            self.enter_safe_state("operator")
+            return None
+        if mode == self.mode:
+            return None
+        if self.mode == GuiMode.ABORT:
+            return "The system is in ABORT. Send SAFE before selecting another mode."
+        if mode == GuiMode.LOCKED:
+            if self.sequence_running:
+                return "A sequence is running. It cannot be locked - use ABORT to stop it."
+            self._set_mode(GuiMode.LOCKED, "operator")
+        elif mode == GuiMode.MANUAL:
+            if self.project is not None and not self.abort_state_confirmed:
+                return ("The Safe State has not been defined for this P&ID. Go to the 'Abort Config' "
+                        "tab > Abort States, set the 'Default Abort' valve positions (this is the "
+                        "Safe State) and press 'Confirm This State' before using MANUAL.")
+            if self.mode == GuiMode.SAFE:
+                self.ethernet_client.set_system_state("MANUAL")
+            self._set_mode(GuiMode.MANUAL, "operator")
+        return None
+
+    def _abandon_pending_commands(self) -> set:
+        """Drop in-flight valve commands/retries and any failure countdown, since
+        the SAFE/ABORT configuration is about to supersede them. Returns the
+        valves that had a command in flight: their local state can't be trusted
+        (the MCU may have acted on it), so the caller re-commands them."""
+        in_flight = set(self.pending_valve_commands)
+        self.pending_valve_commands.clear()
+        self.ethernet_client.cancel_auto_abort_countdown()
+        self.close_abort_countdown_dialog()
+        return in_flight
+
+    def _apply_valve_config(self, targets: dict, force: set):
+        """Drive valves to {hw_id: open?}, ignoring the lockout gate."""
+        for valve, want_open in targets.items():
+            self._drive_valve(valve, want_open, force=valve in force)
+
+    def _set_safe_applied(self, applied: bool):
+        if self.safe_applied != applied:
+            self.safe_applied = applied
+            self.signals.safe_status_changed.emit()
+
+    def abort_valve_targets(self, state_id: str = "") -> dict:
+        """{hw_id: open?} for every valve in the given named abort state ("" =
+        default). Valves the state doesn't list - or everything, if there is no
+        project / nothing configured - are closed."""
+        targets = {v: False for v in self.valve_states}
+        project = self.project
+        if project is not None:
+            for cid, want_open in project.get_abort_state(state_id).valves.items():
+                comp = project.components.get(cid)
+                if comp is None:
+                    continue
+                hw_id = comp.extras.get("hw_id") or comp.label
+                if hw_id in targets and hw_id not in self.igniter_hw_ids:
+                    targets[hw_id] = bool(want_open)
+        return targets
+
+    def refresh_safe_state_warning(self):
+        """Persistent warning while the project's Safe State (default abort state) is
+        not confirmed; cleared as soon as it is."""
+        if self.view_only:
+            return              # warnings come from the controller's stream
+        if self.project is not None and not self.abort_state_confirmed:
+            self._set_warning(
+                "safe_state_undefined",
+                "SAFE STATE NOT DEFINED - set and confirm the Default Abort in Abort Config "
+                "(MANUAL is blocked until then)")
+        else:
+            self._clear_warning("safe_state_undefined")
+
+    @property
+    def abort_state_confirmed(self) -> bool:
+        """Whether the default abort state (= the Safe State preset) is confirmed."""
+        return bool(self.project is not None and self.project.default_abort_state().confirmed)
+
+    def enter_safe_state(self, reason: str = ""):
+        """SAFE mode: drive to the Safe State preset (the project's default abort
+        state; all closed if none is defined), nothing commandable."""
+        self._cancel_sequence()
+        in_flight = self._abandon_pending_commands()
+        self.ethernet_client.set_system_state("SAFE")
+        self._applied_abort_states.clear()
+        self._set_mode(GuiMode.SAFE, reason)
+        targets = self.abort_valve_targets("")
+        self._apply_valve_config(targets, in_flight)
+        self._set_safe_applied(True)
+        opened = [v for v, o in targets.items() if o]
+        self.log_event("SAFE_STATE", "applied" + (f"; open: {', '.join(opened)}" if opened else ""))
 
     def request_safe_disconnect(self):
         """Operator disconnect: notify the MCU (SFE) and tear the link down
@@ -255,7 +607,9 @@ class GUIController:
         self.load_calibrations_from_project(project)
         self.reload_abort_rules(project)
         self.ethernet_client.load_project_maps(project)
+        self.refresh_safe_state_warning()
         self._emit_warnings()
+        self.signals.project_changed.emit()
         self._recompute_calc_channels()
 
     def _rebuild_valve_states(self, project):
@@ -401,6 +755,7 @@ class GUIController:
                     # Optional custom {TOKEN} message template for this band -
                     # blank means fall back to the built-in default wording.
                     "message":      th_dict.get(f"{band}_message", ""),
+                    "abort_state":  getattr(th, f"{band}_state", ""),
                 })
 
         for rule in project.rules:
@@ -518,6 +873,8 @@ class GUIController:
 
 
     def check_abort_conditions(self):
+        if self.view_only:
+            return              # the controller GUI evaluates limits and rules
         if not self.current_sensor_values:
             return
 
@@ -568,10 +925,27 @@ class GUIController:
     # stay "mawp" for backward file compatibility; only the shown text changed.
     _BAND_DISPLAY = {"mawp": "HIGH", "meop": "MEOP", "relief": "RELIEF"}
 
+    def _abort_suppressed(self, state_id: str = "") -> bool:
+        """Whether a rule-driven abort for this state should be skipped: with no
+        link (stale values), when it's already been applied this abort (would
+        re-fire every tick), when the default abort would override a state already
+        applied, or when the default abort fires in SAFE (already safe). A named
+        non-default state (e.g. a vent) still fires in SAFE."""
+        if not self.ethernet_client.connected:
+            return True
+        sid = state_id or DEFAULT_ABORT_ID
+        if self.mode == GuiMode.ABORT:
+            return sid in self._applied_abort_states or (
+                sid == DEFAULT_ABORT_ID and bool(self._applied_abort_states))
+        return self.mode == GuiMode.SAFE and sid == DEFAULT_ABORT_ID
+
     def _check_system_pressure_limits(self, locked_out: bool):
-        """System-wide backstop across all PTs, independent of (and in
-        addition to) the per-sensor thresholds: warn above system MEOP,
-        abort at 95% of system MAWP."""
+        """System-wide backstop across all PTs, independent of (and in addition to)
+        the per-sensor thresholds: warn above system MEOP; a clear-the-area dialog
+        at the pre-warn level (system_prewarn_pct of MAWP); and the configured
+        abort state at 95% of system MAWP. The operator can cancel the auto-action
+        from the dialog; it re-arms once pressure falls back below the pre-warn
+        level."""
         params = getattr(self.project, "parameters", None) if self.project else None
         if not params:
             return
@@ -582,6 +956,24 @@ class GUIController:
             return
 
         abort_limit = 0.95 * mawp if mawp is not None else None
+        prewarn_pct = float(getattr(params, "system_prewarn_pct", 90.0) or 0.0)
+        prewarn_level = (mawp * prewarn_pct / 100.0
+                         if mawp is not None and 0.0 < prewarn_pct < 95.0 else None)
+        state_id = getattr(params, "system_mawp_state", "")
+
+        peak_key, peak = None, None
+        for hw_id in self.pt_keys:
+            v = self.current_sensor_values.get(hw_id.upper())
+            if v is not None and (peak is None or v > peak):
+                peak_key, peak = hw_id.upper(), v
+
+        # Pre-warn dialog / inhibit bookkeeping (one state machine for the system)
+        if prewarn_level is None or peak is None or peak < prewarn_level:
+            self._rearm_system_vent()
+        elif (not self._prewarn_shown and not self._abort_suppressed(state_id)
+              and abort_limit is not None):
+            self._prewarn_shown = True
+            self._show_prewarn_dialog(peak_key, peak, prewarn_level, abort_limit, mawp, state_id)
 
         for hw_id in self.pt_keys:
             key = hw_id.upper()
@@ -591,14 +983,15 @@ class GUIController:
 
             if abort_limit is not None and value >= abort_limit:
                 self._clear_warning(f"system_meop__{key}")
-                if not locked_out:
+                if not self._abort_suppressed(state_id) and not self._vent_inhibited:
                     ctx = self._sensor_message_context(value=value, threshold=abort_limit,
                                                        limit=abort_limit, mawp=mawp)
                     template = (params.system_mawp_message.strip() if params.system_mawp_message
                                else f"{key} ({{{key}}}) exceeds 95% of system MAWP "
                                     "({mawp} psi -> limit {limit} psi)")
                     detail = render_message_template(template, ctx)
-                    self.signals.abort_triggered.emit("system_mawp", detail)
+                    self._close_prewarn_dialog()
+                    self.signals.abort_triggered.emit("system_mawp", detail, state_id)
                 continue
 
             if meop is not None and value >= meop:
@@ -608,6 +1001,71 @@ class GUIController:
                 self._set_warning(f"system_meop__{key}", render_message_template(template, ctx))
             else:
                 self._clear_warning(f"system_meop__{key}")
+
+    # System-MAWP pre-warning -------------------------------------------------------
+
+    def _rearm_system_vent(self):
+        if self._vent_inhibited:
+            self._clear_warning("system_vent_inhibited")
+            self.log_event("VENT_REARMED", "pressure back below the pre-warn level")
+        self._vent_inhibited = False
+        self._prewarn_shown = False
+        self._close_prewarn_dialog()
+
+    def _close_prewarn_dialog(self):
+        if self._prewarn_dialog is not None:
+            self._prewarn_dialog.close()
+            self._prewarn_dialog = None
+
+    def _show_prewarn_dialog(self, key, value, level, limit, mawp, state_id):
+        state = self.project.get_abort_state(state_id)
+        dlg = QDialog(self.parent)
+        dlg.setWindowTitle("SYSTEM APPROACHING MAWP")
+        dlg.setModal(False)
+        dlg.setMinimumWidth(460)
+        lay = QVBoxLayout(dlg)
+
+        head = QLabel("SYSTEM APPROACHING MAWP\nCLEAR THE AREA")
+        head.setAlignment(Qt.AlignCenter)
+        f = head.font(); f.setPointSize(16); f.setBold(True); head.setFont(f)
+        head.setStyleSheet("color: #c62828;")
+        lay.addWidget(head)
+
+        body = QLabel(
+            f"{key} is at {value:.0f} psi (warning level {level:.0f} psi, MAWP {mawp:.0f} psi).\n\n"
+            f"The system will automatically apply '{state.name}' and lock down at {limit:.0f} psi.")
+        body.setWordWrap(True)
+        lay.addWidget(body)
+
+        now_btn = QPushButton(f"APPLY '{state.name.upper()}' NOW")
+        now_btn.setStyleSheet("background-color: #c62828; color: white; font-size: 14px; padding: 10px;")
+        cancel_btn = QPushButton("CANCEL AUTO-ACTION\n(I'll decide - re-arms when pressure drops)")
+        cancel_btn.setStyleSheet("background-color: #555; color: white; font-size: 13px; padding: 10px;")
+        lay.addWidget(now_btn)
+        lay.addWidget(cancel_btn)
+
+        def apply_now():
+            self._close_prewarn_dialog()
+            self.log_event("VENT_NOW", f"operator applied '{state.name}' early at {value:.0f} psi")
+            self.signals.abort_triggered.emit(
+                "system_mawp", f"Operator applied '{state.name}' early ({key} at {value:.0f} psi)",
+                state_id)
+
+        def cancel_auto():
+            self._vent_inhibited = True
+            self._close_prewarn_dialog()
+            self._set_warning(
+                "system_vent_inhibited",
+                f"AUTO-ACTION INHIBITED: '{state.name}' will not fire at {limit:.0f} psi until "
+                f"pressure drops below {level:.0f} psi")
+            self.log_event("VENT_INHIBITED", f"operator cancelled auto-action ({key} at {value:.0f} psi)")
+
+        now_btn.clicked.connect(apply_now)
+        cancel_btn.clicked.connect(cancel_auto)
+        self._prewarn_dialog = dlg
+        self.log_event("PREWARN_SHOWN", f"{key} at {value:.0f} psi")
+        dlg.show()
+        dlg.raise_()
 
     def _sensor_message_context(self, **extra) -> dict:
         """Base context for message templates: every live sensor value plus
@@ -632,12 +1090,12 @@ class GUIController:
         message = render_message_template(template, ctx)
 
         if action == "abort":
-            if locked_out:
+            if self._abort_suppressed(sr.get("abort_state", "")):
                 return
             # Show "P1 HIGH" (derived from the sensor's own hw_id/band), never
             # the internal rule_id ("PT_1__mawp") - nothing here is hardcoded,
             # it's built from this sensor's own configuration.
-            self.signals.abort_triggered.emit(f"{hw_id} {band_disp}", message)
+            self.signals.abort_triggered.emit(f"{hw_id} {band_disp}", message, sr.get("abort_state", ""))
 
         elif action == "warn":
             # Keep a persistent UI warning without escalating to abort.
@@ -686,7 +1144,7 @@ class GUIController:
                 return
 
         if rule.action == "abort":
-            if locked_out:
+            if self._abort_suppressed(rule.abort_state):
                 return
             message = self._render_logic_rule_message(rule)
             # Show the rule's own description ("high chamber pressure"), set
@@ -694,7 +1152,7 @@ class GUIController:
             # rule_id ("logic_rule_3"). Falls back to the expression, then
             # the id, only if the operator left description blank.
             label = rule.description.strip() or rule.expression.strip() or rule_id
-            self.signals.abort_triggered.emit(label, message)
+            self.signals.abort_triggered.emit(label, message, rule.abort_state)
         elif rule.action == "open_valve":
             if locked_out:
                 return
@@ -732,9 +1190,12 @@ class GUIController:
 
     def trigger_manual_abort(self):
         """Manual abort button handler (Req 11)"""
+        if self.view_only:
+            return
         self.signals.abort_triggered.emit(
             "manual_abort",
-            "Operator triggered manual abort"
+            "Operator triggered manual abort",
+            ""
         )
 
     def show_abort_control(self):
@@ -747,21 +1208,49 @@ class GUIController:
             "Use the 'Abort Config' tab to configure abort thresholds and rules."
         )
 
-    def handle_abort(self, abort_type, reason):
-        """Handle abort sequence (Req 11, 20-24)"""
-        if self.lockout:
+    def handle_abort(self, abort_type, reason, state_id=""):
+        """Abort sequence (Req 11, 20-24): stop any sequence, drive the valves to
+        the named abort state ("" = the default one), and lock the system down
+        (ABORT mode) so operators can assess before anything else happens.
+
+        Works in MANUAL and LOCKED, bypassing the operator lockout gate. Ignored
+        in SAFE for the default abort (already safe) - but a named state such as
+        a vent still fires there. While already in ABORT, only a state not yet
+        applied this episode is run (an escalation, e.g. a vent after a default
+        abort); the default abort never overrides a state already applied."""
+        if self.view_only:
+            return
+        sid = state_id or DEFAULT_ABORT_ID
+        if self.mode == GuiMode.ABORT and (
+                sid in self._applied_abort_states
+                or (sid == DEFAULT_ABORT_ID and self._applied_abort_states)):
+            return
+
+        # SAFE already is the Safe State preset with nothing live, so the default
+        # abort (comms fault, rule, button) must not run there.
+        if self.mode == GuiMode.SAFE and sid == DEFAULT_ABORT_ID:
+            self.log_event("ABORT_IGNORED_IN_SAFE", f"{abort_type}:{reason}")
+            self.signals.system_status.emit(f"WARNING: {abort_type} in SAFE ({reason}) - holding SAFE")
             return
 
         # Stop any running auto-fire sequence immediately
         self._cancel_sequence()
+        in_flight = self._abandon_pending_commands()
 
         self.ethernet_client.set_system_state("ABORT")
-
         self.pre_abort_valve_states = self.valve_states.copy()
 
-        # Disable all valves
-        for valve in self.valve_states.keys():
-            self.toggle_valve(valve, False)
+        # Enter ABORT before anything modal: the abort monitor keeps ticking
+        # while the dialog below is open and must not re-fire.
+        self._applied_abort_states.add(sid)
+        self._set_mode(GuiMode.ABORT, abort_type)
+
+        state = self.project.get_abort_state(sid) if self.project is not None else None
+        state_name = state.name if state is not None else "Default Abort"
+        targets = self.abort_valve_targets(sid)
+        self._apply_valve_config(targets, in_flight)
+        opened = [v for v, o in targets.items() if o]
+        self.log_event("ABORT_STATE", f"{state_name}" + (f"; open: {', '.join(opened)}" if opened else "; all closed"))
 
         # `reason` is already a specific, relevant message by this point -
         # sensor-threshold and logic-rule aborts render it from a (customizable,
@@ -770,25 +1259,13 @@ class GUIController:
         # no sensor context (manual abort, comms loss, disconnect) just show
         # their reason as-is. Dumping every PT's value on every abort regardless
         # of relevance was more noise than signal, so that's gone.
+        self.log_event("ABORT", f"{abort_type}:{reason}")
+        self.signals.abort_notice.emit(abort_type, reason, state_name)
         QMessageBox.critical(
             self.parent, # has to bind to a real widget
             "ABORT TRIGGERED",
-            f"Abort Type: {abort_type}\nReason: {reason}"
+            f"Abort Type: {abort_type}\nReason: {reason}\nAbort State: {state_name}"
         )
-
-        self.lockout = True
-
-        # Log abort event
-        self.log_event("ABORT", f"{abort_type}:{reason}")
-
-    def confirm_safe_state(self):
-        """Confirm system is safe after abort without any dialog"""
-        if self.ethernet_client.connected:
-            self.ethernet_client.cancel_auto_abort_countdown()
-            self.ethernet_client.set_system_state("SAFE")
-            self.lockout = False
-            self.signals.safe_state.emit()
-            self.log_event("SAFE_STATE", "Operator confirmed safe state")
 
 
     # DAQ RECORDING ------------------------------------------------------------------------------------------------
@@ -946,13 +1423,13 @@ class GUIController:
                         valve = rest.split("_")[0].split(":")[0]
                         if valve:
                             reason = f"Valve {valve} {cmd} command failed (timeout)"
-                    self.signals.abort_triggered.emit("comms_auto_abort", reason)
+                    self.signals.abort_triggered.emit("comms_auto_abort", reason, "")
                 elif "ABORTED:REMOTE_SFE:" in reading:
                     sfe_reason = reading.split("ABORTED:REMOTE_SFE:", 1)[1] or "unknown packet"
-                    self.signals.abort_triggered.emit("remote_safe_mode", f"Received SFE from MCU ({sfe_reason})")
+                    self.signals.abort_triggered.emit("remote_safe_mode", f"Received SFE from MCU ({sfe_reason})", "")
                 else:
                     # Engine MCU triggered abort
-                    self.signals.abort_triggered.emit("engine_abort", "The engine MCU triggered a local abort")
+                    self.signals.abort_triggered.emit("engine_abort", "The engine MCU triggered a local abort", "")
 
             # Proportional actuator responses
             elif "ACTUATOR_SUCCESS" in reading or "ACTUATOR_POS" in reading:
@@ -1118,13 +1595,11 @@ class GUIController:
     def project_lock_required(self) -> bool:
         """Whether project selection / Open P&ID should be locked right now.
 
-        Locked once the operator has confirmed safe state (the system is
-        live) or while any valve is open. Unlocked again once back in a
-        not-yet-confirmed, fully-closed state - e.g. freshly connected but
-        before Confirm Safe State, or after an abort once everything has
-        actually closed.
+        Locked while the system is live (MANUAL or LOCKED) or while any valve
+        is open. Unlocked in SAFE/ABORT once everything has actually closed.
         """
-        return (not self.lockout) or any(self.valve_states.values())
+        return (self.view_only or self.mode in (GuiMode.MANUAL, GuiMode.LOCKED)
+                or any(self.valve_states.values()))
 
     def close_all_valves(self):
         """Return the system to fully closed without aborting."""
@@ -1148,7 +1623,8 @@ class GUIController:
     
     def show_fire_sequence_dialog(self):
         if self.lockout:
-            QMessageBox.warning(self.parent, "Abort Active", "Auto fire sequence cannot be activated during an abort")
+            QMessageBox.warning(self.parent, "Not In Manual Mode",
+                                f"Auto fire sequence requires MANUAL mode (currently {self.mode}).")
             return
 
         # ── Resolve available sequences ──────────────────────────────────────
@@ -1340,15 +1816,22 @@ class GUIController:
         countdown_layout.addWidget(self.abort_countdown_label)
         
         # Warning message with valve details
-        warning_label = QLabel(f"Valve {valve_name} {cmd_type} command failed!\nClick button below to cancel abort.")
+        warning_label = QLabel(f"Valve {valve_name} {cmd_type} command failed!\n"
+                               "Ignore to continue operating, or abort now. "
+                               "The system aborts automatically when this reaches zero.")
         warning_label.setAlignment(Qt.AlignCenter)
         countdown_layout.addWidget(warning_label)
         
         # Cancel button
-        cancel_btn = QPushButton("CONFIRM SAFE STATE\n(Cancel Abort)")
+        cancel_btn = QPushButton("IGNORE & CONTINUE\n(Cancel Countdown)")
         cancel_btn.setStyleSheet("background-color: green; color: white; font-size: 14px; padding: 10px;")
         cancel_btn.clicked.connect(self._cancel_abort_countdown)
         countdown_layout.addWidget(cancel_btn)
+
+        abort_now_btn = QPushButton("ABORT NOW")
+        abort_now_btn.setStyleSheet("background-color: #c62828; color: white; font-size: 14px; padding: 10px;")
+        abort_now_btn.clicked.connect(self._abort_from_countdown)
+        countdown_layout.addWidget(abort_now_btn)
         
         # Show dialog non-modally
         self.abort_countdown_dialog.show()
@@ -1366,9 +1849,15 @@ class GUIController:
             self.abort_countdown_label = None
     
     def _cancel_abort_countdown(self):
-        """Called when user clicks the cancel button in the countdown dialog"""
-        self.confirm_safe_state()
+        """Operator chose to ignore the failed valve command: stop the countdown
+        and carry on in the current mode (no mode or valve change)."""
+        self.ethernet_client.cancel_auto_abort_countdown()
         self.close_abort_countdown_dialog()
+        self.log_event("COUNTDOWN_IGNORED", "Operator ignored failed valve command")
+
+    def _abort_from_countdown(self):
+        self.close_abort_countdown_dialog()
+        self.signals.abort_triggered.emit("valve_failure", "Operator aborted after a failed valve command", "")
 
     def update_valve_state(self, valve_name: str, new_val: str):        
         # Only update the internal state if it was confirmed open or closed
@@ -1386,7 +1875,8 @@ class GUIController:
 
     def show_manual_valve_control(self):
         if self.lockout:
-            QMessageBox.warning(self.parent, "Lockout Active", "Manual control is disabled during abort")
+            QMessageBox.warning(self.parent, "Not In Manual Mode",
+                                f"Manual valve control requires MANUAL mode (currently {self.mode}).")
             return
         
         # Close existing dialog if open
@@ -1434,6 +1924,11 @@ class GUIController:
         """Command a proportional actuator to a position (%), clamped to its range."""
         if self.lockout:
             return
+        self._drive_actuator(name, pct)
+
+    def _drive_actuator(self, name: str, pct: float, force: bool = False):
+        """set_actuator_position without the lockout gate (used by SAFE/ABORT).
+        force re-sends even if the actuator is already (or about to be) there."""
         spec = self.actuator_specs.get(name)
         if spec is None:
             return
@@ -1441,10 +1936,11 @@ class GUIController:
         target = spec.clamp(pct)
         pending = self.pending_valve_commands.get(name)
         current = pending["pct"] if pending and "pct" in pending else self.actuator_positions.get(name)
-        if current is not None and abs(current - target) < 0.005:
+        if not force and current is not None and abs(current - target) < 0.005:
             return      # already there (or already on its way); sequences re-issue every step
 
         self.signals.valve_updated.emit(name, "PENDING")
+        self.signals.command_sent.emit(name, float(target), QDateTime.currentMSecsSinceEpoch() / 1000.0)
         try:
             self.ethernet_client.send_actuator_command(name, target)
         except Exception:
@@ -1468,23 +1964,29 @@ class GUIController:
     def toggle_valve(self, valve_name: str, state: bool=None):
         if self.lockout:
             return
+        self._drive_valve(valve_name, state)
 
+    def _drive_valve(self, valve_name: str, state: bool=None, force: bool=False):
+        """toggle_valve without the lockout gate (used by SAFE/ABORT). force
+        re-sends even if the valve already looks to be in the requested state."""
         # Proportional actuators: open/close map onto the spec's open/safe positions
         spec = self.actuator_specs.get(valve_name)
         if spec is not None:
             if state is None:
                 state = not self.valve_states.get(valve_name, False)
-            self.set_actuator_position(valve_name, spec.open_pct if state else spec.safe_pct)
+            self._drive_actuator(valve_name, spec.open_pct if state else spec.safe_pct, force=force)
             return
 
         new_state = (not self.valve_states[valve_name]) if state is None else state
 
         # Only send a command if the valve state is actually changing
-        if valve_name in self.valve_states and self.valve_states[valve_name] == new_state:
+        if not force and valve_name in self.valve_states and self.valve_states[valve_name] == new_state:
             return
 
         # Internal state updates only once the MCU confirms; show PENDING until then
         self.signals.valve_updated.emit(valve_name, "PENDING")
+        self.signals.command_sent.emit(valve_name, 1.0 if new_state else 0.0,
+                                       QDateTime.currentMSecsSinceEpoch() / 1000.0)
 
         try:
             self.ethernet_client.send_valve_command(valve_name, new_state)
@@ -1503,7 +2005,11 @@ class GUIController:
         current_time = QDateTime.currentMSecsSinceEpoch()
         valves_to_delete = []
 
-        for valve_name, info in self.pending_valve_commands.items():
+        # The comms thread pops entries on ACK/NCK while this timer runs on the GUI
+        # thread, so iterate over a snapshot (iterating the live dict could raise
+        # "dictionary changed size during iteration", and PyQt aborts the app on an
+        # uncaught exception in a slot).
+        for valve_name, info in list(self.pending_valve_commands.items()):
             if current_time - info["last_sent"] > self.valve_retry_timeout:
                 if info["retries"] < self.valve_max_retries:
 
@@ -1522,7 +2028,7 @@ class GUIController:
                     valves_to_delete.append(valve_name)
 
         for valve_name in valves_to_delete:
-            del self.pending_valve_commands[valve_name]
+            self.pending_valve_commands.pop(valve_name, None)
 
 
     def apply_operation(self, operation: str):

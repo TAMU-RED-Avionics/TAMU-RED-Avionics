@@ -3,7 +3,7 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
     QFileDialog, QFormLayout, QLineEdit, QCheckBox,
     QSplitter, QMessageBox, QFrame, QSizePolicy,
-    QToolButton, QScrollArea,
+    QToolButton, QScrollArea, QDialog, QPlainTextEdit, QDialogButtonBox,
 )
 from PyQt5.QtCore import Qt, pyqtSignal, QTimer
 
@@ -24,6 +24,7 @@ from PID_SCHEMA import (
 )
 
 from PID_CANVAS import PIDCanvas, snap
+from DRAWIO_IMPORT import import_drawio
 
 # Types actuated/driven through a relay command (see GUI_COMMS.VALVE_TYPES) -
 # these get the "Binding" hardware field in the property panel.
@@ -456,11 +457,18 @@ class PIDEditorWindow(QWidget):
 
         tbtn("New",      self._new_project)
         tbtn("Open…",    self._open_project)
+        tbtn("Import draw.io…", self._import_drawio,
+             tip="Build a new project from a draw.io P&ID (opens unsaved for review)")
         tbtn("Save",     self._save_project)
         tbtn("Save As…", self._save_as_project)
         tb.addWidget(_vsep())
         tbtn("Fit",    lambda: self.canvas.fit_view(), tip="Fit drawing to view  (F)")
+        zi = tbtn("+", lambda: self.canvas.zoom_in(),  tip="Zoom in  (or mouse wheel / Ctrl or \u2318 + scroll)")
+        zo = tbtn("\u2212", lambda: self.canvas.zoom_out(), tip="Zoom out  (or mouse wheel / Ctrl or \u2318 + scroll)")
+        zi.setFixedWidth(34)
+        zo.setFixedWidth(34)
         tbtn("Rotate", self._rotate_selected,          tip="Rotate selection 90°  (R)")
+        tbtn("Flip",   self._flip_selected,            tip="Mirror selection left-right  (M)")
         tbtn("Delete", self._delete_selected,          tip="Delete selection  (Del)")
         tb.addWidget(_vsep())
 
@@ -495,8 +503,13 @@ class PIDEditorWindow(QWidget):
         self.canvas.component_clicked.connect(self._on_comp_clicked)
         self.canvas.component_moved.connect(lambda cid, x, y: self._status.setText(f"Moved {cid} → ({x:.0f}, {y:.0f})"))
         self.canvas.component_resized.connect(self._on_comp_resized)
+        self.canvas.label_moved.connect(lambda cid: self._status.setText(
+            f"Moved label of {cid} (double-click the label to reset it)"))
         self.canvas.canvas_clicked.connect(self._on_canvas_clicked)
         self.canvas.line_clicked.connect(self._on_line_clicked)
+        self.canvas.line_edited.connect(
+            lambda lid: self._status.setText(f"Edited pipe '{lid}' (drag round handles = corners / ends, "
+                                             "square handles = whole segment; Shift = free move)"))
         self.canvas.line_finished.connect(self._on_line_finished)
         splitter.addWidget(self.canvas)
 
@@ -541,6 +554,50 @@ class PIDEditorWindow(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Open Failed", str(e))
 
+    def _import_drawio(self):
+        """Convert a draw.io file into a NEW, unsaved project for review. Nothing
+        is replaced unless the conversion succeeds and the operator accepts it."""
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import draw.io P&ID", "",
+            "draw.io diagram (*.drawio *.xml);;All Files (*)")
+        if not path:
+            return
+        try:
+            project, report = import_drawio(path)
+        except Exception as e:
+            QMessageBox.critical(self, "Import Failed",
+                                 f"Could not import this file:\n\n{e}\n\nYour current project is unchanged.")
+            return
+
+        dlg = QDialog(self)
+        dlg.setWindowTitle("draw.io Import Report")
+        dlg.resize(640, 520)
+        lay = QVBoxLayout(dlg)
+        text = QPlainTextEdit(report.summary())
+        text.setReadOnly(True)
+        text.setStyleSheet("font-family: Menlo, Consolas, monospace;")
+        lay.addWidget(text)
+        lay.addWidget(QLabel("Opening replaces the project on the canvas. The result is not saved "
+                             "until you use Save."))
+        buttons = QDialogButtonBox()
+        open_btn = buttons.addButton("Open in editor", QDialogButtonBox.AcceptRole)
+        buttons.addButton(QDialogButtonBox.Cancel)
+        buttons.accepted.connect(dlg.accept)
+        buttons.rejected.connect(dlg.reject)
+        lay.addWidget(buttons)
+        open_btn.setDefault(True)
+        if dlg.exec_() != QDialog.Accepted:
+            return
+
+        self._project      = project
+        self._current_path = None
+        self._proj_name_edit.setText(project.name)
+        self.canvas.set_project(project)
+        self.canvas.fit_view()
+        self._status.setText(
+            f"Imported {os.path.basename(path)} (unsaved): review components, set hardware "
+            "bindings, then Save.")
+
     def _save_project(self):
         if not self._current_path:
             self._save_as_project()
@@ -569,6 +626,13 @@ class PIDEditorWindow(QWidget):
         except Exception as e:
             QMessageBox.critical(self, "Save Failed", str(e))
 
+    def load_project_object(self, project):
+        """Show an in-memory project (e.g. one streamed to a viewer GUI) with no file behind it."""
+        self._project      = project
+        self._current_path = None
+        self._proj_name_edit.setText(project.name)
+        self.canvas.set_project(project)
+
     def load_project_path(self, path: str):
         try:
             self._project      = PIDProject.load(path)
@@ -593,6 +657,17 @@ class PIDEditorWindow(QWidget):
             comp = self._project.components.get(cid)
             if comp:
                 comp.rotation = (comp.rotation + 90) % 360
+        self.canvas.update()
+
+    def _flip_selected(self):
+        """Mirror the selected components left-right (on screen). Text labels are skipped:
+        mirrored text would be unreadable."""
+        if not self.canvas._selected_comps:
+            return
+        for cid in self.canvas._selected_comps:
+            comp = self._project.components.get(cid)
+            if comp and comp.type != COMP_LABEL:
+                comp.flip = not comp.flip
         self.canvas.update()
 
     def _on_palette_comp(self, comp_type: str):
@@ -782,6 +857,8 @@ class PIDEditorWindow(QWidget):
                 self.canvas.finish_line_draw()
         elif event.key() == Qt.Key_R:
             self._rotate_selected()
+        elif event.key() == Qt.Key_M:
+            self._flip_selected()
         else:
             super().keyPressEvent(event)
 

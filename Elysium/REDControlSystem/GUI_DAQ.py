@@ -1,6 +1,6 @@
 from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QLabel, QHBoxLayout, QSizePolicy, QGridLayout
 
-from GUI_CONTROLLER import GUIController
+from GUI_CONTROLLER import GUIController, GuiMode
 
 """
 DAQWindow
@@ -13,11 +13,8 @@ The filename is now auto-generated from the loaded project using the convention:
 No manual filename entry is needed or allowed.
 
 INPUT DEPENDENCIES:
-    GUIController.signals.abort_triggered()
-        This window must disable all non-logging related buttons when an abort happens
-
-    GUIController.signals.safe_state()
-        This window re-unlocks buttons when the system enters back into a safe state
+    GUIController.signals.mode_changed(mode)
+        This window disables all non-logging related buttons in every mode except MANUAL
 
 OUTPUT DEPENDENCIES:
     GUIController.start_recording()
@@ -43,8 +40,9 @@ class DAQWindow(QWidget):
         super().__init__()
 
         self.controller = controller
-        self.controller.signals.abort_triggered.connect(self.abort_action)
-        self.controller.signals.safe_state.connect(self.safe_state_action)
+        self.controller.signals.mode_changed.connect(self.mode_action)
+        self.controller.signals.view_only_changed.connect(
+            lambda _v: self.mode_action(self.controller.mode))
 
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -141,12 +139,8 @@ class DAQWindow(QWidget):
         # Refresh preview for the next would-be file
         self.filename_preview.setText(self._get_preview())
 
-    def abort_action(self):
-        self.manual_btn.setEnabled(False)
-        self.throttling_btn.setEnabled(False)
-        self.gimbaling_btn.setEnabled(False)
-
-    def safe_state_action(self):
-        self.manual_btn.setEnabled(True)
-        self.throttling_btn.setEnabled(True)
-        self.gimbaling_btn.setEnabled(True)
+    def mode_action(self, mode: str):
+        enabled = mode == GuiMode.MANUAL and not self.controller.view_only
+        self.manual_btn.setEnabled(enabled)
+        self.throttling_btn.setEnabled(enabled)
+        self.gimbaling_btn.setEnabled(enabled)

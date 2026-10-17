@@ -4,9 +4,9 @@ from PyQt5.QtWidgets import (
     QPushButton, QLabel, QFrame, QSizePolicy,
     QStackedWidget, QComboBox, QScrollArea,
     QToolButton, QMessageBox,
-    QDialog, QDialogButtonBox, QDoubleSpinBox,
+    QDialog, QDialogButtonBox, QDoubleSpinBox, QApplication,
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QSettings
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor
 
 from GUI_LOGO import LogoWindow
@@ -21,6 +21,7 @@ from GUI_PERFORMANCE import PerformanceBar
 from PROJECT_LOADER import discover_projects, load_project, project_summary
 from GUI_ABORT_CONFIG import AbortConfigPage, AbortWindow
 from GUI_TELEMETRY import TelemetryPage
+from GUI_LIVEDATA import LiveDataPage
 from GUI_HEALTH import HealthPage
 
 class CollapsibleSection(QWidget):
@@ -496,7 +497,10 @@ class NewPIDPage(QWidget):
             return
 
         project_path = getattr(self.controller, "project_path", "")
-        self.editor.load_project_path(project_path)
+        if project_path:
+            self.editor.load_project_path(project_path)
+        else:
+            self.editor.load_project_object(project)    # e.g. streamed to a viewer: no file on disk
 
 
 class HomePage(QWidget):
@@ -569,6 +573,17 @@ class HomePage(QWidget):
         self.sensor_grid.set_dark_mode(dark)
 
 class ActionBar(QWidget):
+    @staticmethod
+    def _stacked(*widgets) -> QWidget:
+        """Stack widgets vertically so the bar needs less width."""
+        box = QWidget()
+        lay = QVBoxLayout(box)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(4)
+        for w in widgets:
+            lay.addWidget(w)
+        return box
+
     def __init__(self, controller: GUIController,
                  conn_widget: ConnectionWindow,
                  daq_window: DAQWindow,
@@ -594,13 +609,12 @@ class ActionBar(QWidget):
         self.active_seq_combo.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.active_seq_combo.setMinimumWidth(150)
         self.active_seq_combo.currentIndexChanged.connect(self._on_sequence_changed)
-        layout.addWidget(self.active_seq_combo)
 
         self.fire_seq_btn = QPushButton("Auto-Fire Sequence")
         self.fire_seq_btn.setObjectName("action_bar_btn")
         self.fire_seq_btn.setEnabled(False)
         self.fire_seq_btn.clicked.connect(controller.show_fire_sequence_dialog)
-        layout.addWidget(self.fire_seq_btn)
+        layout.addWidget(self._stacked(self.active_seq_combo, self.fire_seq_btn))
 
         self.fully_closed_btn = QPushButton("Fully Closed")
         self.fully_closed_btn.setObjectName("action_bar_btn")
@@ -618,13 +632,12 @@ class ActionBar(QWidget):
         self.start_rec_btn = QPushButton("▶  Start Recording")
         self.start_rec_btn.setObjectName("action_bar_btn")
         self.start_rec_btn.clicked.connect(self._on_start_recording)
-        layout.addWidget(self.start_rec_btn)
 
         self.stop_rec_btn = QPushButton("■  Stop Recording")
         self.stop_rec_btn.setObjectName("action_bar_btn")
         self.stop_rec_btn.setEnabled(False)
         self.stop_rec_btn.clicked.connect(self._on_stop_recording)
-        layout.addWidget(self.stop_rec_btn)
+        layout.addWidget(self._stacked(self.start_rec_btn, self.stop_rec_btn))
 
         # Keep a reference to daq_window so our handlers can call it
         self._daq_window = daq_window
@@ -650,7 +663,7 @@ class ActionBar(QWidget):
         controller.signals.connected.connect(self.sync_fire_sequence_state)
         controller.signals.disconnected.connect(lambda _: self.sync_fire_sequence_state())
         controller.signals.abort_triggered.connect(lambda *_: self.sync_fire_sequence_state())
-        controller.signals.safe_state.connect(self.sync_fire_sequence_state)
+        controller.signals.mode_changed.connect(lambda *_: self.sync_fire_sequence_state())
 
         # "Fully Closed" unlocks whenever any valve is open
         controller.signals.valve_updated.connect(lambda *_: self.sync_fully_closed_state())
@@ -768,28 +781,55 @@ class TabBar(QWidget):
         layout.addStretch()
         self._select(0, stack)
 
+    def set_tab_enabled(self, idx: int, enabled: bool, tip: str = ""):
+        self.buttons[idx].setEnabled(enabled)
+        self.buttons[idx].setToolTip("" if enabled else tip)
+
     def _select(self, idx: int, stack: QStackedWidget):
         stack.setCurrentIndex(idx)
         for i, btn in enumerate(self.buttons):
             btn.setChecked(i == idx)
 
-# saves a .ini of your text size so it loads the same on launch
-_SETTINGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gui_settings.ini")
-TEXT_SIZE_CYCLE = {12: (16, "Small Text"), 16: (8, "Medium Text"), 8: (12, "Large Text")}
-TEXT_SIZE_LABELS = {size: label for size, label in TEXT_SIZE_CYCLE.values()}
+# Base UI font size (pt). Fixed at the smallest of the sizes the old text-size button
+# offered (8 / 12 / 16): the bottom action bar is a fixed height and clips at larger ones.
+TEXT_SIZE = 8
+
+class _HScrollBar(QScrollArea):
+    """Hosts a wide fixed-height bar: instead of forcing the whole window to be as
+    wide as the bar (which pushed it off small screens and blocked resizing), the
+    bar scrolls sideways when the window is narrower than it needs."""
+
+    def __init__(self, bar: QWidget, height: int, parent=None):
+        super().__init__(parent)
+        self._bar_height = height
+        self.setWidget(bar)
+        self.setWidgetResizable(True)
+        self.setFrameShape(QFrame.NoFrame)
+        self.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.setFixedHeight(height)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        need = self.widget().minimumSizeHint().width() > self.viewport().width()
+        extent = self.horizontalScrollBar().sizeHint().height() if need else 0
+        # at least the content's own height, so bigger fonts / DPI scaling don't clip it
+        self.setFixedHeight(max(self._bar_height, self.widget().minimumSizeHint().height()) + extent)
+
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("RED Control System")
-        self.setGeometry(10, 10, 1400, 820)
-
-        self._settings = QSettings(_SETTINGS_PATH, QSettings.IniFormat)
+        # Fit the window to the screen it opens on (it used to be a fixed 1400x820 at
+        # (10, 10), which spilled off smaller displays) and centre it.
+        avail = QApplication.primaryScreen().availableGeometry()
+        w, h = min(1400, avail.width() - 40), min(820, avail.height() - 40)
+        self.resize(w, h)
+        self.move(avail.x() + (avail.width() - w) // 2, avail.y() + (avail.height() - h) // 2)
 
         self.dark_mode = True # change to False if you want to start in light mode
-        self.text_size = int(self._settings.value("text_size", 12))
-        if self.text_size not in TEXT_SIZE_LABELS:
-            self.text_size = 12
+        self.text_size = TEXT_SIZE
 
         self.controller = GUIController(self)
 
@@ -830,6 +870,7 @@ class MainWindow(QMainWindow):
         self.sequencing_page = SequencingPage(self.controller)
         self.new_pid_page = NewPIDPage(self.controller)
         self.telemetry_page = TelemetryPage(self)
+        self.live_data_page = LiveDataPage(self.controller)
         self.health_page = HealthPage(self.controller)
 
         pages = [
@@ -837,6 +878,7 @@ class MainWindow(QMainWindow):
             ("Abort Config",  self.abort_config_page),
             ("Sequencing",    self.sequencing_page),
             ("New/Edit PID",  self.new_pid_page),
+            ("Live Data",     self.live_data_page),
             ("Telemetry",     self.telemetry_page),
             ("Health",        self.health_page),
         ]
@@ -845,6 +887,9 @@ class MainWindow(QMainWindow):
 
         self.tab_bar = TabBar(pages, self.stack)
         chrome_layout.addWidget(self.tab_bar, stretch=1)
+        self._edit_tabs = [i for i, (label, _) in enumerate(pages)
+                           if label in ("Abort Config", "Sequencing", "New/Edit PID")]
+        self.controller.signals.view_only_changed.connect(lambda *_: self._refresh_edit_tabs())
 
         proj_label = QLabel("Project:")
         proj_label.setObjectName("proj_label")
@@ -866,12 +911,14 @@ class MainWindow(QMainWindow):
         self.refresh_project_btn.setFixedHeight(26)
         self.refresh_project_btn.clicked.connect(self.refresh_current_project)
 
-        # Project is locked once the operator confirms safe state (system
-        # live) or while any valve is open; unlocked while not-yet-confirmed
-        # and fully closed. See GUIController.project_lock_required().
+        # Project is locked while the system is live (MANUAL/LOCKED) or while
+        # any valve is open; unlocked in SAFE/ABORT once fully closed. See GUIController.project_lock_required().
         self.controller.signals.connected.connect(self._refresh_project_lock)
         self.controller.signals.abort_triggered.connect(lambda *_: self._refresh_project_lock())
-        self.controller.signals.safe_state.connect(self._refresh_project_lock)
+        self.controller.signals.mode_changed.connect(lambda *_: self._refresh_project_lock())
+        self.controller.signals.view_only_changed.connect(lambda *_: self._refresh_project_lock())
+        # Viewer GUIs load the project the controller streams to them
+        self.controller.signals.project_received.connect(self._on_remote_project)
         self.controller.signals.disconnected.connect(lambda _: self._refresh_project_lock())
         self.controller.signals.valve_updated.connect(lambda *_: self._refresh_project_lock())
 
@@ -890,12 +937,6 @@ class MainWindow(QMainWindow):
         self.dark_mode_btn.clicked.connect(self.toggle_dark_mode)
         chrome_layout.addWidget(self.dark_mode_btn)
 
-        self.text_size_btn = QPushButton(TEXT_SIZE_LABELS[self.text_size])
-        self.text_size_btn.setObjectName("small_btn")
-        self.text_size_btn.setFixedHeight(26)
-        self.text_size_btn.clicked.connect(self.change_text_size)
-        chrome_layout.addWidget(self.text_size_btn)
-
         sep = QFrame()
         sep.setFrameShape(QFrame.HLine)
         sep.setObjectName("tab_separator")
@@ -907,7 +948,7 @@ class MainWindow(QMainWindow):
             self.abort_menu,
         )
         self.action_bar.setObjectName("action_bar")
-        self.action_bar.setFixedHeight(72)
+        self.action_bar.setMinimumHeight(72)
 
         action_sep = QFrame()
         action_sep.setFrameShape(QFrame.HLine)
@@ -917,9 +958,26 @@ class MainWindow(QMainWindow):
         root.addWidget(sep)
         root.addWidget(self.stack, stretch=1)
         root.addWidget(action_sep)
-        root.addWidget(self.action_bar)
+        self.action_bar_scroll = _HScrollBar(self.action_bar, 72)
+        root.addWidget(self.action_bar_scroll)
 
         self.setCentralWidget(central)
+
+    def _on_remote_project(self, project_dict: dict):
+        from PID_SCHEMA import PIDProject
+        project = PIDProject.from_dict(project_dict, name_fallback="Remote project")
+        self.controller.project_path = None
+        self._dispatch_project(project)
+
+    def _refresh_edit_tabs(self):
+        """A viewer can't command anything, so it shouldn't be editing the abort config,
+        sequences or P&ID either (the edits would only touch its own copy). Those tabs are
+        disabled while this GUI is in Viewer mode."""
+        viewing = self.controller.view_only
+        for i in self._edit_tabs:
+            self.tab_bar.set_tab_enabled(i, not viewing, "Not available in Viewer mode")
+        if viewing and self.stack.currentIndex() in self._edit_tabs:
+            self.tab_bar._select(0, self.stack)
 
     def _refresh_project_lock(self):
         self._set_project_locked(self.controller.project_lock_required())
@@ -1014,6 +1072,19 @@ class MainWindow(QMainWindow):
         if hasattr(self, "abort_config_page"):
             self.abort_config_page.load_project(project)
 
+        if hasattr(self, "live_data_page"):
+            self.live_data_page.load_project(project)
+
+        # The Safe State lives in the .red file; say so loudly if it isn't defined yet.
+        if not self.controller.view_only and not self.controller.abort_state_confirmed:
+            QMessageBox.warning(
+                self, "Safe State Not Defined",
+                f"'{project.name}' has no confirmed Safe State.\n\n"
+                "Open the 'Abort Config' tab > Abort States, set the valve positions for "
+                "'Default Abort' (this is the Safe State) and press 'Confirm This State'. It is "
+                "saved in the project file.\n\nMANUAL mode stays blocked until this is done, "
+                "and SAFE / aborts will close all valves in the meantime.")
+
         # Refresh DAQ filename preview now that sensor keys are populated
         if hasattr(self, "daq_window"):
             self.daq_window.filename_preview.setText(self.daq_window._get_preview())
@@ -1027,6 +1098,7 @@ class MainWindow(QMainWindow):
         self.dark_mode = not self.dark_mode
         self.apply_stylesheet()
         self.home_page.set_dark_mode(self.dark_mode)
+        self.live_data_page.set_dark_mode(self.dark_mode)
         self.dark_mode_btn.setText("Light Mode" if self.dark_mode else "Dark Mode")
         if self.dark_mode:
             self.logo.set_dark_image()
@@ -1041,12 +1113,6 @@ class MainWindow(QMainWindow):
             self.telemetry_page.panel_a.graph.set_dark_mode(self.dark_mode)
         if hasattr(self.telemetry_page.panel_b.graph, "set_dark_mode"):
             self.telemetry_page.panel_b.graph.set_dark_mode(self.dark_mode)
-
-    def change_text_size(self):
-        self.text_size, label = TEXT_SIZE_CYCLE.get(self.text_size, (12, "Large Text"))
-        self.text_size_btn.setText(label)
-        self._settings.setValue("text_size", self.text_size)
-        self.apply_stylesheet()
 
     def apply_stylesheet(self):
         ts = self.text_size
@@ -1121,6 +1187,9 @@ class MainWindow(QMainWindow):
             QPushButton#tab_btn:hover {{
                 color: {text};
                 background-color: {bg3};
+            }}
+            QPushButton#tab_btn:disabled {{
+                color: {border2};
             }}
             QPushButton#tab_btn:checked {{
                 color: {accent};

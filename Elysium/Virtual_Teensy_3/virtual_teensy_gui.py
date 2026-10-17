@@ -1,5 +1,5 @@
 import sys
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSlider, QDoubleSpinBox, QTextEdit, QCheckBox
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSlider, QDoubleSpinBox, QTextEdit, QCheckBox, QProgressBar
 from PyQt5.QtCore import Qt, QTimer
 try:
     from vt_comms import VTComms
@@ -12,13 +12,13 @@ class VirtualTeensy(QMainWindow):
         self.setWindowTitle("Virtual Teensy 3")
         self.setGeometry(100, 100, 1000, 800)
 
+        self.comms = VTComms()      # before init_ui: the actuator controls read its settings
         self.init_ui()
 
-
-
-        self.comms = VTComms()
         self.comms.log_signal.connect(self.log)
         self.comms.valve_update_signal.connect(self.update_valve)
+        self.comms.actuator_position_signal.connect(self.update_actuator_position)
+        self.comms.actuator_target_signal.connect(self.update_actuator_target)
         self.comms.start()
 
     def init_ui(self):
@@ -42,7 +42,7 @@ class VirtualTeensy(QMainWindow):
         self.sensor_inputs = {}
         sensor_names = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", 
                        "TC1", "TC2", "TC3", 
-                       "LC1", "LC2", "LC3",
+                       "LC1", "LC2", "LC3", "LC4", "LC5", "LC6",
                        "B1", "B2"]
         
         for name in sensor_names:
@@ -117,6 +117,55 @@ class VirtualTeensy(QMainWindow):
             self.valve_indicators[name] = indicator
             self.valve_failure_checkboxes[name] = fail_check
 
+        # Actuators (position-commanded valves): simulated travel, GUI-commanded or moved by hand here
+        act_label = QLabel("Actuators (SV-1 / SV-2)")
+        act_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        right_layout.addWidget(act_label)
+        act_hint = QLabel("Bar = simulated position (moves at the travel speed after the GUI commands it). "
+                          "Move the slider here to actuate by hand - the GUI follows.")
+        act_hint.setWordWrap(True)
+        right_layout.addWidget(act_hint)
+
+        speed_row = QHBoxLayout()
+        speed_row.addWidget(QLabel("Travel speed (% per second):"))
+        self.speed_spin = QDoubleSpinBox()
+        self.speed_spin.setRange(1, 1000)
+        self.speed_spin.setValue(self.comms.actuator_speed)
+        self.speed_spin.valueChanged.connect(lambda v: setattr(self.comms, "actuator_speed", v))
+        speed_row.addWidget(self.speed_spin)
+        speed_row.addStretch()
+        right_layout.addLayout(speed_row)
+
+        self.actuator_bars = {}
+        self.actuator_sliders = {}
+        self.actuator_targets = {}
+        for act_id, name in self.comms.ACTUATOR_IDS.items():
+            row = QHBoxLayout()
+            lbl = QLabel(name)
+            lbl.setFixedWidth(50)
+            lbl.setStyleSheet("font-weight: bold;")
+            bar = QProgressBar()
+            bar.setRange(0, 1000)
+            bar.setFormat("0.0 %")
+            slider = QSlider(Qt.Horizontal)
+            slider.setRange(0, 1000)
+            slider.setToolTip("Actuate by hand (0-100 %): reports the new position to the GUI")
+            slider.valueChanged.connect(lambda v, n=name: self.manual_actuate(n, v / 10.0))
+            target = QLabel("→ 0.0 %")
+            target.setFixedWidth(70)
+            fail_check = QCheckBox("FAIL")
+            fail_check.setStyleSheet("color: red; font-size: 10px;")
+            fail_check.stateChanged.connect(lambda state, vid=act_id: self.toggle_valve_failure(vid, state))
+            row.addWidget(lbl)
+            row.addWidget(bar, 2)
+            row.addWidget(target)
+            row.addWidget(slider, 2)
+            row.addWidget(fail_check)
+            right_layout.addLayout(row)
+            self.actuator_bars[name] = bar
+            self.actuator_sliders[name] = slider
+            self.actuator_targets[name] = target
+
         # Log
         self.log_area = QTextEdit()
         self.log_area.setReadOnly(True)
@@ -156,6 +205,25 @@ class VirtualTeensy(QMainWindow):
         if name in self.valve_indicators:
             color = "green" if state else "red"
             self.valve_indicators[name].setStyleSheet(f"background-color: {color}; border-radius: 10px;")
+
+    def manual_actuate(self, name, pct):
+        self.comms.actuate(name, pct)
+
+    def update_actuator_position(self, name, pct):
+        bar = self.actuator_bars.get(name)
+        if bar is None:
+            return
+        bar.setValue(int(round(pct * 10)))
+        bar.setFormat(f"{pct:.1f} %")
+        slider = self.actuator_sliders[name]
+        if not slider.isSliderDown():           # don't fight the user's drag
+            slider.blockSignals(True)
+            slider.setValue(int(round(pct * 10)))
+            slider.blockSignals(False)
+
+    def update_actuator_target(self, name, pct):
+        if name in self.actuator_targets:
+            self.actuator_targets[name].setText(f"→ {pct:.1f} %")
 
     def log(self, message):
         self.log_area.append(message)
