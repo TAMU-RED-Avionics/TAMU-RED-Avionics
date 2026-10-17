@@ -198,7 +198,11 @@
       "hardware": {},
       "extras": {
         "notes": "McMaster Venting Orifice",
-        "link": "https://www.mcmaster.com/2822T17-2822T255/"
+        "link": "https://www.mcmaster.com/2822T17-2822T255/",
+        "label_offset": [
+          50.4,
+          -24.7
+        ]
       },
       "rotation": 270,
       "hide_lbl": false,
@@ -211,7 +215,11 @@
       "hardware": {},
       "extras": {
         "notes": "High Resolution 1500psi Pressure Transducer",
-        "link": "https://www.mcmaster.com/3196K449/"
+        "link": "https://www.mcmaster.com/3196K449/",
+        "label_offset": [
+          59.6,
+          -28.2
+        ]
       },
       "rotation": 0,
       "hide_lbl": false,
@@ -224,7 +232,11 @@
       "hardware": {},
       "extras": {
         "notes": "3' Long 1/2\" JIC Hose",
-        "link": "google.com/url?q=https://www.hydraulichoses.com/hoses/hydraulic-hose-assembly/1-2-hydraulic-hose-assembly/fa-ufw8-jic/fa-ufw8-jic-36&sa=D&source=editors&ust=1791778467308429&usg=AOvVaw1yowrI1uk5XHaZwpmFE0jg"
+        "link": "google.com/url?q=https://www.hydraulichoses.com/hoses/hydraulic-hose-assembly/1-2-hydraulic-hose-assembly/fa-ufw8-jic/fa-ufw8-jic-36&sa=D&source=editors&ust=1791778467308429&usg=AOvVaw1yowrI1uk5XHaZwpmFE0jg",
+        "label_offset": [
+          104.6,
+          -37.0
+        ]
       },
       "rotation": 90,
       "hide_lbl": false,
@@ -250,7 +262,11 @@
       "hardware": {},
       "extras": {
         "notes": "3' Long 1/2\" JIC Hose",
-        "link": "google.com/url?q=https://www.hydraulichoses.com/hoses/hydraulic-hose-assembly/1-2-hydraulic-hose-assembly/fa-ufw8-jic/fa-ufw8-jic-36&sa=D&source=editors&ust=1791778467308429&usg=AOvVaw1yowrI1uk5XHaZwpmFE0jg"
+        "link": "google.com/url?q=https://www.hydraulichoses.com/hoses/hydraulic-hose-assembly/1-2-hydraulic-hose-assembly/fa-ufw8-jic/fa-ufw8-jic-36&sa=D&source=editors&ust=1791778467308429&usg=AOvVaw1yowrI1uk5XHaZwpmFE0jg",
+        "label_offset": [
+          44.8,
+          -15.8
+        ]
       },
       "rotation": 90,
       "hide_lbl": false,
@@ -263,7 +279,11 @@
       "hardware": {},
       "extras": {
         "notes": "3' Long 1/2\" JIC Hose",
-        "link": "google.com/url?q=https://www.hydraulichoses.com/hoses/hydraulic-hose-assembly/1-2-hydraulic-hose-assembly/fa-ufw8-jic/fa-ufw8-jic-36&sa=D&source=editors&ust=1791778467308429&usg=AOvVaw1yowrI1uk5XHaZwpmFE0jg"
+        "link": "google.com/url?q=https://www.hydraulichoses.com/hoses/hydraulic-hose-assembly/1-2-hydraulic-hose-assembly/fa-ufw8-jic/fa-ufw8-jic-36&sa=D&source=editors&ust=1791778467308429&usg=AOvVaw1yowrI1uk5XHaZwpmFE0jg",
+        "label_offset": [
+          -42.3,
+          -26.4
+        ]
       },
       "rotation": 90,
       "hide_lbl": false,
@@ -333,7 +353,11 @@
       "extras": {
         "scale_x": 0.714,
         "scale_y": 0.8,
-        "notes": "ETH | Vol: 1.54 CF MEOP: 100 psig MAWP: 100 psig"
+        "notes": "ETH | Vol: 1.54 CF MEOP: 100 psig MAWP: 100 psig",
+        "label_offset": [
+          -1.2,
+          31.2
+        ]
       },
       "rotation": 0,
       "hide_lbl": false,
@@ -399,7 +423,11 @@
       "label": "OV-1302",
       "hardware": {},
       "extras": {
-        "notes": "Part of the K-Bottle"
+        "notes": "Part of the K-Bottle",
+        "label_offset": [
+          48.4,
+          -26.9
+        ]
       },
       "rotation": 270,
       "hide_lbl": false,
@@ -411,7 +439,11 @@
       "label": "OV-1301",
       "hardware": {},
       "extras": {
-        "notes": "Part of the K-Bottle"
+        "notes": "Part of the K-Bottle",
+        "label_offset": [
+          43.0,
+          -26.9
+        ]
       },
       "rotation": 270,
       "hide_lbl": false,
@@ -423,7 +455,11 @@
       "label": "NV-1103",
       "hardware": {},
       "extras": {
-        "notes": "Part of the K-bottle"
+        "notes": "Part of the K-bottle",
+        "label_offset": [
+          37.7,
+          -28.7
+        ]
       },
       "rotation": 270,
       "hide_lbl": false,
@@ -435,7 +471,11 @@
       "label": "NV-1102",
       "hardware": {},
       "extras": {
-        "notes": "Part of the K-bottle"
+        "notes": "Part of the K-bottle",
+        "label_offset": [
+          44.8,
+          -28.7
+        ]
       },
       "rotation": 270,
       "hide_lbl": false,
@@ -447,7 +487,11 @@
       "label": "NV-1101",
       "hardware": {},
       "extras": {
-        "notes": "Part of the K-bottle"
+        "notes": "Part of the K-bottle",
+        "label_offset": [
+          39.5,
+          -30.5
+        ]
       },
       "rotation": 270,
       "hide_lbl": false,
@@ -514,7 +558,11 @@
       "hardware": {},
       "extras": {
         "notes": "160 Bar 12V NC US Solid Solenoid",
-        "link": "https://ussolid.com/products/1-2-high-pressure-solenoid-valve-160-bar-stainless-steel-12v-dc-high-pressure-high-temperature-solenoid-valve-76-356-f-normally-closed?country=US&utm_source=google&utm_medium=cpc&utm_campaign=19623095036&utm_content=646389619121&utm_term=&gad_source=1&gad_campaignid=19623095036&gbraid=0AAAAAD2ek2oCpkMN_Nfsq45g84KDjY0gX&gclid=CjwKCAjw56zWBhB0EiwAdPOQOVCRzyvPDYvjj9GunTyr8Xk7oqfnClEGhzN5vIxk38DCra6UsYn33hoC96gQAvD_BwE"
+        "link": "https://ussolid.com/products/1-2-high-pressure-solenoid-valve-160-bar-stainless-steel-12v-dc-high-pressure-high-temperature-solenoid-valve-76-356-f-normally-closed?country=US&utm_source=google&utm_medium=cpc&utm_campaign=19623095036&utm_content=646389619121&utm_term=&gad_source=1&gad_campaignid=19623095036&gbraid=0AAAAAD2ek2oCpkMN_Nfsq45g84KDjY0gX&gclid=CjwKCAjw56zWBhB0EiwAdPOQOVCRzyvPDYvjj9GunTyr8Xk7oqfnClEGhzN5vIxk38DCra6UsYn33hoC96gQAvD_BwE",
+        "label_offset": [
+          0.0,
+          26.4
+        ]
       },
       "rotation": 270,
       "hide_lbl": false,
@@ -527,7 +575,11 @@
       "hardware": {},
       "extras": {
         "notes": "160 Bar 12V NC US Solid Solenoid",
-        "link": "https://ussolid.com/products/1-2-high-pressure-solenoid-valve-160-bar-stainless-steel-12v-dc-high-pressure-high-temperature-solenoid-valve-76-356-f-normally-closed?country=US&utm_source=google&utm_medium=cpc&utm_campaign=19623095036&utm_content=646389619121&utm_term=&gad_source=1&gad_campaignid=19623095036&gbraid=0AAAAAD2ek2oCpkMN_Nfsq45g84KDjY0gX&gclid=CjwKCAjw56zWBhB0EiwAdPOQOVCRzyvPDYvjj9GunTyr8Xk7oqfnClEGhzN5vIxk38DCra6UsYn33hoC96gQAvD_BwE"
+        "link": "https://ussolid.com/products/1-2-high-pressure-solenoid-valve-160-bar-stainless-steel-12v-dc-high-pressure-high-temperature-solenoid-valve-76-356-f-normally-closed?country=US&utm_source=google&utm_medium=cpc&utm_campaign=19623095036&utm_content=646389619121&utm_term=&gad_source=1&gad_campaignid=19623095036&gbraid=0AAAAAD2ek2oCpkMN_Nfsq45g84KDjY0gX&gclid=CjwKCAjw56zWBhB0EiwAdPOQOVCRzyvPDYvjj9GunTyr8Xk7oqfnClEGhzN5vIxk38DCra6UsYn33hoC96gQAvD_BwE",
+        "label_offset": [
+          47.5,
+          -28.2
+        ]
       },
       "rotation": 270,
       "hide_lbl": false,
@@ -653,79 +705,9 @@
       "flip": false
     },
     {
-      "id": "LBL_3",
-      "type": "label",
-      "label": "0.063\"",
-      "hardware": {},
-      "extras": {},
-      "rotation": 0,
-      "hide_lbl": false,
-      "flip": false
-    },
-    {
       "id": "LBL_4",
       "type": "label",
       "label": "ETH",
-      "hardware": {},
-      "extras": {},
-      "rotation": 0,
-      "hide_lbl": false,
-      "flip": false
-    },
-    {
-      "id": "LBL_5",
-      "type": "label",
-      "label": "0.25\"/0.028\"",
-      "hardware": {},
-      "extras": {},
-      "rotation": 0,
-      "hide_lbl": false,
-      "flip": false
-    },
-    {
-      "id": "LBL_6",
-      "type": "label",
-      "label": "0.5\"/0.035\"",
-      "hardware": {},
-      "extras": {},
-      "rotation": 0,
-      "hide_lbl": false,
-      "flip": false
-    },
-    {
-      "id": "LBL_7",
-      "type": "label",
-      "label": "0.25\"/0.028\" - 0.5\"/0.035\"",
-      "hardware": {},
-      "extras": {},
-      "rotation": 0,
-      "hide_lbl": false,
-      "flip": false
-    },
-    {
-      "id": "LBL_8",
-      "type": "label",
-      "label": "0.25\"/0.028\"",
-      "hardware": {},
-      "extras": {},
-      "rotation": 0,
-      "hide_lbl": false,
-      "flip": false
-    },
-    {
-      "id": "LBL_9",
-      "type": "label",
-      "label": "6mm//1mm",
-      "hardware": {},
-      "extras": {},
-      "rotation": 0,
-      "hide_lbl": false,
-      "flip": false
-    },
-    {
-      "id": "LBL_10",
-      "type": "label",
-      "label": "0.5\"/0.035\"",
       "hardware": {},
       "extras": {},
       "rotation": 0,
@@ -737,7 +719,12 @@
       "type": "actuated_valve",
       "label": "MOV",
       "hardware": {},
-      "extras": {},
+      "extras": {
+        "label_offset": [
+          29.9,
+          -28.2
+        ]
+      },
       "rotation": 270,
       "hide_lbl": false,
       "flip": false
@@ -745,9 +732,14 @@
     {
       "id": "AV_2",
       "type": "actuated_valve",
-      "label": "FV_1202",
+      "label": "FV-1202",
       "hardware": {},
-      "extras": {},
+      "extras": {
+        "label_offset": [
+          44.0,
+          -28.2
+        ]
+      },
       "rotation": 270,
       "hide_lbl": false,
       "flip": false
@@ -757,7 +749,12 @@
       "type": "actuated_valve",
       "label": "MFV",
       "hardware": {},
-      "extras": {},
+      "extras": {
+        "label_offset": [
+          33.5,
+          -26.4
+        ]
+      },
       "rotation": 270,
       "hide_lbl": false,
       "flip": false
@@ -767,7 +764,12 @@
       "type": "hand_regulator",
       "label": "NR-1101",
       "hardware": {},
-      "extras": {},
+      "extras": {
+        "label_offset": [
+          58.2,
+          -16.1
+        ]
+      },
       "rotation": 270,
       "hide_lbl": false,
       "flip": false
@@ -775,9 +777,14 @@
     {
       "id": "PRV_1",
       "type": "prv",
-      "label": "PRV_1",
+      "label": "NRV-1101",
       "hardware": {},
-      "extras": {},
+      "extras": {
+        "label_offset": [
+          60.5,
+          -20.2
+        ]
+      },
       "rotation": 270,
       "hide_lbl": false,
       "flip": false
@@ -892,8 +899,8 @@
       "y": 930.0
     },
     "PG_1": {
-      "x": 420,
-      "y": 870
+      "x": 420.0,
+      "y": 870.0
     },
     "PG_2": {
       "x": 440.0,
@@ -916,8 +923,8 @@
       "y": 430.0
     },
     "PT_3": {
-      "x": 1300.0,
-      "y": 750.0
+      "x": 1300,
+      "y": 750
     },
     "H_4": {
       "x": 1260.0,
@@ -944,20 +951,20 @@
       "y": 690.0
     },
     "ATM_1": {
-      "x": 840.0,
-      "y": 410.0
+      "x": 840,
+      "y": 410
     },
     "ATM_2": {
-      "x": 840,
-      "y": 670
+      "x": 840.0,
+      "y": 670.0
     },
     "ATM_3": {
       "x": 630.0,
       "y": 470.0
     },
     "TK_6": {
-      "x": 120.0,
-      "y": 1180.0
+      "x": 120,
+      "y": 1180
     },
     "P_1": {
       "x": 90.0,
@@ -976,20 +983,20 @@
       "y": 870.0
     },
     "V_1": {
-      "x": 1020.0,
-      "y": 1010.0
+      "x": 1020,
+      "y": 1010
     },
     "V_2": {
-      "x": 870.0,
-      "y": 1010.0
+      "x": 870,
+      "y": 1010
     },
     "V_3": {
-      "x": 630.0,
-      "y": 1010.0
+      "x": 630,
+      "y": 1010
     },
     "V_4": {
-      "x": 480.0,
-      "y": 1010.0
+      "x": 480,
+      "y": 1010
     },
     "V_5": {
       "x": 330.0,
@@ -1008,16 +1015,16 @@
       "y": 920.0
     },
     "SV_1": {
-      "x": 480.0,
-      "y": 660.0
+      "x": 480,
+      "y": 660
     },
     "SV_2": {
-      "x": 840.0,
-      "y": 650.0
+      "x": 840,
+      "y": 650
     },
     "SV_3": {
-      "x": 840.0,
-      "y": 490.0
+      "x": 840,
+      "y": 490
     },
     "RED_1": {
       "x": 510.0,
@@ -1040,8 +1047,8 @@
       "y": 930.0
     },
     "TK_7": {
-      "x": 1260,
-      "y": 310
+      "x": 1260.0,
+      "y": 310.0
     },
     "TC_1": {
       "x": 1300.0,
@@ -1053,67 +1060,39 @@
     },
     "LBL_1": {
       "x": 540,
-      "y": 780
+      "y": 770
     },
     "LBL_2": {
-      "x": 690.0,
-      "y": 480.0
-    },
-    "LBL_3": {
-      "x": 880.0,
-      "y": 400.0
+      "x": 690,
+      "y": 450
     },
     "LBL_4": {
       "x": 1260.0,
       "y": 210.0
     },
-    "LBL_5": {
-      "x": 700,
-      "y": 920
-    },
-    "LBL_6": {
-      "x": 540,
-      "y": 840
-    },
-    "LBL_7": {
-      "x": 600,
-      "y": 870
-    },
-    "LBL_8": {
-      "x": 1470.0,
-      "y": 1100.0
-    },
-    "LBL_9": {
-      "x": 1370.0,
-      "y": 760.0
-    },
-    "LBL_10": {
-      "x": 1310,
-      "y": 130
-    },
     "AV_1": {
-      "x": 1260.0,
-      "y": 700.0
+      "x": 1260,
+      "y": 700
     },
     "AV_2": {
-      "x": 1260.0,
-      "y": 100.0
+      "x": 1260,
+      "y": 100
     },
     "AV_3": {
       "x": 1500.0,
       "y": 640.0
     },
     "HREG_1": {
-      "x": 480.0,
-      "y": 810.0
+      "x": 480,
+      "y": 810
     },
     "PRV_1": {
       "x": 630.0,
       "y": 490.0
     },
     "LAB_11": {
-      "x": 1260,
-      "y": 280
+      "x": 1260.0,
+      "y": 280.0
     },
     "LAB_12": {
       "x": 870.0,
@@ -1445,7 +1424,7 @@
       "id": "line_21",
       "points": [
         {
-          "x": 1300.0,
+          "x": 1310,
           "y": 750.0
         },
         {
@@ -1984,7 +1963,7 @@
         },
         {
           "x": 1260.0,
-          "y": 170
+          "y": 170.0
         }
       ],
       "fluid": "fuel",
@@ -2055,12 +2034,12 @@
       "id": "line_44",
       "points": [
         {
-          "x": 430,
-          "y": 870
+          "x": 430.0,
+          "y": 870.0
         },
         {
-          "x": 480,
-          "y": 870
+          "x": 480.0,
+          "y": 870.0
         }
       ],
       "fluid": "purge",
