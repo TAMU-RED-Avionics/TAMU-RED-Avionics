@@ -10,6 +10,7 @@ from PyQt5.QtCore import Qt, QTimer, pyqtSignal
 from PyQt5.QtGui import QColor
 
 from GUI_LOGO import LogoWindow
+from GUI_WIDGETS import UpwardComboBox
 from GUI_CONNECT import ConnectionWindow
 from GUI_DAQ import DAQWindow
 from GUI_GRAPHS import SensorGridWindow
@@ -136,8 +137,8 @@ class SensorRow(QWidget):
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(10)
 
-        self.name_lbl = QLabel(f"{name}:")
-        self.name_lbl.setFixedWidth(52)
+        self.name_lbl = QLabel(f"{controller.sensor_display_name(name)}:")
+        self.name_lbl.setMinimumWidth(52)
         self.name_lbl.setObjectName("sensor_name_label")
 
         self.value_lbl = QLabel("---")
@@ -604,7 +605,7 @@ class ActionBar(QWidget):
         divider1.setFrameShape(QFrame.VLine)
         layout.addWidget(divider1)
 
-        self.active_seq_combo = QComboBox()
+        self.active_seq_combo = UpwardComboBox()
         self.active_seq_combo.setObjectName("action_bar_combo")
         self.active_seq_combo.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.active_seq_combo.setMinimumWidth(150)

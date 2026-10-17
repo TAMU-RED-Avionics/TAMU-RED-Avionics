@@ -1,6 +1,6 @@
 {
   "name": "Elysium 2 P&ID",
-  "version": "1.0",
+  "version": "2.0",
   "components": [
     {
       "id": "TK_1",
@@ -94,10 +94,34 @@
       "id": "PT_1",
       "type": "pressure",
       "label": "OPT-1301",
-      "hardware": {},
+      "hardware": {
+        "adc": 2
+      },
       "extras": {
         "notes": "McMaster 1500 psi Pressure Transducer",
-        "link": "https://www.mcmaster.com/6017N19/"
+        "link": "https://www.mcmaster.com/6017N19/",
+        "hw_id": "P2",
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "mawp_state": "",
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "meop_state": "",
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "relief_state": "",
+          "soak_ms": 0
+        }
       },
       "rotation": 0,
       "hide_lbl": false,
@@ -156,10 +180,34 @@
       "id": "PT_2",
       "type": "pressure",
       "label": "NPT-1101",
-      "hardware": {},
+      "hardware": {
+        "adc": 1
+      },
       "extras": {
         "notes": "McMaster 1500 psi Pressure Transducer",
-        "link": "https://www.mcmaster.com/6017N19/"
+        "link": "https://www.mcmaster.com/6017N19/",
+        "hw_id": "P1",
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "mawp_state": "",
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "meop_state": "",
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "relief_state": "",
+          "soak_ms": 0
+        }
       },
       "rotation": 0,
       "hide_lbl": false,
@@ -212,14 +260,38 @@
       "id": "PT_3",
       "type": "pressure",
       "label": "OPT-1502",
-      "hardware": {},
+      "hardware": {
+        "adc": 5
+      },
       "extras": {
         "notes": "High Resolution 1500psi Pressure Transducer",
         "link": "https://www.mcmaster.com/3196K449/",
         "label_offset": [
           59.6,
           -28.2
-        ]
+        ],
+        "hw_id": "P5",
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "mawp_state": "",
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "meop_state": "",
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "relief_state": "",
+          "soak_ms": 0
+        }
       },
       "rotation": 0,
       "hide_lbl": false,
@@ -246,10 +318,34 @@
       "id": "PT_4",
       "type": "pressure",
       "label": "OPT-1501",
-      "hardware": {},
+      "hardware": {
+        "adc": 3
+      },
       "extras": {
         "notes": "McMaster 1500 psi Pressure Transducer",
-        "link": "google.com/url?q=https://www.mcmaster.com/6017n19/&sa=D&source=editors&ust=1791776789463683&usg=AOvVaw2m7GMnM4zjbmfVUhvYMv6a"
+        "link": "google.com/url?q=https://www.mcmaster.com/6017n19/&sa=D&source=editors&ust=1791776789463683&usg=AOvVaw2m7GMnM4zjbmfVUhvYMv6a",
+        "hw_id": "P3",
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "mawp_state": "",
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "meop_state": "",
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "relief_state": "",
+          "soak_ms": 0
+        }
       },
       "rotation": 0,
       "hide_lbl": false,
@@ -293,10 +389,34 @@
       "id": "PT_5",
       "type": "pressure",
       "label": "FPT-1401",
-      "hardware": {},
+      "hardware": {
+        "adc": 4
+      },
       "extras": {
         "notes": "McMaster 1500 psi Pressure Transducer",
-        "link": "google.com/url?q=https://www.mcmaster.com/6017n19/&sa=D&source=editors&ust=1791776789463683&usg=AOvVaw2m7GMnM4zjbmfVUhvYMv6a"
+        "link": "google.com/url?q=https://www.mcmaster.com/6017n19/&sa=D&source=editors&ust=1791776789463683&usg=AOvVaw2m7GMnM4zjbmfVUhvYMv6a",
+        "hw_id": "P4",
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "mawp_state": "",
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "meop_state": "",
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "relief_state": "",
+          "soak_ms": 0
+        }
       },
       "rotation": 0,
       "hide_lbl": false,
@@ -306,10 +426,34 @@
       "id": "PT_6",
       "type": "pressure",
       "label": "FPT-1402",
-      "hardware": {},
+      "hardware": {
+        "adc": 6
+      },
       "extras": {
         "notes": "High Resolution 1500psi Pressure Transducer",
-        "link": "https://www.mcmaster.com/3196K449/"
+        "link": "https://www.mcmaster.com/3196K449/",
+        "hw_id": "P6",
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "mawp_state": "",
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "meop_state": "",
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "relief_state": "",
+          "soak_ms": 0
+        }
       },
       "rotation": 0,
       "hide_lbl": false,
@@ -516,10 +660,34 @@
       "id": "PT_7",
       "type": "pressure",
       "label": "MCC_P",
-      "hardware": {},
+      "hardware": {
+        "adc": 8
+      },
       "extras": {
         "notes": "High Resolution 1000psi Pressure Transducer",
-        "link": "https://www.mcmaster.com/3196K448/"
+        "link": "https://www.mcmaster.com/3196K448/",
+        "hw_id": "P8",
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "mawp_state": "",
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "meop_state": "",
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "relief_state": "",
+          "soak_ms": 0
+        }
       },
       "rotation": 0,
       "hide_lbl": false,
@@ -529,10 +697,34 @@
       "id": "PT_8",
       "type": "pressure",
       "label": "OMI_P",
-      "hardware": {},
+      "hardware": {
+        "adc": 7
+      },
       "extras": {
         "notes": "High Resolution 1000psi Pressure Transducer",
-        "link": "https://www.mcmaster.com/3196K448/"
+        "link": "https://www.mcmaster.com/3196K448/",
+        "hw_id": "P7",
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "mawp_state": "",
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "meop_state": "",
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "relief_state": "",
+          "soak_ms": 0
+        }
       },
       "rotation": 0,
       "hide_lbl": false,
@@ -542,10 +734,13 @@
       "id": "SV_1",
       "type": "solenoid",
       "label": "NV-1104",
-      "hardware": {},
+      "hardware": {
+        "relay": 10
+      },
       "extras": {
         "notes": "160 Bar 12V NC US Solid Solenoid",
-        "link": "https://ussolid.com/products/1-2-high-pressure-solenoid-valve-160-bar-stainless-steel-12v-dc-high-pressure-high-temperature-solenoid-valve-76-356-f-normally-closed?country=US&utm_source=google&utm_medium=cpc&utm_campaign=19623095036&utm_content=646389619121&utm_term=&gad_source=1&gad_campaignid=19623095036&gbraid=0AAAAAD2ek2oCpkMN_Nfsq45g84KDjY0gX&gclid=CjwKCAjw56zWBhB0EiwAdPOQOVCRzyvPDYvjj9GunTyr8Xk7oqfnClEGhzN5vIxk38DCra6UsYn33hoC96gQAvD_BwE"
+        "link": "https://ussolid.com/products/1-2-high-pressure-solenoid-valve-160-bar-stainless-steel-12v-dc-high-pressure-high-temperature-solenoid-valve-76-356-f-normally-closed?country=US&utm_source=google&utm_medium=cpc&utm_campaign=19623095036&utm_content=646389619121&utm_term=&gad_source=1&gad_campaignid=19623095036&gbraid=0AAAAAD2ek2oCpkMN_Nfsq45g84KDjY0gX&gclid=CjwKCAjw56zWBhB0EiwAdPOQOVCRzyvPDYvjj9GunTyr8Xk7oqfnClEGhzN5vIxk38DCra6UsYn33hoC96gQAvD_BwE",
+        "hw_id": "NCS1"
       },
       "rotation": 270,
       "hide_lbl": false,
@@ -562,7 +757,8 @@
         "label_offset": [
           0.0,
           26.4
-        ]
+        ],
+        "hw_id": "NCS4"
       },
       "rotation": 270,
       "hide_lbl": false,
@@ -572,14 +768,17 @@
       "id": "SV_3",
       "type": "solenoid",
       "label": "NV-1105",
-      "hardware": {},
+      "hardware": {
+        "relay": 12
+      },
       "extras": {
         "notes": "160 Bar 12V NC US Solid Solenoid",
         "link": "https://ussolid.com/products/1-2-high-pressure-solenoid-valve-160-bar-stainless-steel-12v-dc-high-pressure-high-temperature-solenoid-valve-76-356-f-normally-closed?country=US&utm_source=google&utm_medium=cpc&utm_campaign=19623095036&utm_content=646389619121&utm_term=&gad_source=1&gad_campaignid=19623095036&gbraid=0AAAAAD2ek2oCpkMN_Nfsq45g84KDjY0gX&gclid=CjwKCAjw56zWBhB0EiwAdPOQOVCRzyvPDYvjj9GunTyr8Xk7oqfnClEGhzN5vIxk38DCra6UsYn33hoC96gQAvD_BwE",
         "label_offset": [
           47.5,
           -28.2
-        ]
+        ],
+        "hw_id": "NCS3"
       },
       "rotation": 270,
       "hide_lbl": false,
@@ -609,10 +808,13 @@
       "id": "SV_4",
       "type": "solenoid",
       "label": "FV-1201",
-      "hardware": {},
+      "hardware": {
+        "relay": 4
+      },
       "extras": {
         "notes": "160 Bar 12V NC US Solid Solenoid",
-        "link": "https://ussolid.com/products/1-2-high-pressure-solenoid-valve-160-bar-stainless-steel-12v-dc-high-pressure-high-temperature-solenoid-valve-76-356-f-normally-closed?country=US&utm_source=google&utm_medium=cpc&utm_campaign=19623095036&utm_content=646389619121&utm_term=&gad_source=1&gad_campaignid=19623095036&gbraid=0AAAAAD2ek2oCpkMN_Nfsq45g84KDjY0gX&gclid=CjwKCAjw56zWBhB0EiwAdPOQOVCRzyvPDYvjj9GunTyr8Xk7oqfnClEGhzN5vIxk38DCra6UsYn33hoC96gQAvD_BwE"
+        "link": "https://ussolid.com/products/1-2-high-pressure-solenoid-valve-160-bar-stainless-steel-12v-dc-high-pressure-high-temperature-solenoid-valve-76-356-f-normally-closed?country=US&utm_source=google&utm_medium=cpc&utm_campaign=19623095036&utm_content=646389619121&utm_term=&gad_source=1&gad_campaignid=19623095036&gbraid=0AAAAAD2ek2oCpkMN_Nfsq45g84KDjY0gX&gclid=CjwKCAjw56zWBhB0EiwAdPOQOVCRzyvPDYvjj9GunTyr8Xk7oqfnClEGhzN5vIxk38DCra6UsYn33hoC96gQAvD_BwE",
+        "hw_id": "NCS5"
       },
       "rotation": 0,
       "hide_lbl": false,
@@ -622,10 +824,13 @@
       "id": "SV_5",
       "type": "solenoid",
       "label": "OV-1303",
-      "hardware": {},
+      "hardware": {
+        "relay": 11
+      },
       "extras": {
         "notes": "160 Bar 12V NC US Solid Solenoid",
-        "link": "https://ussolid.com/products/1-2-high-pressure-solenoid-valve-160-bar-stainless-steel-12v-dc-high-pressure-high-temperature-solenoid-valve-76-356-f-normally-closed?country=US&utm_source=google&utm_medium=cpc&utm_campaign=19623095036&utm_content=646389619121&utm_term=&gad_source=1&gad_campaignid=19623095036&gbraid=0AAAAAD2ek2oCpkMN_Nfsq45g84KDjY0gX&gclid=CjwKCAjw56zWBhB0EiwAdPOQOVCRzyvPDYvjj9GunTyr8Xk7oqfnClEGhzN5vIxk38DCra6UsYn33hoC96gQAvD_BwE"
+        "link": "https://ussolid.com/products/1-2-high-pressure-solenoid-valve-160-bar-stainless-steel-12v-dc-high-pressure-high-temperature-solenoid-valve-76-356-f-normally-closed?country=US&utm_source=google&utm_medium=cpc&utm_campaign=19623095036&utm_content=646389619121&utm_term=&gad_source=1&gad_campaignid=19623095036&gbraid=0AAAAAD2ek2oCpkMN_Nfsq45g84KDjY0gX&gclid=CjwKCAjw56zWBhB0EiwAdPOQOVCRzyvPDYvjj9GunTyr8Xk7oqfnClEGhzN5vIxk38DCra6UsYn33hoC96gQAvD_BwE",
+        "hw_id": "NCS2"
       },
       "rotation": 270,
       "hide_lbl": false,
@@ -662,10 +867,34 @@
       "id": "TC_1",
       "type": "temperature",
       "label": "OTH-1501",
-      "hardware": {},
+      "hardware": {
+        "adc": 111
+      },
       "extras": {
         "notes": "Dryer-Omega Ported Thermocouple ",
-        "link": "https://www.dwyeromega.com/en-us/pipe-plug-thermocouple-probes-with-npt-fitting-and-lead-wire/TC-NPT/p/TC-K-NPT-U-72"
+        "link": "https://www.dwyeromega.com/en-us/pipe-plug-thermocouple-probes-with-npt-fitting-and-lead-wire/TC-NPT/p/TC-K-NPT-U-72",
+        "hw_id": "TC1",
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "mawp_state": "",
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "meop_state": "",
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "relief_state": "",
+          "soak_ms": 0
+        }
       },
       "rotation": 0,
       "hide_lbl": false,
@@ -718,12 +947,15 @@
       "id": "AV_1",
       "type": "actuated_valve",
       "label": "MOV",
-      "hardware": {},
+      "hardware": {
+        "relay": 17
+      },
       "extras": {
         "label_offset": [
           29.9,
           -28.2
-        ]
+        ],
+        "hw_id": "PA-BV2"
       },
       "rotation": 270,
       "hide_lbl": false,
@@ -733,12 +965,15 @@
       "id": "AV_2",
       "type": "actuated_valve",
       "label": "FV-1202",
-      "hardware": {},
+      "hardware": {
+        "relay": 6
+      },
       "extras": {
         "label_offset": [
           44.0,
           -28.2
-        ]
+        ],
+        "hw_id": "PA-BV3"
       },
       "rotation": 270,
       "hide_lbl": false,
@@ -748,12 +983,30 @@
       "id": "AV_3",
       "type": "actuated_valve",
       "label": "MFV",
-      "hardware": {},
+      "hardware": {
+        "relay": 83
+      },
       "extras": {
         "label_offset": [
           33.5,
           -26.4
-        ]
+        ],
+        "hw_id": "MFV",
+        "actuator": {
+          "min_pct": 0,
+          "max_pct": 100,
+          "safe_pct": 0,
+          "open_pct": 100,
+          "unit": "%",
+          "presets": [
+            0,
+            25,
+            50,
+            75,
+            100
+          ],
+          "step": 1
+        }
       },
       "rotation": 270,
       "hide_lbl": false,
@@ -858,6 +1111,375 @@
       "rotation": 0,
       "hide_lbl": false,
       "flip": false
+    },
+    {
+      "id": "PT_9",
+      "type": "pressure",
+      "label": "P9",
+      "hardware": {
+        "adc": 9
+      },
+      "extras": {
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "mawp_state": "",
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "meop_state": "",
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "relief_state": "",
+          "soak_ms": 0
+        }
+      },
+      "rotation": 0,
+      "hide_lbl": false,
+      "flip": false
+    },
+    {
+      "id": "PT_10",
+      "type": "pressure",
+      "label": "P10",
+      "hardware": {
+        "adc": 10
+      },
+      "extras": {
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "mawp_state": "",
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "meop_state": "",
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "relief_state": "",
+          "soak_ms": 0
+        }
+      },
+      "rotation": 0,
+      "hide_lbl": false,
+      "flip": false
+    },
+    {
+      "id": "PT_11",
+      "type": "pressure",
+      "label": "P11",
+      "hardware": {
+        "adc": 11
+      },
+      "extras": {
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "mawp_state": "",
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "meop_state": "",
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "relief_state": "",
+          "soak_ms": 0
+        }
+      },
+      "rotation": 0,
+      "hide_lbl": false,
+      "flip": false
+    },
+    {
+      "id": "PT_12",
+      "type": "pressure",
+      "label": "P12",
+      "hardware": {
+        "adc": 12
+      },
+      "extras": {
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "mawp_state": "",
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "meop_state": "",
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "relief_state": "",
+          "soak_ms": 0
+        }
+      },
+      "rotation": 0,
+      "hide_lbl": false,
+      "flip": false
+    },
+    {
+      "id": "LOA_1",
+      "type": "load_cell",
+      "label": "LC1",
+      "hardware": {
+        "adc": 25
+      },
+      "extras": {
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "mawp_state": "",
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "meop_state": "",
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "relief_state": "",
+          "soak_ms": 0
+        }
+      },
+      "rotation": 0,
+      "hide_lbl": false,
+      "flip": false
+    },
+    {
+      "id": "LOA_2",
+      "type": "load_cell",
+      "label": "LC2",
+      "hardware": {
+        "adc": 26
+      },
+      "extras": {
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "mawp_state": "",
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "meop_state": "",
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "relief_state": "",
+          "soak_ms": 0
+        }
+      },
+      "rotation": 0,
+      "hide_lbl": false,
+      "flip": false
+    },
+    {
+      "id": "LOA_3",
+      "type": "load_cell",
+      "label": "LC3",
+      "hardware": {
+        "adc": 27
+      },
+      "extras": {
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "mawp_state": "",
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "meop_state": "",
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "relief_state": "",
+          "soak_ms": 0
+        }
+      },
+      "rotation": 0,
+      "hide_lbl": false,
+      "flip": false
+    },
+    {
+      "id": "LOA_4",
+      "type": "load_cell",
+      "label": "LC4",
+      "hardware": {
+        "adc": 28
+      },
+      "extras": {
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "mawp_state": "",
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "meop_state": "",
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "relief_state": "",
+          "soak_ms": 0
+        }
+      },
+      "rotation": 0,
+      "hide_lbl": false,
+      "flip": false
+    },
+    {
+      "id": "LOA_5",
+      "type": "load_cell",
+      "label": "LC5",
+      "hardware": {
+        "adc": 29
+      },
+      "extras": {
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "mawp_state": "",
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "meop_state": "",
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "relief_state": "",
+          "soak_ms": 0
+        }
+      },
+      "rotation": 0,
+      "hide_lbl": false,
+      "flip": false
+    },
+    {
+      "id": "LOA_6",
+      "type": "load_cell",
+      "label": "LC6",
+      "hardware": {
+        "adc": 30
+      },
+      "extras": {
+        "thresholds": {
+          "mawp": null,
+          "mawp_action": "abort",
+          "mawp_message": "",
+          "mawp_target": "",
+          "mawp_close_below": null,
+          "mawp_state": "",
+          "meop": null,
+          "meop_action": "open_valve",
+          "meop_message": "",
+          "meop_target": "",
+          "meop_close_below": null,
+          "meop_state": "",
+          "relief": null,
+          "relief_action": "open_valve",
+          "relief_message": "",
+          "relief_target": "",
+          "relief_close_below": null,
+          "relief_state": "",
+          "soak_ms": 0
+        }
+      },
+      "rotation": 0,
+      "hide_lbl": false,
+      "flip": false
+    },
+    {
+      "id": "SV_6",
+      "type": "ball_valve",
+      "label": "SV-1",
+      "hardware": {
+        "relay": 81
+      },
+      "extras": {
+        "actuator": {
+          "min_pct": 0,
+          "max_pct": 100,
+          "safe_pct": 0,
+          "open_pct": 100,
+          "unit": "%",
+          "presets": [
+            0,
+            25,
+            50,
+            75,
+            100
+          ],
+          "step": 1
+        },
+        "hw_id": "SV-1"
+      },
+      "rotation": 90,
+      "hide_lbl": false,
+      "flip": false
     }
   ],
   "connections": [],
@@ -923,8 +1545,8 @@
       "y": 430.0
     },
     "PT_3": {
-      "x": 1300,
-      "y": 750
+      "x": 1300.0,
+      "y": 750.0
     },
     "H_4": {
       "x": 1260.0,
@@ -951,8 +1573,8 @@
       "y": 690.0
     },
     "ATM_1": {
-      "x": 840,
-      "y": 410
+      "x": 840.0,
+      "y": 410.0
     },
     "ATM_2": {
       "x": 840.0,
@@ -963,8 +1585,8 @@
       "y": 470.0
     },
     "TK_6": {
-      "x": 120,
-      "y": 1180
+      "x": 120.0,
+      "y": 1180.0
     },
     "P_1": {
       "x": 90.0,
@@ -983,20 +1605,20 @@
       "y": 870.0
     },
     "V_1": {
-      "x": 1020,
-      "y": 1010
+      "x": 1020.0,
+      "y": 1010.0
     },
     "V_2": {
-      "x": 870,
-      "y": 1010
+      "x": 870.0,
+      "y": 1010.0
     },
     "V_3": {
-      "x": 630,
-      "y": 1010
+      "x": 630.0,
+      "y": 1010.0
     },
     "V_4": {
-      "x": 480,
-      "y": 1010
+      "x": 480.0,
+      "y": 1010.0
     },
     "V_5": {
       "x": 330.0,
@@ -1015,16 +1637,16 @@
       "y": 920.0
     },
     "SV_1": {
-      "x": 480,
-      "y": 660
+      "x": 480.0,
+      "y": 660.0
     },
     "SV_2": {
-      "x": 840,
-      "y": 650
+      "x": 840.0,
+      "y": 650.0
     },
     "SV_3": {
-      "x": 840,
-      "y": 490
+      "x": 840.0,
+      "y": 490.0
     },
     "RED_1": {
       "x": 510.0,
@@ -1059,32 +1681,32 @@
       "y": 150.0
     },
     "LBL_1": {
-      "x": 540,
-      "y": 770
+      "x": 540.0,
+      "y": 770.0
     },
     "LBL_2": {
-      "x": 690,
-      "y": 450
+      "x": 690.0,
+      "y": 450.0
     },
     "LBL_4": {
       "x": 1260.0,
       "y": 210.0
     },
     "AV_1": {
-      "x": 1260,
-      "y": 700
+      "x": 1260.0,
+      "y": 700.0
     },
     "AV_2": {
-      "x": 1260,
-      "y": 100
+      "x": 1260.0,
+      "y": 100.0
     },
     "AV_3": {
       "x": 1500.0,
       "y": 640.0
     },
     "HREG_1": {
-      "x": 480,
-      "y": 810
+      "x": 480.0,
+      "y": 810.0
     },
     "PRV_1": {
       "x": 630.0,
@@ -1117,6 +1739,50 @@
     "LAB_17": {
       "x": 120.0,
       "y": 1150.0
+    },
+    "PT_9": {
+      "x": 330.0,
+      "y": 1260.0
+    },
+    "PT_10": {
+      "x": 430.0,
+      "y": 1260.0
+    },
+    "PT_11": {
+      "x": 530.0,
+      "y": 1260.0
+    },
+    "PT_12": {
+      "x": 630.0,
+      "y": 1260.0
+    },
+    "LOA_1": {
+      "x": -260.0,
+      "y": 620.0
+    },
+    "LOA_2": {
+      "x": -140.0,
+      "y": 620.0
+    },
+    "LOA_3": {
+      "x": -260.0,
+      "y": 750.0
+    },
+    "LOA_4": {
+      "x": -140.0,
+      "y": 750.0
+    },
+    "LOA_5": {
+      "x": -260.0,
+      "y": 880.0
+    },
+    "LOA_6": {
+      "x": -140.0,
+      "y": 880.0
+    },
+    "SV_6": {
+      "x": 1700.0,
+      "y": 640.0
     }
   },
   "lines": [
@@ -1424,7 +2090,7 @@
       "id": "line_21",
       "points": [
         {
-          "x": 1310,
+          "x": 1310.0,
           "y": 750.0
         },
         {
@@ -2058,23 +2724,252 @@
     "system_prewarn_pct": 90.0,
     "terminal_count_s": 10.0
   },
-  "rules": [],
+  "rules": [
+    {
+      "id": "logic_rule_1",
+      "abort_state": "",
+      "condition_type": "expression",
+      "action": "abort",
+      "enabled": false,
+      "sensor_id": "",
+      "expression": "P8 > 700",
+      "description": "high chamber pressure",
+      "message_template": "P8 ({P8}) > 700",
+      "target_valve": "",
+      "close_valve_below": null,
+      "soak_ms": 0
+    },
+    {
+      "id": "logic_rule_2",
+      "abort_state": "",
+      "condition_type": "expression",
+      "action": "abort",
+      "enabled": false,
+      "sensor_id": "",
+      "expression": "P8 > P7",
+      "description": "reverse flow",
+      "message_template": "P8 ({P8}) > P7 ({P7})",
+      "target_valve": "",
+      "close_valve_below": null,
+      "soak_ms": 0
+    },
+    {
+      "id": "logic_rule_3",
+      "abort_state": "",
+      "condition_type": "expression",
+      "action": "abort",
+      "enabled": false,
+      "sensor_id": "",
+      "expression": "P5 - P3 >= 5",
+      "description": "high upstream pressure",
+      "message_template": "P5 ({P5}) > P3 ({P3}) by 5 PSI for > {soak_ms}ms",
+      "target_valve": "",
+      "close_valve_below": null,
+      "soak_ms": 150
+    },
+    {
+      "id": "logic_rule_4",
+      "abort_state": "",
+      "condition_type": "expression",
+      "action": "abort",
+      "enabled": false,
+      "sensor_id": "",
+      "expression": "P6 - P4 >= 5",
+      "description": "high upstream pressure",
+      "message_template": "P6 ({P6}) > P4 ({P4}) by 5 PSI for > {soak_ms}ms",
+      "target_valve": "",
+      "close_valve_below": null,
+      "soak_ms": 150
+    },
+    {
+      "id": "logic_rule_5",
+      "abort_state": "",
+      "condition_type": "expression",
+      "action": "open_valve",
+      "enabled": false,
+      "sensor_id": "",
+      "expression": "P2 > 1375",
+      "description": "high p2",
+      "message_template": "",
+      "target_valve": "NCS3",
+      "close_valve_below": 1250.0,
+      "soak_ms": 0
+    },
+    {
+      "id": "logic_rule_6",
+      "abort_state": "",
+      "condition_type": "expression",
+      "action": "warn",
+      "enabled": false,
+      "sensor_id": "",
+      "expression": "P2 > 1375",
+      "description": "Warning: P2 > 1375. Opening NCS3...",
+      "message_template": "",
+      "target_valve": "",
+      "close_valve_below": null,
+      "soak_ms": 0
+    }
+  ],
   "abort_states": [
     {
       "id": "default",
       "name": "Default Abort",
-      "valves": {},
-      "confirmed": false
+      "valves": {
+        "SV_1": false,
+        "SV_5": false,
+        "SV_3": false,
+        "SV_2": false,
+        "SV_4": false,
+        "AV_1": false,
+        "AV_2": false,
+        "AV_3": false,
+        "SV_6": false
+      },
+      "confirmed": true
     }
   ],
   "sequence": [],
   "sequences": [
     {
       "id": "seq_default",
-      "name": "Default",
-      "steps": []
+      "name": "15 Second Fire",
+      "steps": [
+        {
+          "name": "Terminal Count",
+          "time_offset": 0.0,
+          "open_valves": [],
+          "is_terminal_count": true
+        },
+        {
+          "name": "Ignition 1",
+          "time_offset": 9.5,
+          "open_valves": [],
+          "is_terminal_count": false
+        },
+        {
+          "name": "Main Valves",
+          "time_offset": 10.0,
+          "open_valves": [
+            "AV_3"
+          ],
+          "is_terminal_count": false
+        },
+        {
+          "name": "Ignition 2",
+          "time_offset": 10.4,
+          "open_valves": [
+            "AV_3"
+          ],
+          "is_terminal_count": false
+        },
+        {
+          "name": "Shutdown",
+          "time_offset": 15.0,
+          "open_valves": [],
+          "is_terminal_count": false
+        }
+      ]
+    },
+    {
+      "id": "seq_d74eca00",
+      "name": "5 Second Fire",
+      "steps": [
+        {
+          "name": "Terminal Count",
+          "time_offset": 0.0,
+          "open_valves": [],
+          "is_terminal_count": true
+        },
+        {
+          "name": "Ignition 1",
+          "time_offset": 9.5,
+          "open_valves": [],
+          "is_terminal_count": false
+        },
+        {
+          "name": "Main Valves",
+          "time_offset": 10.0,
+          "open_valves": [
+            "AV_3"
+          ],
+          "is_terminal_count": false
+        },
+        {
+          "name": "Ignition 2",
+          "time_offset": 10.4,
+          "open_valves": [
+            "AV_3"
+          ],
+          "is_terminal_count": false
+        },
+        {
+          "name": "Shutdown",
+          "time_offset": 15.0,
+          "open_valves": [],
+          "is_terminal_count": false
+        }
+      ]
+    },
+    {
+      "id": "seq_9248777e",
+      "name": "test",
+      "steps": [
+        {
+          "name": "terminal count",
+          "time_offset": 0.0,
+          "open_valves": [],
+          "is_terminal_count": true
+        },
+        {
+          "name": "State 1",
+          "time_offset": 10.0,
+          "open_valves": [
+            "SV_5",
+            "SV_2",
+            "SV_3"
+          ],
+          "is_terminal_count": false
+        },
+        {
+          "name": "2",
+          "time_offset": 15.0,
+          "open_valves": [
+            "SV_6"
+          ],
+          "is_terminal_count": false
+        },
+        {
+          "name": "3",
+          "time_offset": 20.0,
+          "open_valves": [
+            "SV_4",
+            "AV_2",
+            "AV_3"
+          ],
+          "is_terminal_count": false
+        }
+      ]
     }
   ],
-  "active_sequence_id": "seq_default",
-  "calc_channels": []
+  "active_sequence_id": "seq_9248777e",
+  "calc_channels": [
+    {
+      "id": "calc_57e94c77",
+      "label": "Thrust",
+      "role": "thrust",
+      "unit": "lbf",
+      "expression": "abs(LC1) + abs(LC2) + abs(LC3)",
+      "constants": {},
+      "enabled": true
+    },
+    {
+      "id": "calc_1946c30a",
+      "label": "Ox Density (N2O)",
+      "role": "custom",
+      "unit": "kg/m^3",
+      "expression": "PropsSI('D','T',TC1+273.15,'P',P1*6894.76,'N2O')",
+      "constants": {},
+      "enabled": true
+    }
+  ]
 }

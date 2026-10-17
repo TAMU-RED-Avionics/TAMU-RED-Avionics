@@ -976,10 +976,10 @@ class PIDCanvas(QWidget):
         if not self.project or self.interactive:
             return
 
-        pad_x, pad_y, gap = 6, 3, 6
-        f_lbl = QFont("Courier New", 7)
+        pad_x, pad_y, gap = 4, 2, 4
+        f_lbl = QFont("Courier New", 6)
         f_lbl.setBold(True)
-        f_val = QFont("Courier New", 9)
+        f_val = QFont("Courier New", 8)
         f_val.setBold(True)
         fm_lbl = QFontMetrics(f_lbl)
         fm_val = QFontMetrics(f_val)
@@ -997,7 +997,7 @@ class PIDCanvas(QWidget):
             elif comp.type == COMP_LOAD_CELL:
                 val_str = f"{value:.1f}"
             else:
-                val_str = f"{value:.2f}"
+                val_str = f"{value:.1f}"
             unit = SENSOR_UNIT.get(comp.type, "")
             lbl  = comp.label or cid
 

@@ -22,10 +22,12 @@ class EGCPPacket:
     PKT_POS = 0xB   # Actuator Position: body = [actuator id:1][position:2, big-endian, 0.01 % units]
     
     # Sensor ID mapping. The ID is the ADC channel the GUI's project binds each sensor to
-    # (hardware.adc in the .red file), so these must match PIDs/Elysium.red or the GUI
+    # (hardware.adc in the .red file), so these must match PIDs/Elysium.red and
+    # PIDs/E2_RED_Spec.red (they share the same sensor bindings) or the GUI
     # shows the reading under the wrong name / not at all.
     SENSOR_MAP = {
         "P1": 1, "P2": 2, "P3": 3, "P4": 4, "P5": 5, "P6": 6, "P7": 7, "P8": 8,
+        "P9": 9, "P10": 10, "P11": 11, "P12": 12,
         "LC1": 25, "LC2": 26, "LC3": 27, "LC4": 28, "LC5": 29, "LC6": 30,
         "TC3": 109, "TC2": 110, "TC1": 111,
         "B1": 0x0F, "B2": 0x10,
@@ -72,7 +74,18 @@ class VTComms(QObject):
     actuator_target_signal = pyqtSignal(str, float)     # name, commanded target (%)
 
     # Proportional (position-commanded) actuators, addressed by PKT_POS.
-    ACTUATOR_IDS = {0x51: "SV-1", 0x52: "SV-2"}
+    ACTUATOR_IDS = {0x51: "SV-1", 0x52: "SV-2", 0x53: "MFV"}   # 0x53 = FMV (Bray) valve
+
+    # Relay ID -> name, matching E2_Teensy.ino's get_valve_name(). NCS4 is a manual
+    # switch on the real hardware (no relay), so it has no ID here.
+    RELAY_NAMES = {
+        0x0A: "NCS1", 0x0B: "NCS2", 0x0C: "NCS3", 0x04: "NCS5",
+        0x06: "PA-BV3", 0x10: "PA-BV1", 0x11: "PA-BV2",
+        0x0D: "PNEUMA", 0x0E: "BRAY-AUX",
+        0x20: "GV-1", 0x21: "GV-2",
+        0x30: "IGN-1", 0x31: "IGN-2",
+    }
+    VALVE_NAMES = {**RELAY_NAMES, **ACTUATOR_IDS}
 
     def __init__(self, port=8889, target_port=8888):
         super().__init__()
@@ -89,22 +102,8 @@ class VTComms(QObject):
         self.packet_id_counter = 1  # For outgoing packets
         
         # Per-valve failure simulation
-        self.valve_failures = {
-            0x01: False,  # NCS1
-            0x02: False,  # NCS2
-            0x03: False,  # NCS3
-            0x04: False,  # NCS4
-            0x05: False,  # NCS5
-            0x06: False,  # NCS6
-            0x10: False,  # LA-BV1
-            0x11: False,  # LA-BV2
-            0x20: False,  # GV-1
-            0x21: False,  # GV-2
-            0x30: False,  # IG1
-            0x31: False,  # IG2
-            0x51: False,  # SV-1 (actuator)
-            0x52: False,  # SV-2 (actuator)
-        }
+        # Keys are the IDs the project binds each valve to (hardware.relay in the .red file).
+        self.valve_failures = {vid: False for vid in self.VALVE_NAMES}
         # Simulated actuators: they travel from their current position to the commanded
         # target at actuator_speed (% of full stroke per second), like a real motor would.
         self.actuator_speed = 50.0
@@ -114,6 +113,7 @@ class VTComms(QObject):
 
         self.sensor_data = {
             "P1": 0.0, "P2": 0.0, "P3": 0.0, "P4": 0.0, "P5": 0.0, "P6": 0.0, "P7": 0.0, "P8": 0.0,
+            "P9": 0.0, "P10": 0.0, "P11": 0.0, "P12": 0.0,
             "TC1": 0.0, "TC2": 0.0, "TC3": 0.0,
             "LC1": 0.0, "LC2": 0.0, "LC3": 0.0, "LC4": 0.0, "LC5": 0.0, "LC6": 0.0,
             "B1": 0.0, "B2": 0.0,
@@ -321,14 +321,7 @@ class VTComms(QObject):
 
     def get_valve_name(self, valve_id: int) -> str:
         """Convert valve ID to name"""
-        valve_names = {
-            0x01: "NCS1", 0x02: "NCS2", 0x03: "NCS3", 0x04: "NCS4", 0x05: "NCS5", 0x06: "NCS6",
-            0x10: "LA-BV1", 0x11: "LA-BV2",
-            0x20: "GV-1", 0x21: "GV-2",
-            0x30: "IG1", 0x31: "IG2",
-            **self.ACTUATOR_IDS,
-        }
-        return valve_names.get(valve_id, f"VALVE_{valve_id:02X}")
+        return self.VALVE_NAMES.get(valve_id, f"VALVE_{valve_id:02X}")
 
     def send_ack(self, cmd_packet_id, addr=None):
         """Send ACK packet"""

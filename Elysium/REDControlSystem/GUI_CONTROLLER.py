@@ -138,6 +138,7 @@ class GUIController:
         self.raw_sensor_values: dict = {}
         self.tare_offsets: dict = {}
         self.calibrations: dict = {}        # name -> (gain, offset)
+        self.sensor_labels: dict = {}       # sensor key (hw_id) -> P&ID label, for display
 
         # Health tracking: last receive time + recent uncalibrated samples
         # (used for stale / flatline detection and the calibration wizard)
@@ -277,14 +278,11 @@ class GUIController:
         self.signals.abort_triggered.emit("DISCONNECTED", reason, "")
 
     def _on_connected(self):
-        """Every (re)connect lands in SAFE. Valves are assumed closed (nothing
-        is commanded on connect)."""
+        """Every (re)connect lands in SAFE and the Safe State preset is applied
+        straight away (valves to their safe positions, actuators to safe_pct)."""
         if self.view_only:
             return              # the viewer link's hello message carries the controller's mode
-        self.ethernet_client.set_system_state("SAFE")
-        self._applied_abort_states.clear()
-        self._set_safe_applied(False)
-        self._set_mode(GuiMode.SAFE, "connected")
+        self.enter_safe_state("connected")
 
     # READ-ONLY SHARING --------------------------------------------------------------
     # The controller GUI (holding the Teensy link) streams to viewer GUIs via
@@ -661,14 +659,22 @@ class GUIController:
         self.actuator_positions = {
             hw: self.actuator_positions.get(hw, spec.safe_pct) for hw, spec in specs.items()}
 
+    def sensor_display_name(self, key: str) -> str:
+        """Name shown to the operator for a sensor key: the P&ID label (e.g.
+        OPT-1301) when the key is a separate internal hw_id (e.g. P2)."""
+        return self.sensor_labels.get(key, key)
+
     def _rebuild_sensor_keys(self, project):
         from PID_SCHEMA import COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL
         pt, tc, lc = [], [], []
+        self.sensor_labels = {}
         if project:
             for comp in project.components.values():
                 hw_id = comp.extras.get("hw_id", comp.label) or comp.label
                 if not hw_id:
                     continue
+                if comp.type in (COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL) and comp.label:
+                    self.sensor_labels[hw_id] = comp.label
                 if comp.type == COMP_PRESSURE:
                     pt.append(hw_id)
                 elif comp.type == COMP_TEMPERATURE:
@@ -1266,6 +1272,23 @@ class GUIController:
             "ABORT TRIGGERED",
             f"Abort Type: {abort_type}\nReason: {reason}\nAbort State: {state_name}"
         )
+        self._return_to_safe_after_abort()
+
+    def _return_to_safe_after_abort(self):
+        """Once the operator has acknowledged an abort, fall back to SAFE on their
+        behalf (no manual SAFE send needed). If only the default abort ran, its
+        valve config *is* the Safe State, so apply it; if an escalated state (e.g.
+        a vent) ran, switch the mode but leave its valves as they are - SAFE then
+        shows as not applied until the operator sends it."""
+        if self.view_only or self.mode != GuiMode.ABORT:
+            return
+        if self._applied_abort_states <= {DEFAULT_ABORT_ID} and self.ethernet_client.connected:
+            self.enter_safe_state("abort acknowledged")
+        else:
+            self.ethernet_client.set_system_state("SAFE")
+            self._applied_abort_states.clear()
+            self._set_safe_applied(False)
+            self._set_mode(GuiMode.SAFE, "abort acknowledged")
 
 
     # DAQ RECORDING ------------------------------------------------------------------------------------------------

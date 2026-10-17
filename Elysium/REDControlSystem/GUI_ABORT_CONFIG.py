@@ -6,6 +6,7 @@ from PyQt5.QtWidgets import (
 )
 from PyQt5.QtCore import Qt, pyqtSignal
 
+from GUI_WIDGETS import UpwardComboBox
 from GUI_CONTROLLER import GUIController, GuiMode
 from PID_SCHEMA import (
     AbortRule, AbortState, DEFAULT_ABORT_ID,
@@ -1103,7 +1104,7 @@ class AbortWindow(QWidget):
 
         row = QHBoxLayout()
         row.setSpacing(4)
-        self.mode_combo = QComboBox()
+        self.mode_combo = UpwardComboBox()
         self.mode_combo.setObjectName("mode_combo")
         for text, mode in self._MODE_OPTIONS:
             self.mode_combo.addItem(text, mode)
