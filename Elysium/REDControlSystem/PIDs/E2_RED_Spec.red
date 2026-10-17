@@ -1480,6 +1480,30 @@
       "rotation": 90,
       "hide_lbl": false,
       "flip": false
+    },
+    {
+      "id": "IGN_1",
+      "type": "igniter",
+      "label": "IGN_1",
+      "hardware": {
+        "relay": 48
+      },
+      "extras": {},
+      "rotation": 0,
+      "hide_lbl": false,
+      "flip": false
+    },
+    {
+      "id": "IGN_2",
+      "type": "igniter",
+      "label": "IGN_2",
+      "hardware": {
+        "relay": 49
+      },
+      "extras": {},
+      "rotation": 0,
+      "hide_lbl": false,
+      "flip": false
     }
   ],
   "connections": [],
@@ -1783,6 +1807,14 @@
     "SV_6": {
       "x": 1700.0,
       "y": 640.0
+    },
+    "IGN_1": {
+      "x": -260,
+      "y": 1000
+    },
+    "IGN_2": {
+      "x": -140,
+      "y": 1000
     }
   },
   "lines": [
@@ -2843,14 +2875,17 @@
         {
           "name": "Ignition 1",
           "time_offset": 9.5,
-          "open_valves": [],
+          "open_valves": [
+            "IGN_1"
+          ],
           "is_terminal_count": false
         },
         {
           "name": "Main Valves",
           "time_offset": 10.0,
           "open_valves": [
-            "AV_3"
+            "AV_3",
+            "IGN_1"
           ],
           "is_terminal_count": false
         },
@@ -2858,7 +2893,9 @@
           "name": "Ignition 2",
           "time_offset": 10.4,
           "open_valves": [
-            "AV_3"
+            "AV_3",
+            "IGN_2",
+            "IGN_1"
           ],
           "is_terminal_count": false
         },
@@ -2883,14 +2920,17 @@
         {
           "name": "Ignition 1",
           "time_offset": 9.5,
-          "open_valves": [],
+          "open_valves": [
+            "IGN_1"
+          ],
           "is_terminal_count": false
         },
         {
           "name": "Main Valves",
           "time_offset": 10.0,
           "open_valves": [
-            "AV_3"
+            "AV_3",
+            "IGN_1"
           ],
           "is_terminal_count": false
         },
@@ -2898,7 +2938,9 @@
           "name": "Ignition 2",
           "time_offset": 10.4,
           "open_valves": [
-            "AV_3"
+            "AV_3",
+            "IGN_1",
+            "IGN_2"
           ],
           "is_terminal_count": false
         },
@@ -2909,49 +2951,9 @@
           "is_terminal_count": false
         }
       ]
-    },
-    {
-      "id": "seq_9248777e",
-      "name": "test",
-      "steps": [
-        {
-          "name": "terminal count",
-          "time_offset": 0.0,
-          "open_valves": [],
-          "is_terminal_count": true
-        },
-        {
-          "name": "State 1",
-          "time_offset": 10.0,
-          "open_valves": [
-            "SV_5",
-            "SV_2",
-            "SV_3"
-          ],
-          "is_terminal_count": false
-        },
-        {
-          "name": "2",
-          "time_offset": 15.0,
-          "open_valves": [
-            "SV_6"
-          ],
-          "is_terminal_count": false
-        },
-        {
-          "name": "3",
-          "time_offset": 20.0,
-          "open_valves": [
-            "SV_4",
-            "AV_2",
-            "AV_3"
-          ],
-          "is_terminal_count": false
-        }
-      ]
     }
   ],
-  "active_sequence_id": "seq_9248777e",
+  "active_sequence_id": "seq_default",
   "calc_channels": [
     {
       "id": "calc_57e94c77",
