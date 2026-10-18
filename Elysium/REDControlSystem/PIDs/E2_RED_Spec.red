@@ -511,7 +511,9 @@
       "id": "P_1",
       "type": "pump",
       "label": "FP-1201",
-      "hardware": {},
+      "hardware": {
+        "relay": 18
+      },
       "extras": {
         "notes": "Diesel Fuel Pump (fuel)",
         "link": "https://www.jegs.com/b/350-1794K?gad_source=1&gad_campaignid=17339122447&gbraid=0AAAAAD6OBRHWuweYpqMSE-KrT_G4e7_3d&gclid=CjwKCAjwirLWBhBBEiwAlItbEufFyX9gZJTB2p92PEkkeYrnvLmuoy08WCZPjPvK3XUgwlhSqQwvahoCBKkQAvD_BwE",
@@ -645,7 +647,9 @@
       "id": "P_2",
       "type": "pump",
       "label": "AP-1601",
-      "hardware": {},
+      "hardware": {
+        "relay": 19
+      },
       "extras": {
         "notes": "20gal 200psi Air Compressor",
         "link": "google.com/url?q=https://www.homedepot.com/p/Husky-20-Gal-200-PSI-Oil-Free-Portable-Vertical-Electric-Air-Compressor-C202H/312074157&sa=D&source=editors&ust=1791779333527839&usg=AOvVaw1gg6S2SnOjUORsJM8K8kVh",
@@ -757,8 +761,7 @@
         "label_offset": [
           0.0,
           26.4
-        ],
-        "hw_id": "NCS4"
+        ]
       },
       "rotation": 270,
       "hide_lbl": false,
@@ -966,14 +969,28 @@
       "type": "actuated_valve",
       "label": "FV-1202",
       "hardware": {
-        "relay": 6
+        "relay": 82
       },
       "extras": {
         "label_offset": [
           44.0,
           -28.2
         ],
-        "hw_id": "PA-BV3"
+        "actuator": {
+          "min_pct": 0,
+          "max_pct": 100,
+          "safe_pct": 0,
+          "open_pct": 100,
+          "unit": "%",
+          "presets": [
+            0,
+            25,
+            50,
+            75,
+            100
+          ],
+          "step": 1
+        }
       },
       "rotation": 270,
       "hide_lbl": false,
@@ -1453,35 +1470,6 @@
       "flip": false
     },
     {
-      "id": "SV_6",
-      "type": "ball_valve",
-      "label": "SV-1",
-      "hardware": {
-        "relay": 81
-      },
-      "extras": {
-        "actuator": {
-          "min_pct": 0,
-          "max_pct": 100,
-          "safe_pct": 0,
-          "open_pct": 100,
-          "unit": "%",
-          "presets": [
-            0,
-            25,
-            50,
-            75,
-            100
-          ],
-          "step": 1
-        },
-        "hw_id": "SV-1"
-      },
-      "rotation": 90,
-      "hide_lbl": false,
-      "flip": false
-    },
-    {
       "id": "IGN_1",
       "type": "igniter",
       "label": "IGN_1",
@@ -1804,17 +1792,13 @@
       "x": -140.0,
       "y": 880.0
     },
-    "SV_6": {
-      "x": 1700.0,
-      "y": 640.0
-    },
     "IGN_1": {
-      "x": -260,
-      "y": 1000
+      "x": -260.0,
+      "y": 1000.0
     },
     "IGN_2": {
-      "x": -140,
-      "y": 1000
+      "x": -140.0,
+      "y": 1000.0
     }
   },
   "lines": [
@@ -2743,6 +2727,38 @@
       "fluid": "purge",
       "connects": [],
       "dotted": false
+    },
+    {
+      "id": "line_45",
+      "points": [
+        {
+          "x": 1260.0,
+          "y": 630.0
+        },
+        {
+          "x": 1260.0,
+          "y": 390.0
+        }
+      ],
+      "fluid": "oxidizer",
+      "connects": [],
+      "dotted": false
+    },
+    {
+      "id": "line_46",
+      "points": [
+        {
+          "x": 480,
+          "y": 930
+        },
+        {
+          "x": 480,
+          "y": 1010
+        }
+      ],
+      "fluid": "purge",
+      "connects": [],
+      "dotted": false
     }
   ],
   "parameters": {
@@ -2855,7 +2871,9 @@
         "AV_1": false,
         "AV_2": false,
         "AV_3": false,
-        "SV_6": false
+        "SV_6": false,
+        "P_1": false,
+        "P_2": false
       },
       "confirmed": true
     }

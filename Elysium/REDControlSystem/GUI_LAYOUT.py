@@ -6,11 +6,12 @@ from PyQt5.QtWidgets import (
     QToolButton, QMessageBox,
     QDialog, QDialogButtonBox, QDoubleSpinBox, QApplication,
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal
-from PyQt5.QtGui import QColor
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QMimeData, QPoint, QSettings
+from PyQt5.QtGui import QColor, QDrag
 
 from GUI_LOGO import LogoWindow
 from GUI_WIDGETS import UpwardComboBox
+from GUI_VALVES import ValveControlPanel
 from GUI_CONNECT import ConnectionWindow
 from GUI_DAQ import DAQWindow
 from GUI_GRAPHS import SensorGridWindow
@@ -124,6 +125,46 @@ class TareDialog(QDialog):
         self.accept()
 
 
+_SENSOR_MIME = "application/x-red-sensor-row"
+_SETTINGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gui_settings.ini")
+
+
+class _DragHandle(QLabel):
+    """Grip on the left of a sensor row. Dragging it starts a reorder; the SensorPanel
+    handles the drop."""
+
+    def __init__(self, name: str, parent=None):
+        super().__init__("⋮⋮", parent)
+        self._name = name
+        self._press = None
+        self.setFixedWidth(16)
+        self.setAlignment(Qt.AlignCenter)
+        self.setCursor(Qt.SizeAllCursor)
+        self.setToolTip("Drag to reorder")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._press = event.pos()
+
+    def mouseMoveEvent(self, event):
+        if self._press is None or not (event.buttons() & Qt.LeftButton):
+            return
+        if (event.pos() - self._press).manhattanLength() < QApplication.startDragDistance():
+            return
+        self._press = None
+        row = self.parentWidget()
+        mime = QMimeData()
+        mime.setData(_SENSOR_MIME, self._name.encode())
+        drag = QDrag(self)
+        drag.setMimeData(mime)
+        drag.setPixmap(row.grab())
+        drag.setHotSpot(self.mapTo(row, event.pos()))
+        drag.exec_(Qt.MoveAction)
+
+    def mouseReleaseEvent(self, event):
+        self._press = None
+
+
 class SensorRow(QWidget):
     """One sensor line in the right sidebar: name, live value, unit, tare."""
     clicked = pyqtSignal(str)
@@ -155,6 +196,10 @@ class SensorRow(QWidget):
         self.tare_btn.setFixedSize(52, 26)
         self.tare_btn.clicked.connect(self._open_tare_dialog)
 
+        # Drag handle: grab it and drop the row elsewhere in its section (session only -
+        # the order resets when the project is reloaded)
+        self.handle = _DragHandle(name)
+        layout.addWidget(self.handle)
         layout.addWidget(self.name_lbl)
         layout.addWidget(self.value_lbl, stretch=1)
         layout.addWidget(self.unit_lbl)
@@ -214,6 +259,10 @@ class SensorPanel(QWidget):
         self._flush_timer.start(100)
 
         self.setObjectName("sensor_panel")
+        self.setAcceptDrops(True)
+        self._drop_line = QFrame(self)              # insertion marker shown while dragging a row
+        self._drop_line.setStyleSheet("background-color: #4488ff; border-radius: 1px;")
+        self._drop_line.hide()
         self.setMinimumWidth(320)
         self.setMaximumWidth(420)
 
@@ -312,6 +361,7 @@ class SensorPanel(QWidget):
         self._lc_empty_lbl.setVisible(not c.lc_keys)
         self._lc_total_row.setVisible(bool(c.lc_keys))
 
+        self._apply_saved_order()
         self._update_lc_total()
 
     def _rebuild_rows(self, layout, rows_dict: dict, keys: list, unit: str,
@@ -331,6 +381,111 @@ class SensorPanel(QWidget):
             rows_dict[name] = row
             layout.insertWidget(insert_at, row)
             insert_at += 1
+
+    # --- drag-and-drop reordering -------------------------------------------------
+    # Nothing moves while dragging: a thin line shows where the row will land and the
+    # reorder happens once, on drop (re-laying out the list on every mouse move was slow).
+    def _sections(self):
+        return (("pt", self.pt_rows, self._pt_layout),
+                ("tc", self.tc_rows, self.tc_section.content_layout),
+                ("lc", self.lc_rows, self.lc_section.content_layout))
+
+    def _drop_target(self, event):
+        """(section, rows, layout, row, new_index, line_y) for a drag over the panel, or None."""
+        if not event.mimeData().hasFormat(_SENSOR_MIME):
+            return None
+        name = bytes(event.mimeData().data(_SENSOR_MIME)).decode()
+        for section, rows, layout in self._sections():
+            row = rows.get(name)
+            if row is None:
+                continue
+            cursor_y = event.pos().y()
+            others = sorted((r for r in rows.values() if r is not row and r.isVisible()),
+                            key=layout.indexOf)
+            if not others:
+                return None
+            new = 0
+            for r in others:
+                mid = self.mapFromGlobal(r.mapToGlobal(QPoint(0, r.height() // 2))).y()
+                if mid < cursor_y:
+                    new += 1
+            if new == 0:
+                ref = others[0]
+                line_y = self.mapFromGlobal(ref.mapToGlobal(QPoint(0, 0))).y()
+            else:
+                ref = others[new - 1]
+                line_y = self.mapFromGlobal(ref.mapToGlobal(QPoint(0, ref.height()))).y()
+            left = self.mapFromGlobal(others[0].mapToGlobal(QPoint(0, 0))).x()
+            return section, rows, layout, row, new, line_y, left, others[0].width()
+        return None
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat(_SENSOR_MIME):
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event):
+        t = self._drop_target(event)
+        if t is None:
+            self._drop_line.hide()
+        else:
+            _sec, _rows, _lay, _row, _new, y, x, w = t
+            self._drop_line.setGeometry(x, y - 1, w, 3)
+            self._drop_line.show()
+            self._drop_line.raise_()
+        event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event):
+        self._drop_line.hide()
+
+    def dropEvent(self, event):
+        self._drop_line.hide()
+        t = self._drop_target(event)
+        event.acceptProposedAction()
+        if t is None:
+            return
+        section, rows, layout, row, new, *_ = t
+        if layout.indexOf(row) == new:
+            return
+        layout.removeWidget(row)
+        layout.insertWidget(new, row)
+        self._save_order(section, rows, layout)
+
+    # --- per-P&ID persistence (local gui_settings.ini, not committed) -------------
+    def _settings(self) -> QSettings:
+        return QSettings(_SETTINGS_PATH, QSettings.IniFormat)
+
+    def _project_id(self) -> str:
+        c = self.controller
+        path = getattr(c, "project_path", None)
+        if path:
+            return os.path.splitext(os.path.basename(path))[0]
+        project = getattr(c, "project", None)
+        return getattr(project, "name", "") or ""
+
+    def _save_order(self, section, rows, layout):
+        pid = self._project_id()
+        if not pid:
+            return
+        ordered = sorted(rows, key=lambda n: layout.indexOf(rows[n]))
+        st = self._settings()
+        st.setValue(f"sensor_order/{pid}/{section}", ",".join(ordered))
+        st.sync()
+
+    def _apply_saved_order(self):
+        pid = self._project_id()
+        if not pid:
+            return
+        st = self._settings()
+        for section, rows, layout in self._sections():
+            saved = str(st.value(f"sensor_order/{pid}/{section}", "") or "").split(",")
+            wanted = [n for n in saved if n in rows]
+            if not wanted:
+                continue
+            # Saved sensors first in saved order; any sensor added since keeps its place after
+            rest = sorted((n for n in rows if n not in wanted), key=lambda n: layout.indexOf(rows[n]))
+            for i, n in enumerate(wanted + rest):
+                layout.removeWidget(rows[n])
+                layout.insertWidget(i, rows[n])
 
     def _all_rows(self) -> dict:
         return {**self.pt_rows, **self.tc_rows, **self.lc_rows}
@@ -537,7 +692,19 @@ class HomePage(QWidget):
 
         right_layout.addWidget(self.sensor_panel, stretch=3)
         right_layout.addWidget(self.warning_panel)
-        right_layout.addWidget(self.sensor_grid.main_graph, stretch=2)
+
+        # The graph area doubles as the valve controls page; the button flips between them.
+        self.valve_panel = ValveControlPanel(controller)
+        self.graph_stack = QStackedWidget()
+        self.graph_stack.addWidget(self.sensor_grid.main_graph)
+        self.graph_stack.addWidget(self.valve_panel)
+        right_layout.addWidget(self.graph_stack, stretch=2)
+
+        self.valve_btn = QPushButton("Valve Controls")
+        self.valve_btn.setObjectName("small_btn")
+        self.valve_btn.setToolTip("Swap the graph for open / close buttons for every valve")
+        self.valve_btn.clicked.connect(self._toggle_valve_page)
+        right_layout.addWidget(self.valve_btn)
 
         divider = QFrame()
         divider.setFrameShape(QFrame.VLine)
@@ -553,6 +720,11 @@ class HomePage(QWidget):
         self.sensor_panel.refresh_sensors()
         self.sensor_grid.refresh_sensors()
         self.clear_warnings()
+
+    def _toggle_valve_page(self):
+        show_valves = self.graph_stack.currentWidget() is not self.valve_panel
+        self.graph_stack.setCurrentWidget(self.valve_panel if show_valves else self.sensor_grid.main_graph)
+        self.valve_btn.setText("Graphs" if show_valves else "Valve Controls")
 
     def _on_graph_sensor_changed(self, sensor_name: str):
         self.sensor_grid.update_main_graph(sensor_name)
@@ -654,6 +826,10 @@ class ActionBar(QWidget):
 
         self.state_label = QLabel("State: Fully Closed")
         self.state_label.setObjectName("state_label")
+        # Long status text wraps onto extra lines instead of stretching the bar
+        self.state_label.setWordWrap(True)
+        self.state_label.setMaximumWidth(380)
+        self.state_label.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Preferred)
         layout.addWidget(self.state_label)
         self._last_status = ""
         controller.signals.system_status.connect(self._on_system_status)
@@ -871,6 +1047,7 @@ class MainWindow(QMainWindow):
         self.sequencing_page = SequencingPage(self.controller)
         self.new_pid_page = NewPIDPage(self.controller)
         self.telemetry_page = TelemetryPage(self)
+        self.controller.signals.recording_stopped.connect(self.telemetry_page.browser.refresh)
         self.live_data_page = LiveDataPage(self.controller)
         self.health_page = HealthPage(self.controller)
 

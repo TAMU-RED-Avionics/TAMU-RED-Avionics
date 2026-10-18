@@ -418,24 +418,42 @@ class EthernetClient:
                 handshake_deadline = time.monotonic() + self.timeout
                 handshake_rx = b""
                 handshake_attempts = 0
+                sent_ids = set()
+                saw_own_echo = False
 
                 self.sock.settimeout(0.25)
                 while time.monotonic() < handshake_deadline:
                     handshake_attempts += 1
                     start_packet = EGCPPacket(self._get_next_tx_id(), EGCPPacket.PKT_STA)
+                    sent_ids.add(start_packet.packet_id)
                     self._send_packet(start_packet, track_ack=False)
                     if handshake_attempts <= 3 or handshake_attempts % 5 == 0:
                         print(f"[EthernetClient] Handshake attempt {handshake_attempts}: sent PKT_STA to {ip}:{port}")
 
                     try:
                         data = self.sock.recv(1024)
-                        if data:
-                            handshake_rx = data
-                            break
                     except SocketTimeout:
                         continue
+                    # Only the hardware's ACK counts. If the IP entered is this computer's
+                    # own address, our socket receives our own START packet back; treating
+                    # that as a reply "connects" to nothing (no sensor data ever arrives).
+                    try:
+                        reply = EGCPPacket.decode(data)
+                    except ValueError:
+                        continue
+                    if reply.packet_type == EGCPPacket.PKT_STA and reply.packet_id in sent_ids:
+                        saw_own_echo = True
+                        continue
+                    if reply.packet_type == EGCPPacket.PKT_ACK:
+                        handshake_rx = data
+                        break
 
                 self.sock.settimeout(self.timeout)
+                if not handshake_rx and saw_own_echo:
+                    raise ConnectionError(
+                        f"{ip}:{port} is this computer - the GUI only heard its own packets. "
+                        "Enter the Teensy's IP address instead (192.168.1.174 for E2_Teensy)."
+                    )
                 if not handshake_rx:
                     raise TimeoutError(
                         f"No UDP response received after {handshake_attempts} handshake attempts"

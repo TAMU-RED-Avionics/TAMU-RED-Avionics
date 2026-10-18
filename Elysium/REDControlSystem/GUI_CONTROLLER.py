@@ -56,6 +56,7 @@ class Signals(QObject):
     abort_notice = pyqtSignal(str, str, str)
     project_changed = pyqtSignal()
     project_received = pyqtSignal(dict)
+    recording_stopped = pyqtSignal()        # DAQ file saved; Telemetry refreshes its file list
     view_only_changed = pyqtSignal(bool)
     connected = pyqtSignal()
     disconnected = pyqtSignal(str)
@@ -613,12 +614,7 @@ class GUIController:
     def _rebuild_valve_states(self, project):
         """Rebuild valve_states from project valve components (hw_id -> bool).
         Existing states are preserved for valves that carry over; new valves start closed."""
-        from PID_SCHEMA import (
-            COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE, COMP_GLOBE_VALVE,
-            COMP_SOLENOID, COMP_IGNITER, get_actuator_spec,
-        )
-        VALVE_TYPES = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
-                       COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER)
+        from PID_SCHEMA import COMP_IGNITER, COMMANDABLE_VALVE_TYPES as VALVE_TYPES, get_actuator_spec
 
         if not project:
             return
@@ -1378,9 +1374,9 @@ class GUIController:
                 "Teensy Timestamp (µs from boot)",
                 "",
             ]
-            header += self.pt_keys + [""]
-            header += self.tc_keys + [""]
-            header += self.lc_keys + [""]
+            # Columns carry the P&ID names (NPT-1101), not the internal keys (P1)
+            for keys in (self.pt_keys, self.tc_keys, self.lc_keys):
+                header += [self.sensor_display_name(k) for k in keys] + [""]
             header += ["Control State", "Event Type", "Event Details"]
 
             ws.append(header)
@@ -1420,6 +1416,7 @@ class GUIController:
             self._ws = None
             self._xlsx_path = ""
             self.recording = False
+            self.signals.recording_stopped.emit()
 
     def handle_new_data(self, data_str: str):
         """ Parse teensy timestamp (first token) (Req 4) """

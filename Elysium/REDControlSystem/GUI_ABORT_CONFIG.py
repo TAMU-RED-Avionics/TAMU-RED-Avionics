@@ -9,7 +9,7 @@ from PyQt5.QtCore import Qt, pyqtSignal
 from GUI_WIDGETS import UpwardComboBox
 from GUI_CONTROLLER import GUIController, GuiMode
 from PID_SCHEMA import (
-    AbortRule, AbortState, DEFAULT_ABORT_ID,
+    AbortRule, AbortState, DEFAULT_ABORT_ID, COMMANDABLE_VALVE_TYPES, COMP_IGNITER,
     COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL,
     COMP_VALVE, COMP_BALL_VALVE, COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_THROTTLE_VALVE,
     get_actuator_spec,
@@ -39,7 +39,7 @@ def _section_title(text: str) -> QLabel:
 
 
 _SENSOR_TYPES = (COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL)
-_VALVE_TYPES  = (COMP_VALVE, COMP_BALL_VALVE, COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_THROTTLE_VALVE)
+_VALVE_TYPES  = tuple(t for t in COMMANDABLE_VALVE_TYPES if t != COMP_IGNITER)   # igniters are never part of an abort/safe state
 
 _TYPE_UNIT = {
     COMP_PRESSURE:    "psi",

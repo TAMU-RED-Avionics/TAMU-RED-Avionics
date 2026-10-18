@@ -64,6 +64,8 @@ const int PA_BV1_PIN = -1;   // was 26 (relay 6)
 const int PA_BV2_PIN = 24;   // relay 7 (NOTE: pins 24/25 are also Wire2 = TC_WIRE)
 const int PNEUMA_PIN = 3;    // relay 13
 const int BRAY_AUX_PIN = -1;  // relay 14 = pin 1, but pin 1 is the AD5420's SPI1 MISO - unassigned until that moves
+const int FP_1201_PIN = -1;   // relay 18 - fuel pump FP-1201, TODO: set to the Teensy pin wired to this relay
+const int AP_1601_PIN = -1;   // relay 19 - air compressor AP-1601, TODO: set to the Teensy pin wired to this relay
 const int GV1_PIN    = 25;   // relay 8
 const int GV2_PIN    = -1;
 const int IGN1_PIN   = -1;
@@ -426,6 +428,8 @@ int get_pin_from_valve_id(uint8_t id) {
         case 0x0E: return BRAY_AUX_PIN;  // relay 14, also follows the Bray valve
         case 0x10: return PA_BV1_PIN;   // was LA-BV1
         case 0x11: return PA_BV2_PIN;   // was LA-BV2
+        case 0x12: return FP_1201_PIN;  // FP-1201 fuel pump = relay 18
+        case 0x13: return AP_1601_PIN;  // AP-1601 air compressor = relay 19
         case 0x20: return GV1_PIN;
         case 0x21: return GV2_PIN;
         case 0x30: return IGN1_PIN;
@@ -446,6 +450,8 @@ const char* get_valve_name(uint8_t id) {
         case 0x0E: return "BRAY-AUX";
         case 0x10: return "PA-BV1";
         case 0x11: return "PA-BV2";
+        case 0x12: return "FP-1201";
+        case 0x13: return "AP-1601";
         case 0x20: return "GV-1";
         case 0x21: return "GV-2";
         case 0x30: return "IGN-1";
@@ -659,7 +665,7 @@ void send_nck(uint32_t nacked_id) {
 }
 
 void safe_all_valves() {
-    const int pins[] = {NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PNEUMA_PIN, BRAY_AUX_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
+    const int pins[] = {NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PNEUMA_PIN, BRAY_AUX_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, FP_1201_PIN, AP_1601_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
     for (int pin : pins) {
         if (pin >= 0) digitalWrite(pin, LOW);
     }
@@ -826,7 +832,7 @@ void setup() {
     }
 
     {
-        const int output_pins[] = {NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PNEUMA_PIN, BRAY_AUX_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
+        const int output_pins[] = {NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PNEUMA_PIN, BRAY_AUX_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, FP_1201_PIN, AP_1601_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
         for (int pin : output_pins) {
             if (pin >= 0) { pinMode(pin, OUTPUT); digitalWrite(pin, LOW); }
         }

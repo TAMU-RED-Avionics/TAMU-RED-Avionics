@@ -18,14 +18,14 @@ from PyQt5.QtGui import (
 from PyQt5.QtCore import Qt, QPointF, QRectF, pyqtSignal, QTimer
 
 from PID_SCHEMA import (
-    PIDProject, PipeLine, LayoutPoint, ActuatorSpec, get_actuator_spec,
+    PIDProject, PipeLine, LayoutPoint, ActuatorSpec, get_actuator_spec, COMMANDABLE_VALVE_TYPES,
     FLUID_GENERIC,
     COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL,
     COMP_CHECK_VALVE, COMP_RELIEF_VALVE,
     COMP_BALL_VALVE, COMP_PSV, COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_PRV,
     COMP_VALVE, COMP_IGNITER, COMP_LABEL,
     COMP_ACTUATED_VALVE, COMP_ACTUATED_VALVE_LS, COMP_NEEDLE_VALVE,
-    COMP_THREE_WAY_VALVE, COMP_EP_THROTTLE_VALVE,
+    COMP_THREE_WAY_VALVE, COMP_EP_THROTTLE_VALVE, COMP_PUMP,
     COMP_DIFF_PRESSURE, COMP_FLOW_METER, COMP_JUNCTION,
 )
 
@@ -48,7 +48,7 @@ VALVE_TYPES = {
     COMP_PSV, COMP_PRV, COMP_RELIEF_VALVE, COMP_CHECK_VALVE,
     COMP_IGNITER,
     COMP_ACTUATED_VALVE, COMP_ACTUATED_VALVE_LS, COMP_NEEDLE_VALVE,
-    COMP_THREE_WAY_VALVE, COMP_EP_THROTTLE_VALVE,
+    COMP_THREE_WAY_VALVE, COMP_EP_THROTTLE_VALVE, COMP_PUMP,
 }
 
 # Types with a live telemetry readout (gets a canvas callout box). Kept in
@@ -1434,7 +1434,11 @@ class PIDCanvas(QWidget):
                 # Show valve popup in live (non-interactive/non-editor) mode
                 comp = self.project.components.get(cid) if self.project else None
                 spec = get_actuator_spec(comp) if comp else None
-                if comp and (spec is not None or comp.type in VALVE_TYPES) and not self.interactive:
+                # Only relay-bound, operator-commandable parts get the open/close popup:
+                # manual valves (no binding) and PRVs / PSVs / check valves do not.
+                commandable = (comp is not None and comp.type in COMMANDABLE_VALVE_TYPES
+                               and comp.hardware.relay is not None)
+                if commandable and not self.interactive:
                     state = self.live_valve_states.get(cid, "CLOSED")
                     comp_pos = self.project.layout[cid]
                     sp = QPointF(

@@ -253,7 +253,7 @@ class Renderer:
         elif t == COMP_EP_CONVERTER:
             Renderer._ep_converter(p, pos, zoom, scale_x, scale_y)
         elif t == COMP_PUMP:
-            Renderer._pump(p, pos, zoom, scale_x, scale_y)
+            Renderer._pump(p, pos, state, zoom, scale_x, scale_y)
         elif t == COMP_PRESSURE_GAUGE:
             Renderer._pressure_gauge(p, pos, zoom, scale_x, scale_y)
         elif t == COMP_DIFF_PRESSURE:
@@ -1087,11 +1087,16 @@ class Renderer:
         Renderer._ep_box(p, pos.x, pos.y, zoom, scale_x * 1.4, scale_y * 1.4)
 
     @staticmethod
-    def _pump(p, pos, zoom, scale_x=1.0, scale_y=1.0):
+    def _pump(p, pos, state, zoom, scale_x=1.0, scale_y=1.0):
         """RED-001 3.3 Pump: a volute (snail-shell) outline with a small
-        discharge tab, an inner hub circle, and a trapezoid base."""
+        discharge tab, an inner hub circle, and a trapezoid base. The body is
+        filled with the valve state colour (green while the pump is on)."""
         x, y = pos.x, pos.y
         r = SNS_R * 0.85 * max(scale_x, scale_y)
+
+        p.setPen(Qt.NoPen)
+        p.setBrush(QBrush(Renderer._valve_fill(state)))
+        p.drawEllipse(QPointF(x, y), r, r)
 
         p.setBrush(Qt.NoBrush)
         p.setPen(QPen(C_SYMBOL, 1.6 / zoom))
