@@ -2,6 +2,7 @@ import errno
 from socket import socket, SocketKind, AddressFamily, timeout as SocketTimeout
 import time
 import struct
+import threading
 from PyQt5.QtCore import QDateTime, QThread
 
 
@@ -106,6 +107,9 @@ class EthernetClient:
         self.tx_packet_id: int = 0                          # Transmit packet ID counter
         self.rx_packet_id: int = 0                          # Receive packet ID counter
         self.pending_acks: dict = {}                        # Map of packet_id -> (timestamp, packet, retry_count)
+        # pending_acks is touched by the caller (send), the heartbeat thread (retry/fail)
+        # and the listen thread (ACK/NCK) - every read/modify goes through this lock.
+        self._ack_lock = threading.Lock()
         self.ack_timeout: int = 60                          # ms to wait for ACK before retry
         self.max_retries: int = 10                          # Maximum retry attempts
 
@@ -255,11 +259,20 @@ class EthernetClient:
     def _send_packet(self, packet: EGCPPacket, track_ack: bool = False):
         """Send an EGCP packet over the socket"""
         if self.sock and self.remote_ip and self.remote_port:
-            self.sock.sendto(packet.encode(), (self.remote_ip, self.remote_port))
-            # Track packets that need ACK for retransmission
+            # Track packets that need ACK for retransmission. Register BEFORE sendto():
+            # the Teensy ACKs within ~1 ms, and the listen thread could otherwise process
+            # that ACK before the entry exists and drop it.
             if track_ack:
                 timestamp = QDateTime.currentMSecsSinceEpoch()
-                self.pending_acks[packet.packet_id] = (timestamp, packet, 0)
+                with self._ack_lock:
+                    self.pending_acks[packet.packet_id] = (timestamp, packet, 0)
+            try:
+                self.sock.sendto(packet.encode(), (self.remote_ip, self.remote_port))
+            except Exception:
+                if track_ack:
+                    with self._ack_lock:
+                        self.pending_acks.pop(packet.packet_id, None)
+                raise
 
     def _send_ack(self, packet_id_to_ack: int):
         """Send an ACK packet for the given packet ID"""
@@ -499,7 +512,9 @@ class EthernetClient:
                 packets_to_retry = []
                 packets_to_fail = []
                 
-                for pkt_id, (sent_time, packet, retry_count) in list(self.pending_acks.items()):
+                with self._ack_lock:
+                    pending_snapshot = list(self.pending_acks.items())
+                for pkt_id, (sent_time, packet, retry_count) in pending_snapshot:
                     if (now - sent_time) > self.ack_timeout:
                         if retry_count < self.max_retries:
                             packets_to_retry.append((pkt_id, packet, retry_count))
@@ -508,16 +523,22 @@ class EthernetClient:
                 
                 # Retry packets that timed out
                 for pkt_id, packet, retry_count in packets_to_retry:
+                    with self._ack_lock:
+                        if pkt_id not in self.pending_acks:
+                            continue    # ACK/NCK arrived since the snapshot - don't re-insert it
+                        self.pending_acks[pkt_id] = (now, packet, retry_count + 1)
                     self.sock.sendto(packet.encode(), (self.remote_ip, self.remote_port))
-                    self.pending_acks[pkt_id] = (now, packet, retry_count + 1)
                     if self.log_event_callback:
                         self.log_event_callback(f"RETRY:packet_id={pkt_id} attempt={retry_count + 1}")
                 
                 # Fail packets that exceeded max retries
                 for pkt_id, packet in packets_to_fail:
+                    with self._ack_lock:
+                        still_pending = self.pending_acks.pop(pkt_id, None) is not None
+                    if not still_pending:
+                        continue    # ACK/NCK arrived since the snapshot - not a failure
                     if self.log_event_callback:
                         self.log_event_callback(f"TIMEOUT:packet_id={pkt_id} failed_after_{self.max_retries}_retries")
-                    self.pending_acks.pop(pkt_id, None)
                     self._handle_command_failure(packet, pkt_id)
 
                 # Check for missed heartbeats (trigger abort)
@@ -613,11 +634,13 @@ class EthernetClient:
                                 # ACK received - remove from pending_acks
                                 if len(packet.body) >= 3:
                                     acked_id = struct.unpack('>I', b'\x00' + packet.body[:3])[0]
-                                    acked_record = self.pending_acks.pop(acked_id, None)
+                                    with self._ack_lock:
+                                        acked_record = self.pending_acks.pop(acked_id, None)
                                 else:
                                     # Legacy compatibility: some peers send ACK with no body
                                     # and place the acked packet id in the ACK header packet_id.
-                                    acked_record = self.pending_acks.pop(packet.packet_id, None)
+                                    with self._ack_lock:
+                                        acked_record = self.pending_acks.pop(packet.packet_id, None)
                                     
                                 # If the ACK was for a valve command, notify the GUI controller it succeeded
                                 if acked_record and self.receive_callback:
@@ -638,9 +661,11 @@ class EthernetClient:
                                     nck_id = struct.unpack('>I', b'\x00' + packet.body[:3])[0]
                                     if self.log_event_callback:
                                         self.log_event_callback(f"NCK:packet_id={nck_id}")
-                                    nck_record = self.pending_acks.pop(nck_id, None)
+                                    with self._ack_lock:
+                                        nck_record = self.pending_acks.pop(nck_id, None)
                                 else:
-                                    nck_record = self.pending_acks.pop(packet.packet_id, None)
+                                    with self._ack_lock:
+                                        nck_record = self.pending_acks.pop(packet.packet_id, None)
                                     
                                 if nck_record and self.receive_callback:
                                     _, orig_pkt, _ = nck_record
@@ -658,8 +683,9 @@ class EthernetClient:
                                     # Unpack as big-endian float
                                     raw_value = struct.unpack('>f', packet.body[1:5])[0]
                                     
-                                    # Send ACK for ADC packet
-                                    self._send_ack(packet.packet_id)
+                                    # No ACK for ADC packets: the firmware never waits for one,
+                                    # and ACKing every sensor sample flooded the Teensy's receive
+                                    # queue (thousands of useless packets per second).
                                     
                                     # Convert to string format for backward compatibility
                                     if self.receive_callback:

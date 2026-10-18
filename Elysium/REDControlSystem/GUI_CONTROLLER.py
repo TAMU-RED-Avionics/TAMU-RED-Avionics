@@ -2011,18 +2011,20 @@ class GUIController:
         self.signals.command_sent.emit(valve_name, 1.0 if new_state else 0.0,
                                        QDateTime.currentMSecsSinceEpoch() / 1000.0)
 
+        # Register the pending command BEFORE sending: the ACK can come back (and be
+        # handled) before send_valve_command() returns.
+        self.pending_valve_commands[valve_name] = {
+            "state": new_state,
+            "last_sent": QDateTime.currentMSecsSinceEpoch(),
+            "retries": 0
+        }
+
         try:
             self.ethernet_client.send_valve_command(valve_name, new_state)
         except Exception:
             pass
 
         self.log_event("VALVE_CHANGED", f"{valve_name}:{new_state}")
-
-        self.pending_valve_commands[valve_name] = {
-            "state": new_state,
-            "last_sent": QDateTime.currentMSecsSinceEpoch(),
-            "retries": 0
-        }
 
     def check_valve_command_timeouts(self):
         current_time = QDateTime.currentMSecsSinceEpoch()

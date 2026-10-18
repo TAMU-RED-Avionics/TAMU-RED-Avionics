@@ -42,19 +42,29 @@ long unsigned ABORT_TIME_TRACKING              = 0;             // timestamp of 
 
 const int BAUD = 115200;
 
-const int NCS1_PIN   = 31;   // relay 1
-const int NCS2_PIN   = 30;   // relay 2
-const int NCS3_PIN   = 29;   // relay 3
+// Relay line -> Teensy pin, traced from the daughter card PCB
+// (Teensy_Daughtercard.kicad_pcb, J6 -> U1; all 16 lines are routed on copper):
+//   relay  1 = pin 31 (J6-11)    relay  9 = pin  9 (J6-7)
+//   relay  2 = pin 30 (J6-36)    relay 10 = pin  8 (J6-32)
+//   relay  3 = pin 29 (J6-10)    relay 11 = pin  7 (J6-6)
+//   relay  4 = pin 28 (J6-35)    relay 12 = pin  5 (J6-5)
+//   relay  5 = pin 27 (J6-9)     relay 13 = pin  3 (J6-4)
+//   relay  6 = pin 26 (J6-34)    relay 14 = pin  1 (J6-3)
+//   relay  7 = pin 24 (J6-33)    relay 15 = pin 21 (J6-1)
+//   relay  8 = pin 25 (J6-8)     relay 16 = pin 20 (J6-2)
+const int NCS1_PIN   = 8;    // relay 10
+const int NCS2_PIN   = 7;    // relay 11
+const int NCS3_PIN   = 5;    // relay 12
 // NCS4 is a manual switch (no relay). NCS5 is wired to relay 4 (ID 0x04).
-const int NCS5_PIN   = 28;
+const int NCS5_PIN   = 28;   // relay 4
 // Pins 26/27 are SPI1 MOSI/SCK, which the AD5420 (Bray valve) needs, so
 // PA-BV1/PA-BV3 are unavailable while the Bray valve is wired.
-const int PA_BV3_PIN = -1;   // was 27
-const int PA_BV1_PIN = -1;   // was 26
-const int PA_BV2_PIN = 24;
-const int PNEUMA_PIN = -1;   // relay 13 - TODO: set to the Teensy pin wired to this relay
-const int BRAY_AUX_PIN = -1;  // relay 14 - TODO: set to the Teensy pin wired to this relay
-const int GV1_PIN    = 25;
+const int PA_BV3_PIN = -1;   // was 27 (relay 5)
+const int PA_BV1_PIN = -1;   // was 26 (relay 6)
+const int PA_BV2_PIN = 24;   // relay 7 (NOTE: pins 24/25 are also Wire2 = TC_WIRE)
+const int PNEUMA_PIN = 3;    // relay 13
+const int BRAY_AUX_PIN = -1;  // relay 14 = pin 1, but pin 1 is the AD5420's SPI1 MISO - unassigned until that moves
+const int GV1_PIN    = 25;   // relay 8
 const int GV2_PIN    = -1;
 const int IGN1_PIN   = -1;
 const int IGN2_PIN   = -1;
@@ -76,7 +86,10 @@ const float    PT_SHUNT_OHMS   = 160.0f;
 const float    PT_PSI_AT_4MA   = 0.0f;
 const float    PT_PSI_AT_20MA  = 1000.0f;
 const float    PT_ATM_PSI      = 14.7f;
-const float    PT_NO_SIGNAL_MA = 3.5f;     // below this = unplugged / broken loop
+// A healthy 4-20 mA PT never reads below ~3.92 mA, while a floating / unplugged input
+// wanders around ~3.7 mA (it showed up as a phantom -2 psi). Below this threshold the
+// channel is sent as NaN, which the GUI shows as no signal.
+const float    PT_NO_SIGNAL_MA = 3.85f;
 
 // ADS channel -> PT index (0-based; 0 = P1), traced from the PCB netlist:
 //   J10 pins 1-4 = ch0-3  = PT6, PT0, PT7, PT1
@@ -862,9 +875,14 @@ void loop() {
         } else { DBG_PRINTLN("none"); }
     }
 
-    // Read incoming packets
-    int pkt_sz = udp.parsePacket();
-    if (pkt_sz > 0) {
+    // Read incoming packets. Drain up to RX_BURST datagrams per pass: one pass can
+    // take ~10 ms (ADS7953 scan, TC I2C reads, ~30 UDP sends, delay(1)), and handling
+    // only one datagram per pass let a valve command sit in the receive queue behind
+    // heartbeats/ACKs long enough to miss the GUI's ACK retry window (~0.6 s).
+    const int RX_BURST = 32;
+    int pkt_sz = 0;
+    int rx_burst_n = 0;
+    while (rx_burst_n++ < RX_BURST && (pkt_sz = udp.parsePacket()) > 0) {
         // Capture dynamic remote address so we can reply to whoever sent us a packet
         ACTIVE_REMOTE = udp.remoteIP();
         ACTIVE_REMOTE_PORT = udp.remotePort();
@@ -1008,7 +1026,7 @@ void loop() {
                 float mA  = ads_counts_to_mA(word[i] & 0x0FFF);
                 float psi = ads_mA_to_psi(mA);
                 pt_mA[i]  = mA;
-                // An unplugged / broken loop (< 3.5 mA) is sent as NaN, which the
+                // An unplugged / broken loop (< PT_NO_SIGNAL_MA) is sent as NaN, which the
                 // GUI shows as "NO SIGNAL" instead of a bogus negative psi.
                 if (mA < PT_NO_SIGNAL_MA) {
                     pt_filtered[i] = NAN;

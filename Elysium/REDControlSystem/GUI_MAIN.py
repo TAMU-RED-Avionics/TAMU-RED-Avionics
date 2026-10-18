@@ -5,6 +5,14 @@ import importlib
 import importlib.util
 import subprocess
 
+# The GUI code uses Python 3.10 syntax (e.g. "Component | None" type hints), so an
+# older interpreter fails deep inside an import. Stop here with a clear message instead.
+if sys.version_info < (3, 10):
+    sys.exit(f"RED Control System needs Python 3.10 or newer, but this is Python "
+             f"{sys.version.split()[0]} ({sys.executable}).\n"
+             "Run setup_conda.bat in this folder (double-click it, or ./setup_conda.bat in "
+             "Git Bash) to create the red-gui environment and launch the GUI from it.")
+
 # import name -> pip package name
 REQUIRED = {
     "openpyxl": "openpyxl",
@@ -16,7 +24,12 @@ OPTIONAL_PACKAGES = {"CoolProp"}   # the app falls back gracefully without these
 
 
 def pip_install(pkg):
-    subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+    cmd = [sys.executable, "-m", "pip", "install", pkg]
+    if pkg in OPTIONAL_PACKAGES:
+        # Never compile optional packages from source (CoolProp's sdist needs Python 3.9+ and a
+        # C++ toolchain, and can take minutes before failing). Use a prebuilt wheel or skip it.
+        cmd.insert(4, "--only-binary=:all:")
+    subprocess.check_call(cmd)
 
 
 # PyQt5 draws the splash itself, so it is the one dependency that must be installed before it appears.
