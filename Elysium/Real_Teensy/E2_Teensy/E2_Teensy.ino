@@ -82,11 +82,15 @@ const bool     ADS_RANGE2     = true;      // true: 0..2xVREF (0-5 V), false: 0.
 const float    ADS_VREF       = 2.5f;      // REF5025
 const uint32_t ADS_SPI_HZ     = 1000000;   // sweep showed MODE0 is clean from 250 kHz to 4 MHz
 
-// Same math as the pt_read bring-up sketch: 160 ohm shunt, 4-20 mA -> 0-1000 psig,
+// Same math as the pt_read bring-up sketch: 160 ohm shunt, 4-20 mA -> 0-full-scale psig (per PT, below),
 // no per-channel calibration. PT_ATM_PSI is added so the GUI shows absolute pressure.
 const float    PT_SHUNT_OHMS   = 160.0f;
 const float    PT_PSI_AT_4MA   = 0.0f;
-const float    PT_PSI_AT_20MA  = 1000.0f;
+// Full-scale (20 mA) pressure per PT, indexed by PT number (0 = P1). P7 = OMI_P and
+// P8 = MCC_P are 0-1000 psi transducers; every other PT is 0-1500 psi.
+const float    PT_PSI_AT_20MA[12] = { 1500, 1500, 1500, 1500, 1500, 1500,
+                                      1000, 1000,
+                                      1500, 1500, 1500, 1500 };
 const float    PT_ATM_PSI      = 14.7f;
 // A healthy 4-20 mA PT never reads below ~3.92 mA, while a floating / unplugged input
 // wanders around ~3.7 mA (it showed up as a phantom -2 psi). Below this threshold the
@@ -142,8 +146,8 @@ static float ads_counts_to_mA(uint16_t raw12) {
     float lsb = (ADS_RANGE2 ? 2.0f : 1.0f) * ADS_VREF / 4096.0f;
     return raw12 * lsb / PT_SHUNT_OHMS * 1000.0f;
 }
-static float ads_mA_to_psi(float mA) {
-    return PT_PSI_AT_4MA + (mA - 4.0f) / 16.0f * (PT_PSI_AT_20MA - PT_PSI_AT_4MA) + PT_ATM_PSI;
+static float ads_mA_to_psi(float mA, uint8_t pt_num) {
+    return PT_PSI_AT_4MA + (mA - 4.0f) / 16.0f * (PT_PSI_AT_20MA[pt_num] - PT_PSI_AT_4MA) + PT_ATM_PSI;
 }
 
 // Boot-time report: proves SPI is talking to the ADC and shows each loop's current.
@@ -1030,7 +1034,7 @@ void loop() {
             for (int i = 0; i < 12; i++) {
                 if (!ok[i]) { pt_addr_mismatch++; continue; }   // bad echo: skip this sample, GUI keeps the last value
                 float mA  = ads_counts_to_mA(word[i] & 0x0FFF);
-                float psi = ads_mA_to_psi(mA);
+                float psi = ads_mA_to_psi(mA, PT_NUM_FOR_CH[i]);
                 pt_mA[i]  = mA;
                 // An unplugged / broken loop (< PT_NO_SIGNAL_MA) is sent as NaN, which the
                 // GUI shows as "NO SIGNAL" instead of a bogus negative psi.
