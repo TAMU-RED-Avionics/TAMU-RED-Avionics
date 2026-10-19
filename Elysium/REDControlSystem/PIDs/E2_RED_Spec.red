@@ -1492,6 +1492,20 @@
       "rotation": 0,
       "hide_lbl": false,
       "flip": false
+    },
+    {
+      "id": "SERVO_1",
+      "type": "ball_valve",
+      "label": "SERVO-1",
+      "hardware": {
+        "relay": 20
+      },
+      "extras": {
+        "notes": "Servo valve on stepper-1 PUL1 (Teensy pin 34 -> J6-38 -> JSM1). OPEN = 0 deg, CLOSED = 90 deg. Firmware valve ID 0x14 (decimal 20)."
+      },
+      "rotation": 0,
+      "hide_lbl": false,
+      "flip": false
     }
   ],
   "connections": [],
@@ -1799,6 +1813,10 @@
     "IGN_2": {
       "x": -140.0,
       "y": 1000.0
+    },
+    "SERVO_1": {
+      "x": 1700.0,
+      "y": 200.0
     }
   },
   "lines": [
@@ -2873,7 +2891,8 @@
         "AV_3": false,
         "SV_6": false,
         "P_1": false,
-        "P_2": false
+        "P_2": false,
+        "SERVO_1": false
       },
       "confirmed": true
     }
