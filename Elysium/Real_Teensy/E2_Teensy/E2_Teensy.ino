@@ -55,14 +55,14 @@ const int BAUD = 115200;
 const int NCS1_PIN   = 8;    // relay 10
 const int NCS2_PIN   = 7;    // relay 11
 const int NCS3_PIN   = 5;    // relay 12
-// NCS4 is a manual switch (no relay). NCS5 is wired to relay 4 (ID 0x04).
-const int NCS5_PIN   = 28;   // relay 4
+// NCS4 is a manual switch (no relay). NCS5 = FV-1201 (ID 0x04) is wired to relay 13.
+const int NCS5_PIN   = 3;    // relay 13 (FV-1201)
 // Pins 26/27 are SPI1 MOSI/SCK, which the AD5420 (Bray valve) needs, so
 // PA-BV1/PA-BV3 are unavailable while the Bray valve is wired.
 const int PA_BV3_PIN = -1;   // was 27 (relay 5)
 const int PA_BV1_PIN = -1;   // was 26 (relay 6)
 const int PA_BV2_PIN = 24;   // relay 7 (NOTE: pins 24/25 are also Wire2 = TC_WIRE)
-const int PNEUMA_PIN = 3;    // relay 13
+const int PNEUMA_PIN = -1;   // was pin 3 (relay 13); relay 13 now drives NCS5 / FV-1201
 const int BRAY_AUX_PIN = -1;  // relay 14 = pin 1, but pin 1 is the AD5420's SPI1 MISO - unassigned until that moves
 const int FP_1201_PIN = -1;   // relay 18 - fuel pump FP-1201, TODO: set to the Teensy pin wired to this relay
 const int AP_1601_PIN = -1;   // relay 19 - air compressor AP-1601, TODO: set to the Teensy pin wired to this relay
@@ -71,6 +71,34 @@ const int GV2_PIN    = -1;
 const int IGN1_PIN   = -1;
 const int IGN2_PIN   = -1;
 const int GIMBAL_PIN = -1;
+
+// ---- SERVO-1: servo valve on the stepper-1 PUL1 line ----
+// Teensy pin 34 (PUL1) -> J6 pin 38 -> JSM1. The GUI drives it like any valve:
+// PKT_VSO = open (0 deg), PKT_VSC = closed (90 deg). It is driven closed at boot and by
+// safe_all_valves() (abort / comms loss). The servo must be powered from its own supply
+// with its ground tied to the Teensy/board ground - the Teensy only sends the pulse.
+const int   SERVO_VALVE_PIN    = 34;
+const float SERVO_CLOSED_DEG   = 90.0f;
+const float SERVO_OPEN_DEG     = 0.0f;
+// Pulse widths for 0 and 180 deg of a standard 180-degree hobby servo (0 deg = 500 us,
+// 90 deg = 1500 us). If the real travel differs (e.g. a 270-degree servo, or a 1000-2000 us
+// one), change these two numbers so that 0 / 90 deg land where you want.
+const int   SERVO_US_AT_0_DEG   = 500;
+const int   SERVO_US_AT_180_DEG = 2500;
+
+Servo servo_valve;
+
+void servo_valve_set(bool is_open) {
+    if (!servo_valve.attached()) return;
+    float deg = is_open ? SERVO_OPEN_DEG : SERVO_CLOSED_DEG;
+    int us = (int)(SERVO_US_AT_0_DEG + (SERVO_US_AT_180_DEG - SERVO_US_AT_0_DEG) * (deg / 180.0f) + 0.5f);
+    servo_valve.writeMicroseconds(us);
+}
+
+void servo_valve_begin() {
+    servo_valve.attach(SERVO_VALVE_PIN, SERVO_US_AT_0_DEG, SERVO_US_AT_180_DEG);
+    servo_valve_set(false);   // closed at boot
+}
 
 
 const int ADS_CS_PIN  = 10;   // -> J6 pin 49 (CS1)    (verified)
@@ -426,9 +454,9 @@ int get_pin_from_valve_id(uint8_t id) {
         case 0x0A: return NCS1_PIN;   // NCS1 = relay 10
         case 0x0B: return NCS2_PIN;   // NCS2 = relay 11
         case 0x0C: return NCS3_PIN;   // NCS3 = relay 12
-        case 0x04: return NCS5_PIN;   // NCS5 is relay 4
+        case 0x04: return NCS5_PIN;   // NCS5 (FV-1201) is relay 13
         case 0x06: return PA_BV3_PIN;   // was NCS6
-        case 0x0D: return PNEUMA_PIN;   // Pneuma = relay 13
+        case 0x0D: return PNEUMA_PIN;   // Pneuma - unassigned (relay 13 went to NCS5)
         case 0x0E: return BRAY_AUX_PIN;  // relay 14, also follows the Bray valve
         case 0x10: return PA_BV1_PIN;   // was LA-BV1
         case 0x11: return PA_BV2_PIN;   // was LA-BV2
@@ -456,6 +484,7 @@ const char* get_valve_name(uint8_t id) {
         case 0x11: return "PA-BV2";
         case 0x12: return "FP-1201";
         case 0x13: return "AP-1601";
+        case 0x14: return "SERVO-1";
         case 0x20: return "GV-1";
         case 0x21: return "GV-2";
         case 0x30: return "IGN-1";
@@ -675,6 +704,7 @@ void safe_all_valves() {
     }
     // E2 abort state (confirmed): every valve closed, including NCS2 - no valve
     // is left open on abort/comms loss.
+    servo_valve_set(false);
     safe_all_actuators();
 }
 
@@ -843,6 +873,9 @@ void setup() {
         DBG_PRINTLN("Valve pins initialized");
     }
 
+    servo_valve_begin();
+    DBG_PRINTLN("SERVO-1 (pin 34) initialized closed");
+
     act_init();
     DBG_PRINT("Actuators initialized: "); DBG_PRINTLN(NUM_ACTUATORS);
 
@@ -946,7 +979,11 @@ void loop() {
                     if (rx.body_length >= 1) {
                         uint8_t vid = rx.body[0];
                         int     pin = get_pin_from_valve_id(vid);
-                        if (pin >= 0) {
+                        if (vid == EGCPPacket::VALVE_SERVO1) {
+                            servo_valve_set(true);
+                            DBG_PRINTLN("VSO SERVO-1 -> OPEN (0 deg)");
+                            LAST_HUMAN_UPDATE = micros();
+                        } else if (pin >= 0) {
                             digitalWrite(pin, HIGH);
                             DBG_PRINT("VSO "); DBG_PRINT(get_valve_name(vid));
                             DBG_PRINT(" pin="); DBG_PRINTLN(pin);
@@ -963,7 +1000,11 @@ void loop() {
                     if (rx.body_length >= 1) {
                         uint8_t vid = rx.body[0];
                         int     pin = get_pin_from_valve_id(vid);
-                        if (pin >= 0) {
+                        if (vid == EGCPPacket::VALVE_SERVO1) {
+                            servo_valve_set(false);
+                            DBG_PRINTLN("VSC SERVO-1 -> CLOSED (90 deg)");
+                            LAST_HUMAN_UPDATE = micros();
+                        } else if (pin >= 0) {
                             digitalWrite(pin, LOW);
                             DBG_PRINT("VSC "); DBG_PRINT(get_valve_name(vid));
                             DBG_PRINT(" pin="); DBG_PRINTLN(pin);
