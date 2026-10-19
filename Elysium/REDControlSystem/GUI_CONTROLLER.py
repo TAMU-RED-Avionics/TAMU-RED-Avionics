@@ -7,7 +7,7 @@ from typing import Optional
 
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
-from PyQt5.QtWidgets import QWidget, QVBoxLayout, QPushButton, QDialog, QLabel, QDialogButtonBox, QMessageBox
+from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QDialog, QLabel, QDialogButtonBox, QMessageBox
 from PyQt5.QtCore import Qt, QTimer, QDateTime, QObject, pyqtSignal
 from GUI_COMMS import EthernetClient
 from PID_SCHEMA import DEFAULT_ABORT_ID
@@ -79,6 +79,13 @@ class Signals(QObject):
     countdown_update = pyqtSignal(int)  # remaining_seconds
     countdown_close = pyqtSignal()
 
+    # EthernetClient's callbacks fire on its comms threads; these carry them onto the GUI
+    # thread so all controller state (sensor dicts, pending commands, the DAQ workbook) is
+    # only ever touched from one thread.
+    comms_data = pyqtSignal(str)                # receive_callback(data_str)
+    comms_event = pyqtSignal(str, str)          # log_event_callback(event_type, details)
+    comms_connect_result = pyqtSignal(bool)     # connect_callback(success)
+
 
 """
 GUI CONTROLLER
@@ -100,17 +107,20 @@ class GUIController:
         
         # The EthernetClient will connect to the "flight" MCU and listen for packets in a backend thread
         self.ethernet_client = EthernetClient(
-            receive_callback = self.handle_new_data,
-            log_event_callback = self.log_event,
-            connect_callback = self.handle_connect,
+            receive_callback = self.signals.comms_data.emit,
+            log_event_callback = lambda event_type, details="": self.signals.comms_event.emit(event_type, details),
+            connect_callback = self.signals.comms_connect_result.emit,
             disconnect_callback = lambda reason: self.signals.disconnected.emit(reason)
         )
-        
 
-        # The ethernet client calls the disconnect_callback in a separate
-        # thread, so a signal is used to hop back onto the main thread before
-        # touching any UI state.
+        # The ethernet client calls all of its callbacks from its own threads, so
+        # each one is a signal: the slots below run on the main thread, never
+        # concurrently with the GUI.
+        self.signals.comms_data.connect(self.handle_new_data)
+        self.signals.comms_event.connect(self.log_event)
+        self.signals.comms_connect_result.connect(self.handle_connect)
         self.signals.disconnected.connect(self._on_disconnected)
+        QApplication.instance().aboutToQuit.connect(self.ethernet_client.shutdown)
         self.signals.connected.connect(self._on_connected)
         self.signals.abort_triggered.connect(self.handle_abort)
         self.signals.valve_updated.connect(self.update_valve_state)
@@ -2008,8 +2018,8 @@ class GUIController:
         self.signals.command_sent.emit(valve_name, 1.0 if new_state else 0.0,
                                        QDateTime.currentMSecsSinceEpoch() / 1000.0)
 
-        # Register the pending command BEFORE sending: the ACK can come back (and be
-        # handled) before send_valve_command() returns.
+        # Register the pending command BEFORE sending, so the record always exists by
+        # the time the ACK is handled.
         self.pending_valve_commands[valve_name] = {
             "state": new_state,
             "last_sent": QDateTime.currentMSecsSinceEpoch(),
@@ -2027,10 +2037,8 @@ class GUIController:
         current_time = QDateTime.currentMSecsSinceEpoch()
         valves_to_delete = []
 
-        # The comms thread pops entries on ACK/NCK while this timer runs on the GUI
-        # thread, so iterate over a snapshot (iterating the live dict could raise
-        # "dictionary changed size during iteration", and PyQt aborts the app on an
-        # uncaught exception in a slot).
+        # Iterate over a snapshot: the send calls below can lead to entries being
+        # added or removed, and changing the live dict mid-iteration would raise.
         for valve_name, info in list(self.pending_valve_commands.items()):
             if current_time - info["last_sent"] > self.valve_retry_timeout:
                 if info["retries"] < self.valve_max_retries:

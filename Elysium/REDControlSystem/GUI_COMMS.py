@@ -1,9 +1,15 @@
 import errno
 from socket import socket, SocketKind, AddressFamily, timeout as SocketTimeout
+import sys
 import time
 import struct
 import threading
 from PyQt5.QtCore import QDateTime, QThread
+
+# The listen thread polls the socket with this timeout instead of blocking for the whole
+# link timeout: closing a socket does not reliably wake a blocked recv() on macOS, and a
+# listener stuck there for seconds outlived its connection.
+LISTEN_POLL_S = 0.1
 
 
 class EGCPPacket:
@@ -84,12 +90,23 @@ class EthernetClient:
         self.connection_thread: QThread = None
         self.heartbeat_thread: QThread = None
         self.listen_thread: QThread = None
+        # Every QThread started, kept referenced until it has finished: dropping the last
+        # reference to a running QThread makes Qt abort the whole process.
+        self._threads: list = []
 
         # State values related to the threads
         self.connecting = False
         self.connected = False
         self.heartbeat_active = False
         self.listening_active = False
+
+        # Connect/disconnect run on several threads; _lock makes each transition atomic.
+        # Every successful connect starts a new session. The heartbeat / listen threads
+        # hold their own session number and socket, so a thread left over from an
+        # earlier link can never act on (or tear down) a newer one.
+        self._lock = threading.RLock()
+        self._session: int = 0
+        self._last_thread_error_log: float = 0.0
 
         self.timeout: float = 3                             # seconds
         self.heartbeat_tx_cadence: int = 10                 # ms
@@ -104,6 +121,7 @@ class EthernetClient:
         self.heartbeat_miss_recovery_logged: bool = False
         
         # EGCP packet tracking
+        self._id_lock = threading.Lock()                    # IDs are taken by the GUI, heartbeat and listen threads
         self.tx_packet_id: int = 0                          # Transmit packet ID counter
         self.rx_packet_id: int = 0                          # Receive packet ID counter
         self.pending_acks: dict = {}                        # Map of packet_id -> (timestamp, packet, retry_count)
@@ -117,7 +135,10 @@ class EthernetClient:
         # can tell it apart from a link failure (which triggers an abort).
         self.intentional_disconnect: bool = False
 
-        # System state and auto-abort countdown behavior
+        # System state and auto-abort countdown behavior. The countdown is ticked by the
+        # heartbeat thread and cancelled from the GUI thread, so it is guarded by a lock
+        # (unguarded, a cancel landing mid-tick could fire the abort it just cancelled).
+        self._countdown_lock = threading.Lock()
         self.system_state: str = "NONE"
         self.auto_abort_countdown_ms: int = 10000            # 10 seconds
         self.auto_abort_deadline_ms: int = 0
@@ -205,8 +226,11 @@ class EthernetClient:
 
     def _get_next_tx_id(self) -> int:
         """Get next transmit packet ID and increment counter"""
-        packet_id = self.tx_packet_id
-        self.tx_packet_id = (self.tx_packet_id + 1) & 0xFFFFFF  # Keep in 24-bit range
+        # Locked: two threads taking the same ID would let one packet's ACK clear the
+        # other's pending record (e.g. a heartbeat ACK "confirming" a valve command).
+        with self._id_lock:
+            packet_id = self.tx_packet_id
+            self.tx_packet_id = (self.tx_packet_id + 1) & 0xFFFFFF  # Keep in 24-bit range
         return packet_id
 
     def _valve_name_for_id(self, valve_id: int) -> str:
@@ -256,9 +280,11 @@ class EthernetClient:
         raw = str(err).strip() or type(err).__name__
         return f"Connection setup failed for {ip}:{port}: {raw}"
     
-    def _send_packet(self, packet: EGCPPacket, track_ack: bool = False):
-        """Send an EGCP packet over the socket"""
-        if self.sock and self.remote_ip and self.remote_port:
+    def _send_packet(self, packet: EGCPPacket, track_ack: bool = False, sock: socket = None):
+        """Send an EGCP packet over the socket (the comms threads pass their own session's
+        socket; everything else uses the current one)"""
+        sock = sock or self.sock
+        if sock and self.remote_ip and self.remote_port:
             # Track packets that need ACK for retransmission. Register BEFORE sendto():
             # the Teensy ACKs within ~1 ms, and the listen thread could otherwise process
             # that ACK before the entry exists and drop it.
@@ -267,26 +293,26 @@ class EthernetClient:
                 with self._ack_lock:
                     self.pending_acks[packet.packet_id] = (timestamp, packet, 0)
             try:
-                self.sock.sendto(packet.encode(), (self.remote_ip, self.remote_port))
+                sock.sendto(packet.encode(), (self.remote_ip, self.remote_port))
             except Exception:
                 if track_ack:
                     with self._ack_lock:
                         self.pending_acks.pop(packet.packet_id, None)
                 raise
 
-    def _send_ack(self, packet_id_to_ack: int):
+    def _send_ack(self, packet_id_to_ack: int, sock: socket = None):
         """Send an ACK packet for the given packet ID"""
         # ACK body is 3 bytes: the ID of the packet being acknowledged
         body = struct.pack('>I', packet_id_to_ack)[1:]  # Take last 3 bytes
         ack_packet = EGCPPacket(self._get_next_tx_id(), EGCPPacket.PKT_ACK, body)
-        self._send_packet(ack_packet)
-    
-    def _send_nck(self, packet_id_to_nck: int):
+        self._send_packet(ack_packet, sock=sock)
+
+    def _send_nck(self, packet_id_to_nck: int, sock: socket = None):
         """Send an NCK packet for the given packet ID"""
         # NCK body is 3 bytes: the ID of the packet being not-acknowledged
         body = struct.pack('>I', packet_id_to_nck)[1:]  # Take last 3 bytes
         nck_packet = EGCPPacket(self._get_next_tx_id(), EGCPPacket.PKT_NCK, body)
-        self._send_packet(nck_packet)
+        self._send_packet(nck_packet, sock=sock)
 
     def set_system_state(self, state: str):
         """Set current high-level system state (e.g. Fire, Safe State, etc.)"""
@@ -294,13 +320,14 @@ class EthernetClient:
 
     def cancel_auto_abort_countdown(self):
         """Allow operator/UI to cancel a pending comms-triggered auto-abort countdown."""
-        if self.auto_abort_countdown_active:
+        with self._countdown_lock:
+            was_active = self.auto_abort_countdown_active
             self.auto_abort_countdown_active = False
             self.auto_abort_deadline_ms = 0
             self.auto_abort_reason = ""
             self.auto_abort_last_announce_second = -1
-            if self.log_event_callback:
-                self.log_event_callback("AUTO_ABORT_COUNTDOWN:CANCELED")
+        if was_active and self.log_event_callback:
+            self.log_event_callback("AUTO_ABORT_COUNTDOWN:CANCELED")
 
     def _is_fire_state(self) -> bool:
         return str(self.system_state).strip().upper() == "FIRE"
@@ -339,63 +366,73 @@ class EthernetClient:
 
         # Non-fire: start operator-cancellable countdown
         now = QDateTime.currentMSecsSinceEpoch()
-        if not self.auto_abort_countdown_active:
-            self.auto_abort_countdown_active = True
-            self.auto_abort_deadline_ms = now + self.auto_abort_countdown_ms
-            self.auto_abort_reason = reason
-            self.auto_abort_last_announce_second = -1
-            if self.log_event_callback:
-                countdown_seconds = (self.auto_abort_countdown_ms + 999) // 1000
-                self.log_event_callback(f"AUTO_ABORT_COUNTDOWN:START:{countdown_seconds}:{valve_name}:{cmd_type}")
-                self.log_event_callback(f"WARNING:Click CONFIRM_SAFE_STATE to cancel abort countdown")
+        with self._countdown_lock:
+            started = not self.auto_abort_countdown_active
+            if started:
+                self.auto_abort_countdown_active = True
+                self.auto_abort_deadline_ms = now + self.auto_abort_countdown_ms
+                self.auto_abort_reason = reason
+                self.auto_abort_last_announce_second = -1
+        if started and self.log_event_callback:
+            countdown_seconds = (self.auto_abort_countdown_ms + 999) // 1000
+            self.log_event_callback(f"AUTO_ABORT_COUNTDOWN:START:{countdown_seconds}:{valve_name}:{cmd_type}")
+            self.log_event_callback(f"WARNING:Click CONFIRM_SAFE_STATE to cancel abort countdown")
 
     def _tick_auto_abort_countdown(self, now_ms: int):
         """Update auto-abort countdown and trigger abort if timer expires."""
-        if not self.auto_abort_countdown_active:
-            return
+        expired_reason = None
+        announce = None
+        with self._countdown_lock:
+            if not self.auto_abort_countdown_active:
+                return
+            remaining_ms = self.auto_abort_deadline_ms - now_ms
+            if remaining_ms <= 0:
+                self.auto_abort_countdown_active = False
+                expired_reason = self.auto_abort_reason or "valve_open_ack_timeout"
+                self.auto_abort_reason = ""
+                self.auto_abort_last_announce_second = -1
+            else:
+                remaining_seconds = (remaining_ms + 999) // 1000
+                if remaining_seconds != self.auto_abort_last_announce_second:
+                    self.auto_abort_last_announce_second = remaining_seconds
+                    announce = remaining_seconds
 
-        remaining_ms = self.auto_abort_deadline_ms - now_ms
-        if remaining_ms <= 0:
-            self.auto_abort_countdown_active = False
-            reason = self.auto_abort_reason or "valve_open_ack_timeout"
-            self.auto_abort_reason = ""
-            self.auto_abort_last_announce_second = -1
-            self._trigger_comms_auto_abort(f"countdown_expired:{reason}")
-            return
-
-        remaining_seconds = (remaining_ms + 999) // 1000
-        if remaining_seconds != self.auto_abort_last_announce_second:
-            self.auto_abort_last_announce_second = remaining_seconds
-            if self.log_event_callback:
-                self.log_event_callback(f"AUTO_ABORT_COUNTDOWN:REMAINING:{remaining_seconds}")
+        if expired_reason is not None:
+            self._trigger_comms_auto_abort(f"countdown_expired:{expired_reason}")
+        elif announce is not None and self.log_event_callback:
+            self.log_event_callback(f"AUTO_ABORT_COUNTDOWN:REMAINING:{announce}")
 
     # Connects to the MCU over Ethernet in an asynchronous manner to preserve the main thread
     # The callback function is called with the result of the connection attempt
     def connect(self, ip: str, port: int):
-        self.remote_ip = ip     # In the future we can probably automatically determine remote_ip when we sniff the first heartbeat packets
-        self.remote_port = port
-        self.last_connection_error = ""
-
-        if self.connecting or self.connected:     # If it is already connecting, just bounce because the command is redundant
-            return
-        
-        self.connecting = True
+        with self._lock:
+            if self.connecting or self.connected:     # If it is already connecting, just bounce because the command is redundant
+                return
+            self.connecting = True
+            # Set only once the request is accepted: changing these mid-session would
+            # silently redirect a live link's commands to another address.
+            self.remote_ip = ip     # In the future we can probably automatically determine remote_ip when we sniff the first heartbeat packets
+            self.remote_port = port
+            self.last_connection_error = ""
 
         # The connection worker is a separate thread that handles the connection attempt
         def connection_worker():
             print(f"[EthernetClient] Starting UDP connect attempt to {ip}:{port} (timeout={self.timeout:.1f}s)")
+            # Built locally and handed to the session only once the handshake succeeds;
+            # a failed attempt closes it so it doesn't stay bound to the port.
+            sock = None
             try:
                 # Create the socket
-                self.sock = socket(AddressFamily.AF_INET, SocketKind.SOCK_DGRAM)
-                self.sock.settimeout(self.timeout)   # seconds
+                sock = socket(AddressFamily.AF_INET, SocketKind.SOCK_DGRAM)
+                sock.settimeout(self.timeout)   # seconds
 
                 try:
-                    self.sock.bind(("", port))
+                    sock.bind(("", port))
                 except OSError:
                     print(f"[EthernetClient] Local UDP port {port} in use, binding to ephemeral port")
-                    self.sock.bind(("", 0))
+                    sock.bind(("", 0))
 
-                local_host, local_port = self.sock.getsockname()
+                local_host, local_port = sock.getsockname()
                 print(f"[EthernetClient] Local socket bound on {local_host}:{local_port}")
 
                 # Determine which local source IP the OS will use for this destination.
@@ -421,17 +458,17 @@ class EthernetClient:
                 sent_ids = set()
                 saw_own_echo = False
 
-                self.sock.settimeout(0.25)
+                sock.settimeout(0.25)
                 while time.monotonic() < handshake_deadline:
                     handshake_attempts += 1
                     start_packet = EGCPPacket(self._get_next_tx_id(), EGCPPacket.PKT_STA)
                     sent_ids.add(start_packet.packet_id)
-                    self._send_packet(start_packet, track_ack=False)
+                    sock.sendto(start_packet.encode(), (ip, port))
                     if handshake_attempts <= 3 or handshake_attempts % 5 == 0:
                         print(f"[EthernetClient] Handshake attempt {handshake_attempts}: sent PKT_STA to {ip}:{port}")
 
                     try:
-                        data = self.sock.recv(1024)
+                        data = sock.recv(1024)
                     except SocketTimeout:
                         continue
                     # Only the hardware's ACK counts. If the IP entered is this computer's
@@ -448,7 +485,6 @@ class EthernetClient:
                         handshake_rx = data
                         break
 
-                self.sock.settimeout(self.timeout)
                 if not handshake_rx and saw_own_echo:
                     raise ConnectionError(
                         f"{ip}:{port} is this computer - the GUI only heard its own packets. "
@@ -463,21 +499,36 @@ class EthernetClient:
 
                 # If we reach past this point in execution, it means that we have NOT timed out or encountered some other issue
 
-                self.connected = True
-                self.connecting = False
-                self.last_connection_error = ""
+                sock.settimeout(LISTEN_POLL_S)
+                with self._lock:
+                    self._session += 1
+                    session = self._session
+                    self.sock = sock
+                    # Fresh link: nothing from an earlier one may carry over - in particular
+                    # an un-ACKed command must never be re-sent on this link.
+                    with self._ack_lock:
+                        self.pending_acks.clear()
+                    self.heartbeat_last_tx = 0
+                    self.heartbeat_miss_abort_active = False
+                    self.heartbeat_miss_recovery_logged = False
+                    self.connected = True
+                    self.connecting = False
+                    self.last_connection_error = ""
+                live_sock, sock = sock, None    # owned by the session now
 
                 # Start NOOP heartbeat (Req 25)
-                self.start_heartbeat()
-                
+                self.start_heartbeat(live_sock, session)
+
                 # Start the listening thread in order to receive telemetry
-                self.start_listening()
+                self.start_listening(live_sock, session)
 
                 if self.connect_callback:
                     self.connect_callback(True)
-            
+
             # Handle errors, notably timeouts which will be common
             except Exception as e:
+                if sock is not None:
+                    sock.close()
                 detailed_error = self._describe_connection_error(e, ip, port)
                 self.last_connection_error = detailed_error
                 if self.log_event_callback:
@@ -487,263 +538,315 @@ class EthernetClient:
                 if isinstance(e, SocketTimeout):
                     print("[EthernetClient] Diagnostic: no UDP response packet received after START handshake")
                 
-                self.connecting = False
-                self.connected = False
+                with self._lock:
+                    self.connecting = False
 
                 if self.connect_callback:
                     self.connect_callback(False)  # Failure
 
                 print("[EthernetClient] Raw exception:", repr(e))
-        
-        # Start connection in the separate thread
-        self.connection_thread = QThread()
-        self.connection_thread.run = connection_worker
-        self.connection_thread.start()
 
-    def start_heartbeat(self):
+        # Start connection in the separate thread
+        self.connection_thread = self._start_thread(connection_worker)
+
+    def _start_thread(self, fn, priority=None) -> QThread:
+        """Run fn on a new QThread. Every QThread stays referenced until it has finished:
+        dropping the last reference to a running QThread makes Qt abort the process
+        (which a quick disconnect -> reconnect could do by replacing self.listen_thread)."""
+        thread = QThread()
+        thread.run = fn
+        with self._lock:
+            self._threads = [t for t in self._threads if not t.isFinished()]
+            self._threads.append(thread)
+        thread.start()
+        if priority is not None:
+            thread.setPriority(priority)
+        return thread
+
+    def _session_alive(self, session: int) -> bool:
+        return self.connected and self._session == session
+
+    def _report_thread_error(self, where: str):
+        """A bug in a comms thread: log it (stderr + gui_errors.log, via sys.excepthook)
+        and keep the thread running - the heartbeat watchdog, ACK retries and telemetry
+        must not silently die, and a code bug is not a lost link. Rate-limited so an error
+        repeating every loop can't flood the log."""
+        now = time.monotonic()
+        if now - self._last_thread_error_log < 1.0:
+            return
+        self._last_thread_error_log = now
+        print(f"[EthernetClient] Error in {where} (thread kept running):")
+        sys.excepthook(*sys.exc_info())
+
+    def start_heartbeat(self, sock: socket = None, session: int = None):
         """Start sending heartbeat NOOP signals (Req 25)"""
         if self.heartbeat_active:
             return
 
+        sock = sock or self.sock
+        session = self._session if session is None else session
         self.heartbeat_active = True
 
         # Configure the last received heartbeat time to be right now to start the process
         self.heartbeat_last_rx = QDateTime.currentMSecsSinceEpoch()
-        
+
         def heartbeat_loop():
-            while self.connected and self.heartbeat_active:
-                # Send the TX heartbeat
-                now = QDateTime.currentMSecsSinceEpoch()
-                if (now - self.heartbeat_last_tx) > self.heartbeat_tx_cadence:
-                    try:
-                        if self.remote_ip and self.remote_port:
-                            hrt_packet = EGCPPacket(self._get_next_tx_id(), EGCPPacket.PKT_HRT)
-                            self._send_packet(hrt_packet)
-                            self.heartbeat_last_tx = now
-                            self.heartbeat_tx_count += 1
-                    except Exception as e:
-                        self.disconnect(str(e))
-                        break
-
-                # Check for pending ACKs and retry if needed
-                now = QDateTime.currentMSecsSinceEpoch()
-                packets_to_retry = []
-                packets_to_fail = []
-                
-                with self._ack_lock:
-                    pending_snapshot = list(self.pending_acks.items())
-                for pkt_id, (sent_time, packet, retry_count) in pending_snapshot:
-                    if (now - sent_time) > self.ack_timeout:
-                        if retry_count < self.max_retries:
-                            packets_to_retry.append((pkt_id, packet, retry_count))
-                        else:
-                            packets_to_fail.append((pkt_id, packet))
-                
-                # Retry packets that timed out
-                for pkt_id, packet, retry_count in packets_to_retry:
-                    with self._ack_lock:
-                        if pkt_id not in self.pending_acks:
-                            continue    # ACK/NCK arrived since the snapshot - don't re-insert it
-                        self.pending_acks[pkt_id] = (now, packet, retry_count + 1)
-                    self.sock.sendto(packet.encode(), (self.remote_ip, self.remote_port))
-                    if self.log_event_callback:
-                        self.log_event_callback(f"RETRY:packet_id={pkt_id} attempt={retry_count + 1}")
-                
-                # Fail packets that exceeded max retries
-                for pkt_id, packet in packets_to_fail:
-                    with self._ack_lock:
-                        still_pending = self.pending_acks.pop(pkt_id, None) is not None
-                    if not still_pending:
-                        continue    # ACK/NCK arrived since the snapshot - not a failure
-                    if self.log_event_callback:
-                        self.log_event_callback(f"TIMEOUT:packet_id={pkt_id} failed_after_{self.max_retries}_retries")
-                    self._handle_command_failure(packet, pkt_id)
-
-                # Check for missed heartbeats (trigger abort)
-                now = QDateTime.currentMSecsSinceEpoch()
-                if not self.heartbeat_miss_abort_active and (now - self.heartbeat_last_rx) > self.heartbeat_rx_miss_interval:
-                    self.heartbeat_miss_abort_active = True
-                    self.heartbeat_miss_last_rx_ms = self.heartbeat_last_rx
-                    self.heartbeat_miss_triggered_ms = now
-                    self.heartbeat_miss_recovery_logged = False
-                    
-                    error_msg = f"No telemetry/heartbeat received for {now - self.heartbeat_last_rx}ms"
-                    print(f"[EthernetClient] HEARTBEAT MISS ABORT: {error_msg}")
-                    if self.receive_callback:
-                        self.receive_callback(f"ABORTED:COMMS:{error_msg}")
-
-                # Update non-fire auto-abort countdown (if active)
-                now = QDateTime.currentMSecsSinceEpoch()
-                self._tick_auto_abort_countdown(now)
+            while self._session_alive(session) and self.heartbeat_active:
+                try:
+                    self._heartbeat_tick(sock)
+                except OSError as e:
+                    # The socket failed (or a disconnect closed it): this link is over
+                    self._end_session(session, str(e))
+                    break
+                except Exception:
+                    # A code bug must not kill the watchdog (missed-heartbeat abort, ACK
+                    # retries, auto-abort countdown) - log it and keep going.
+                    self._report_thread_error("heartbeat loop")
 
                 time.sleep(0.001)    # Control the pace of this thread to 1ms to prevent it from burning too much CPU
-        
+
         # NOTE - Although this is a separate high-priority thread, applying a
         #        stylesheet or other basic GUI work can pause it 40-50 ms, so the
         #        rx-miss window (heartbeat_rx_miss_interval) must stay well above
         #        that to avoid spurious aborts while still catching link loss fast.
-        self.heartbeat_thread = QThread()
-        self.heartbeat_thread.run = heartbeat_loop
-        self.heartbeat_thread.start()
-        self.heartbeat_thread.setPriority(QThread.TimeCriticalPriority)
+        self.heartbeat_thread = self._start_thread(heartbeat_loop, QThread.TimeCriticalPriority)
+
+    def _heartbeat_tick(self, sock: socket):
+        """One pass of the heartbeat thread. OSError means the socket is gone."""
+        # Send the TX heartbeat
+        now = QDateTime.currentMSecsSinceEpoch()
+        if (now - self.heartbeat_last_tx) > self.heartbeat_tx_cadence:
+            if self.remote_ip and self.remote_port:
+                hrt_packet = EGCPPacket(self._get_next_tx_id(), EGCPPacket.PKT_HRT)
+                self._send_packet(hrt_packet, sock=sock)
+                self.heartbeat_last_tx = now
+                self.heartbeat_tx_count += 1
+
+        # Check for pending ACKs and retry if needed
+        now = QDateTime.currentMSecsSinceEpoch()
+        packets_to_retry = []
+        packets_to_fail = []
+
+        with self._ack_lock:
+            pending_snapshot = list(self.pending_acks.items())
+        for pkt_id, (sent_time, packet, retry_count) in pending_snapshot:
+            if (now - sent_time) > self.ack_timeout:
+                if retry_count < self.max_retries:
+                    packets_to_retry.append((pkt_id, packet, retry_count))
+                else:
+                    packets_to_fail.append((pkt_id, packet))
+
+        # Retry packets that timed out
+        for pkt_id, packet, retry_count in packets_to_retry:
+            with self._ack_lock:
+                if pkt_id not in self.pending_acks:
+                    continue    # ACK/NCK arrived since the snapshot - don't re-insert it
+                self.pending_acks[pkt_id] = (now, packet, retry_count + 1)
+            sock.sendto(packet.encode(), (self.remote_ip, self.remote_port))
+            if self.log_event_callback:
+                self.log_event_callback(f"RETRY:packet_id={pkt_id} attempt={retry_count + 1}")
+
+        # Fail packets that exceeded max retries
+        for pkt_id, packet in packets_to_fail:
+            with self._ack_lock:
+                still_pending = self.pending_acks.pop(pkt_id, None) is not None
+            if not still_pending:
+                continue    # ACK/NCK arrived since the snapshot - not a failure
+            if self.log_event_callback:
+                self.log_event_callback(f"TIMEOUT:packet_id={pkt_id} failed_after_{self.max_retries}_retries")
+            self._handle_command_failure(packet, pkt_id)
+
+        # Check for missed heartbeats (trigger abort)
+        now = QDateTime.currentMSecsSinceEpoch()
+        if not self.heartbeat_miss_abort_active and (now - self.heartbeat_last_rx) > self.heartbeat_rx_miss_interval:
+            self.heartbeat_miss_abort_active = True
+            self.heartbeat_miss_last_rx_ms = self.heartbeat_last_rx
+            self.heartbeat_miss_triggered_ms = now
+            self.heartbeat_miss_recovery_logged = False
+
+            error_msg = f"No telemetry/heartbeat received for {now - self.heartbeat_last_rx}ms"
+            print(f"[EthernetClient] HEARTBEAT MISS ABORT: {error_msg}")
+            if self.receive_callback:
+                self.receive_callback(f"ABORTED:COMMS:{error_msg}")
+
+        # Update non-fire auto-abort countdown (if active)
+        now = QDateTime.currentMSecsSinceEpoch()
+        self._tick_auto_abort_countdown(now)
 
     def stop_heartbeat(self):
         self.heartbeat_active = False
 
-    def start_listening(self):
+    def start_listening(self, sock: socket = None, session: int = None):
         if self.listening_active:
             return
 
+        sock = sock or self.sock
+        session = self._session if session is None else session
+
         def listen_loop():
             buffer = b""  # Binary buffer instead of string
-            while self.connected and self.listening_active:
+            while self._session_alive(session) and self.listening_active:
                 try:
-                    data = self.sock.recv(1024)
-                    if not data:
-                        self.disconnect("Data is empty")
+                    data = sock.recv(1024)
+                except SocketTimeout:
+                    # Short poll (LISTEN_POLL_S) so this thread notices a disconnect
+                    # promptly. Total silence for self.timeout is still a dead link.
+                    if QDateTime.currentMSecsSinceEpoch() - self.heartbeat_last_rx > self.timeout * 1000:
+                        self._end_session(session, "timed out")
                         break
-                    
-                    buffer += data
-                    
-                    # Process complete packets (need at least 4 bytes for header)
-                    while len(buffer) >= 4:
-                        try:
-                            # Peek at packet length from header
-                            header = struct.unpack('>I', buffer[:4])[0]
-                            packet_length = header & 0xF
-                            total_packet_size = 4 + packet_length
-                            
-                            # Wait for complete packet
-                            if len(buffer) < total_packet_size:
-                                break
-                            
-                            # Extract and decode packet
-                            packet_data = buffer[:total_packet_size]
-                            buffer = buffer[total_packet_size:]
-                            
-                            packet = EGCPPacket.decode(packet_data)
-                            # Any valid packet proves link liveness.
-                            self.heartbeat_last_rx = QDateTime.currentMSecsSinceEpoch()
-
-                            if self.heartbeat_miss_abort_active and not self.heartbeat_miss_recovery_logged:
-                                now_ms = QDateTime.currentMSecsSinceEpoch()
-                                elapsed_since_abort = now_ms - self.heartbeat_miss_triggered_ms
-                                elapsed_since_last_rx = now_ms - self.heartbeat_miss_last_rx_ms
-                                packet_kind = "heartbeat packet" if packet.packet_type == EGCPPacket.PKT_HRT else f"packet type {packet.packet_type}"
-                                print(
-                                    f"[EthernetClient] Next {packet_kind} after miss: "
-                                    f"elapsed_since_last_rx={elapsed_since_last_rx} ms "
-                                    f"elapsed_since_abort={elapsed_since_abort} ms"
-                                )
-                                self.heartbeat_miss_recovery_logged = True
-                                self.heartbeat_miss_abort_active = False
-                            
-                            # Handle different packet types
-                            if packet.packet_type == EGCPPacket.PKT_STA:
-                                # Connection START received - ACK it
-                                self._send_ack(packet.packet_id)
-                            
-                            elif packet.packet_type == EGCPPacket.PKT_HRT:
-                                # Reset the heartbeat timer when HRT received
-                                # Send ACK for heartbeat
-                                self._send_ack(packet.packet_id)
-                            
-                            elif packet.packet_type == EGCPPacket.PKT_ACK:
-                                # ACK received - remove from pending_acks
-                                if len(packet.body) >= 3:
-                                    acked_id = struct.unpack('>I', b'\x00' + packet.body[:3])[0]
-                                    with self._ack_lock:
-                                        acked_record = self.pending_acks.pop(acked_id, None)
-                                else:
-                                    # Legacy compatibility: some peers send ACK with no body
-                                    # and place the acked packet id in the ACK header packet_id.
-                                    with self._ack_lock:
-                                        acked_record = self.pending_acks.pop(packet.packet_id, None)
-                                    
-                                # If the ACK was for a valve command, notify the GUI controller it succeeded
-                                if acked_record and self.receive_callback:
-                                    _, orig_pkt, _ = acked_record
-                                    if orig_pkt.packet_type in (EGCPPacket.PKT_VSO, EGCPPacket.PKT_VSC) and orig_pkt.body:
-                                        valve_name = self._valve_name_for_id(orig_pkt.body[0])
-                                        state_str = "1" if orig_pkt.packet_type == EGCPPacket.PKT_VSO else "0"
-                                        self.receive_callback(f"0,VALVE_SUCCESS:{valve_name}:{state_str}")
-                                    elif orig_pkt.packet_type == EGCPPacket.PKT_POS and len(orig_pkt.body) >= 3:
-                                        name = self._valve_name_for_id(orig_pkt.body[0])
-                                        pct = struct.unpack('>H', orig_pkt.body[1:3])[0] / 100.0
-                                        self.receive_callback(f"0,ACTUATOR_SUCCESS:{name}:{pct:.2f}")
-                            
-                            elif packet.packet_type == EGCPPacket.PKT_NCK:
-                                # NCK received - log error
-                                nck_record = None
-                                if len(packet.body) >= 3:
-                                    nck_id = struct.unpack('>I', b'\x00' + packet.body[:3])[0]
-                                    if self.log_event_callback:
-                                        self.log_event_callback(f"NCK:packet_id={nck_id}")
-                                    with self._ack_lock:
-                                        nck_record = self.pending_acks.pop(nck_id, None)
-                                else:
-                                    with self._ack_lock:
-                                        nck_record = self.pending_acks.pop(packet.packet_id, None)
-                                    
-                                if nck_record and self.receive_callback:
-                                    _, orig_pkt, _ = nck_record
-                                    if orig_pkt.packet_type in (EGCPPacket.PKT_VSO, EGCPPacket.PKT_VSC) and orig_pkt.body:
-                                        valve_name = self._valve_name_for_id(orig_pkt.body[0])
-                                        self.receive_callback(f"0,VALVE_FAIL:{valve_name}")
-                                    elif orig_pkt.packet_type == EGCPPacket.PKT_POS and orig_pkt.body:
-                                        self.receive_callback(
-                                            f"0,ACTUATOR_FAIL:{self._valve_name_for_id(orig_pkt.body[0])}")
-                            
-                            elif packet.packet_type == EGCPPacket.PKT_ADC:
-                                # ADC reading: 1 byte sensor ID + 4 bytes IEEE 754 float (calibrated value)
-                                if len(packet.body) >= 5:
-                                    sensor_id = packet.body[0]
-                                    # Unpack as big-endian float
-                                    raw_value = struct.unpack('>f', packet.body[1:5])[0]
-                                    
-                                    # No ACK for ADC packets: the firmware never waits for one,
-                                    # and ACKing every sensor sample flooded the Teensy's receive
-                                    # queue (thousands of useless packets per second).
-                                    
-                                    # Convert to string format for backward compatibility
-                                    if self.receive_callback:
-                                        sensor_name = self.SENSOR_MAP.get(sensor_id, f"SENSOR_{sensor_id}")
-                                        data_str = f"0,{sensor_name}:{raw_value:.2f}"
-                                        self.receive_callback(data_str)
-                            
-                            elif packet.packet_type == EGCPPacket.PKT_POS:
-                                # Unsolicited position report from the MCU (e.g. an actuator
-                                # driven to its safe position by the firmware itself).
-                                if len(packet.body) >= 3:
-                                    self._send_ack(packet.packet_id)
-                                    name = self._valve_name_for_id(packet.body[0])
-                                    pct = struct.unpack('>H', packet.body[1:3])[0] / 100.0
-                                    if self.receive_callback:
-                                        self.receive_callback(f"0,ACTUATOR_POS:{name}:{pct:.2f}")
-
-                            elif packet.packet_type == EGCPPacket.PKT_SFE:
-                                # Safe mode entered - ACK and notify
-                                self._send_ack(packet.packet_id)
-                                if self.log_event_callback:
-                                    self.log_event_callback(f"RX_SFE:packet_id={packet.packet_id}")
-                                if self.receive_callback:
-                                    self.receive_callback(f"ABORTED:REMOTE_SFE:packet_id={packet.packet_id}")
-                        
-                        except (ValueError, struct.error) as e:
-                            # Bad packet, skip one byte and try again
-                            print(f"Packet decode error: {e}")
-                            buffer = buffer[1:]
-                            break
-                    
-                except Exception as e:
-                    self.disconnect(str(e))
+                    continue
+                except OSError as e:
+                    self._end_session(session, str(e))
                     break
 
+                if not data:
+                    self._end_session(session, "Data is empty")
+                    break
+
+                buffer += data
+
+                # Process complete packets (need at least 4 bytes for header)
+                while len(buffer) >= 4:
+                    try:
+                        # Peek at packet length from header
+                        header = struct.unpack('>I', buffer[:4])[0]
+                        packet_length = header & 0xF
+                        total_packet_size = 4 + packet_length
+
+                        # Wait for complete packet
+                        if len(buffer) < total_packet_size:
+                            break
+
+                        packet = EGCPPacket.decode(buffer[:total_packet_size])
+                    except (ValueError, struct.error) as e:
+                        # Bad packet, skip one byte and try again
+                        print(f"Packet decode error: {e}")
+                        buffer = buffer[1:]
+                        break
+                    buffer = buffer[total_packet_size:]
+
+                    try:
+                        self._handle_packet(packet, sock)
+                    except OSError as e:
+                        # Sending the ACK failed: the socket is gone
+                        self._end_session(session, str(e))
+                        return
+                    except Exception:
+                        # A bug in packet handling is logged, not treated as a lost link
+                        # (which would abort a live test over a code error).
+                        self._report_thread_error(f"handling {packet!r}")
+
         self.listening_active = True
-        self.listen_thread = QThread()
-        self.listen_thread.run = listen_loop
-        self.listen_thread.start()
-        self.listen_thread.setPriority(QThread.TimeCriticalPriority)
+        self.listen_thread = self._start_thread(listen_loop, QThread.TimeCriticalPriority)
+
+    def _handle_packet(self, packet: EGCPPacket, sock: socket):
+        """Act on one received packet (listen thread)."""
+        # Any valid packet proves link liveness.
+        self.heartbeat_last_rx = QDateTime.currentMSecsSinceEpoch()
+
+        if self.heartbeat_miss_abort_active and not self.heartbeat_miss_recovery_logged:
+            now_ms = QDateTime.currentMSecsSinceEpoch()
+            elapsed_since_abort = now_ms - self.heartbeat_miss_triggered_ms
+            elapsed_since_last_rx = now_ms - self.heartbeat_miss_last_rx_ms
+            packet_kind = "heartbeat packet" if packet.packet_type == EGCPPacket.PKT_HRT else f"packet type {packet.packet_type}"
+            print(
+                f"[EthernetClient] Next {packet_kind} after miss: "
+                f"elapsed_since_last_rx={elapsed_since_last_rx} ms "
+                f"elapsed_since_abort={elapsed_since_abort} ms"
+            )
+            self.heartbeat_miss_recovery_logged = True
+            self.heartbeat_miss_abort_active = False
+
+        # Handle different packet types
+        if packet.packet_type == EGCPPacket.PKT_STA:
+            # Connection START received - ACK it
+            self._send_ack(packet.packet_id, sock)
+
+        elif packet.packet_type == EGCPPacket.PKT_HRT:
+            # Reset the heartbeat timer when HRT received
+            # Send ACK for heartbeat
+            self._send_ack(packet.packet_id, sock)
+
+        elif packet.packet_type == EGCPPacket.PKT_ACK:
+            # ACK received - remove from pending_acks
+            if len(packet.body) >= 3:
+                acked_id = struct.unpack('>I', b'\x00' + packet.body[:3])[0]
+                with self._ack_lock:
+                    acked_record = self.pending_acks.pop(acked_id, None)
+            else:
+                # Legacy compatibility: some peers send ACK with no body
+                # and place the acked packet id in the ACK header packet_id.
+                with self._ack_lock:
+                    acked_record = self.pending_acks.pop(packet.packet_id, None)
+
+            # If the ACK was for a valve command, notify the GUI controller it succeeded
+            if acked_record and self.receive_callback:
+                _, orig_pkt, _ = acked_record
+                if orig_pkt.packet_type in (EGCPPacket.PKT_VSO, EGCPPacket.PKT_VSC) and orig_pkt.body:
+                    valve_name = self._valve_name_for_id(orig_pkt.body[0])
+                    state_str = "1" if orig_pkt.packet_type == EGCPPacket.PKT_VSO else "0"
+                    self.receive_callback(f"0,VALVE_SUCCESS:{valve_name}:{state_str}")
+                elif orig_pkt.packet_type == EGCPPacket.PKT_POS and len(orig_pkt.body) >= 3:
+                    name = self._valve_name_for_id(orig_pkt.body[0])
+                    pct = struct.unpack('>H', orig_pkt.body[1:3])[0] / 100.0
+                    self.receive_callback(f"0,ACTUATOR_SUCCESS:{name}:{pct:.2f}")
+
+        elif packet.packet_type == EGCPPacket.PKT_NCK:
+            # NCK received - log error
+            nck_record = None
+            if len(packet.body) >= 3:
+                nck_id = struct.unpack('>I', b'\x00' + packet.body[:3])[0]
+                if self.log_event_callback:
+                    self.log_event_callback(f"NCK:packet_id={nck_id}")
+                with self._ack_lock:
+                    nck_record = self.pending_acks.pop(nck_id, None)
+            else:
+                with self._ack_lock:
+                    nck_record = self.pending_acks.pop(packet.packet_id, None)
+
+            if nck_record and self.receive_callback:
+                _, orig_pkt, _ = nck_record
+                if orig_pkt.packet_type in (EGCPPacket.PKT_VSO, EGCPPacket.PKT_VSC) and orig_pkt.body:
+                    valve_name = self._valve_name_for_id(orig_pkt.body[0])
+                    self.receive_callback(f"0,VALVE_FAIL:{valve_name}")
+                elif orig_pkt.packet_type == EGCPPacket.PKT_POS and orig_pkt.body:
+                    self.receive_callback(
+                        f"0,ACTUATOR_FAIL:{self._valve_name_for_id(orig_pkt.body[0])}")
+
+        elif packet.packet_type == EGCPPacket.PKT_ADC:
+            # ADC reading: 1 byte sensor ID + 4 bytes IEEE 754 float (calibrated value)
+            if len(packet.body) >= 5:
+                sensor_id = packet.body[0]
+                # Unpack as big-endian float
+                raw_value = struct.unpack('>f', packet.body[1:5])[0]
+
+                # No ACK for ADC packets: the firmware never waits for one,
+                # and ACKing every sensor sample flooded the Teensy's receive
+                # queue (thousands of useless packets per second).
+
+                # Convert to string format for backward compatibility
+                if self.receive_callback:
+                    sensor_name = self.SENSOR_MAP.get(sensor_id, f"SENSOR_{sensor_id}")
+                    data_str = f"0,{sensor_name}:{raw_value:.2f}"
+                    self.receive_callback(data_str)
+
+        elif packet.packet_type == EGCPPacket.PKT_POS:
+            # Unsolicited position report from the MCU (e.g. an actuator
+            # driven to its safe position by the firmware itself).
+            if len(packet.body) >= 3:
+                self._send_ack(packet.packet_id, sock)
+                name = self._valve_name_for_id(packet.body[0])
+                pct = struct.unpack('>H', packet.body[1:3])[0] / 100.0
+                if self.receive_callback:
+                    self.receive_callback(f"0,ACTUATOR_POS:{name}:{pct:.2f}")
+
+        elif packet.packet_type == EGCPPacket.PKT_SFE:
+            # Safe mode entered - ACK and notify
+            self._send_ack(packet.packet_id, sock)
+            if self.log_event_callback:
+                self.log_event_callback(f"RX_SFE:packet_id={packet.packet_id}")
+            if self.receive_callback:
+                self.receive_callback(f"ABORTED:REMOTE_SFE:packet_id={packet.packet_id}")
 
     def stop_listening(self):
         self.listening_active = False
@@ -831,19 +934,42 @@ class EthernetClient:
         self.disconnect("Operator disconnected")
 
     def disconnect(self, reason: str):
-        # Bounce if we are already disconnected
-        if not self.connected:
-            return
+        """Tear down the current link (callable from any thread)."""
+        self._end_session(None, reason)
+
+    def _end_session(self, session, reason: str, notify: bool = True):
+        """End a link. session=None ends the current one; a comms thread passes its own
+        session, so one left over from an earlier link can't tear down a newer link."""
+        with self._lock:
+            # Bounce if we are already disconnected, or this is a stale thread noticing late
+            if not self.connected or (session is not None and session != self._session):
+                return
+            self.connected = False
+            self.heartbeat_active = False
+            self.listening_active = False
+            self._session += 1
+            sock, self.sock = self.sock, None
+
+        # A command the MCU never ACKed must not be retried on a later link.
+        with self._ack_lock:
+            self.pending_acks.clear()
 
         print("EthernetClient disconnected: ", reason)
-        if self.log_event_callback:
+        if notify and self.log_event_callback:
             self.log_event_callback(f"DISCONNECT:{reason}")
-        
-        self.connected = False
-        self.stop_heartbeat()
-        self.stop_listening()
-        if self.sock:
-            self.sock.close()
-            self.sock = None
-        if self.disconnect_callback:
+
+        if sock:
+            sock.close()
+        if notify and self.disconnect_callback:
             self.disconnect_callback(reason)
+
+    def shutdown(self, wait_ms: int = 500):
+        """App exit: stop the comms threads without raising the disconnect / abort path,
+        and give them a moment to finish (a QThread still running when Python tears
+        down its objects can abort the process on the way out)."""
+        self._end_session(None, "GUI closed", notify=False)
+        with self._lock:
+            threads = list(self._threads)
+        deadline = time.monotonic() + wait_ms / 1000.0
+        for t in threads:
+            t.wait(max(0, int((deadline - time.monotonic()) * 1000)))

@@ -1,7 +1,8 @@
+import sys
 import threading
 from pathlib import Path
 
-from PyQt5.QtWidgets import QWidget, QApplication
+from PyQt5.QtWidgets import QWidget, QApplication, QMessageBox
 from PyQt5.QtGui import QPainter, QPixmap, QColor, QFont, QPen
 from PyQt5.QtCore import Qt, QTimer, QRectF, QPointF, pyqtSignal
 
@@ -15,7 +16,7 @@ CREDITS = [
 class SplashScreen(QWidget):
 
     finished_loading = pyqtSignal()
-    _worker_done = pyqtSignal()
+    _worker_done = pyqtSignal()     # a background step finished (emitted from its worker thread)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -30,49 +31,100 @@ class SplashScreen(QWidget):
         self._build = None
         self._total = 1
         self._done = 0
+        self._index = 0
         self._label = "Initializing"
         self._shown = 0.0
         self._emitted = False
-        self._error = None
+        self._failed = False
+        self._worker_exc = None
 
-        self._worker_done.connect(self._run_build)
+        self._worker_done.connect(self._on_worker_done)
         self._timer = QTimer(self)
         self._timer.setInterval(16)
         self._timer.timeout.connect(self._tick)
 
     def start(self, steps, build=None):
+        """steps: (label, fn) or (label, fn, background) tuples, run in order.
+
+        Steps run on the GUI thread one at a time, with the event loop turning between
+        them so the splash keeps painting. Importing PyQt modules (or anything that does)
+        off the GUI thread races the splash's painting inside sip and can segfault, so only
+        a step marked background=True runs on a worker thread - and that step must not
+        import or touch Qt (e.g. the pip dependency check)."""
         self._steps = steps
         self._build = build
         self._total = len(steps) + (1 if build else 0)
         self._label = steps[0][0] if steps else "Initializing"
         self._timer.start()
-        threading.Thread(target=self._work, daemon=True).start()
+        QTimer.singleShot(0, self._next_step)
 
-    def _work(self):
-        for label, fn in self._steps:
-            self._label = label
-            try:
-                fn()
-            except Exception as exc:  # surface the failure instead of hanging on the splash
-                self._error = exc
-                break
-            self._done += 1
+    def _next_step(self):
+        if self._failed:
+            return
+        if self._index >= len(self._steps):
+            self._run_build()
+            return
+        label, fn, *opt = self._steps[self._index]
+        self._label = label
+        if opt and opt[0]:
+            self.update()
+            threading.Thread(target=self._work, args=(fn,), name="splash-step", daemon=True).start()
+            return
+        self.repaint()                  # show the label before the (blocking) step
+        try:
+            fn()
+        except Exception:
+            self._fail(label)
+            return
+        self._step_done()
+
+    def _work(self, fn):
+        try:
+            fn()
+        except Exception as exc:
+            self._worker_exc = exc
         self._worker_done.emit()
 
+    def _on_worker_done(self):
+        exc, self._worker_exc = self._worker_exc, None
+        if exc is not None:
+            self._fail(self._label, exc)
+        else:
+            self._step_done()
+
+    def _step_done(self):
+        self._done += 1
+        self._index += 1
+        QTimer.singleShot(0, self._next_step)   # let the event loop paint before the next step
+
     def _run_build(self):
-        if self._error is None and self._build:
-            self._label = "Building interface"
-            self.update()
-            QApplication.processEvents()   # paint the label before the (blocking) build
-            try:
-                self._build()
-            except Exception as exc:
-                self._error = exc
-            else:
-                self._done += 1
-        if self._error is not None:
-            self._timer.stop()
-            raise self._error
+        if not self._build:
+            return
+        self._label = "Building interface"
+        self.repaint()
+        try:
+            self._build()
+        except Exception:
+            self._fail("Building interface")
+            return
+        self._done += 1
+
+    def _fail(self, label, exc=None):
+        """A load step failed: log it, tell the operator, and quit. Never re-raise here -
+        an exception escaping a slot is logged and swallowed, which would leave the app
+        stuck on the splash forever."""
+        if exc is None:
+            exc_type, exc, tb = sys.exc_info()
+        else:
+            exc_type, tb = type(exc), exc.__traceback__
+        self._failed = True
+        self._timer.stop()
+        sys.excepthook(exc_type, exc, tb)       # stderr + gui_errors.log
+        QMessageBox.critical(
+            self, "RED Control System failed to start",
+            f"Loading failed at \"{label}\":\n\n{exc_type.__name__}: {exc}\n\n"
+            "Details were written to gui_errors.log.")
+        QApplication.instance().exit(1)
 
     def _tick(self):
         real = self._done / self._total
