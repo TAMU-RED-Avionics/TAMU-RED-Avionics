@@ -2045,6 +2045,41 @@
       "fluid": "purge",
       "connects": [],
       "dotted": false
+<<<<<<< Updated upstream
+=======
+    },
+    {
+      "id": "line_45",
+      "points": [
+        {
+          "x": 1260.0,
+          "y": 630.0
+        },
+        {
+          "x": 1260.0,
+          "y": 390.0
+        }
+      ],
+      "fluid": "oxidizer",
+      "connects": [],
+      "dotted": false
+    },
+    {
+      "id": "line_46",
+      "points": [
+        {
+          "x": 480.0,
+          "y": 930.0
+        },
+        {
+          "x": 480.0,
+          "y": 1010.0
+        }
+      ],
+      "fluid": "purge",
+      "connects": [],
+      "dotted": false
+>>>>>>> Stashed changes
     }
   ],
   "parameters": {
@@ -2076,5 +2111,29 @@
     }
   ],
   "active_sequence_id": "seq_default",
+<<<<<<< Updated upstream
   "calc_channels": []
+=======
+  "calc_channels": [
+    {
+      "id": "calc_57e94c77",
+      "label": "Thrust",
+      "role": "thrust",
+      "unit": "lbf",
+      "expression": "abs(LC1) + abs(LC2) + abs(LC3)",
+      "constants": {},
+      "enabled": true
+    },
+    {
+      "id": "calc_1946c30a",
+      "label": "Ox Density (N2O)",
+      "role": "custom",
+      "unit": "kg/m^3",
+      "expression": "PropsSI('D','T',TC1+273.15,'P',P1*6894.76,'N2O')",
+      "constants": {},
+      "enabled": true
+    }
+  ],
+  "actuation_plans": []
+>>>>>>> Stashed changes
 }

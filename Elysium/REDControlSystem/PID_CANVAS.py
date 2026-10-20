@@ -9,7 +9,7 @@
 import math
 from PyQt5.QtWidgets import (
     QWidget, QSizePolicy, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QMessageBox,
-    QApplication, QSlider, QDoubleSpinBox,
+    QApplication, QSlider, QDoubleSpinBox, QToolButton,
 )
 from PyQt5.QtGui import (
     QPainter, QPen, QBrush, QColor, QFont, QFontMetrics,
@@ -90,16 +90,56 @@ OVERPRESSURE_MEOP = QColor("#ff9500")   # orange - at/above MEOP
 OVERPRESSURE_MAWP = QColor("#5c0f0f")   # dark maroon red - at/near MAWP
 
 
+def _popup_header(popup: QWidget, title: QLabel) -> QHBoxLayout:
+    """Title + a small ✕: the live-canvas popups stay open (so a valve can be opened and
+    closed again quickly) until the operator closes them here."""
+    row = QHBoxLayout()
+    row.setContentsMargins(0, 0, 0, 0)
+    row.setSpacing(4)
+    row.addWidget(title, stretch=1)
+    close = QToolButton()
+    close.setText("✕")
+    close.setToolTip("Close")
+    close.setFixedSize(18, 18)
+    close.setCursor(Qt.PointingHandCursor)
+    close.setStyleSheet("QToolButton { color:#999999; background:transparent; border:none; font-size:10pt; }"
+                        "QToolButton:hover { color:#ffffff; }")
+    close.clicked.connect(popup.hide)
+    row.addWidget(close)
+    return row
+
+
+def _popup_btn_qss(bg: str, fg: str, border: str) -> str:
+    """Popup command button; greyed out while disabled (e.g. OPEN while the valve is
+    already open) so it's obvious which button will actually do something."""
+    return (f"QPushButton {{ background:{bg}; color:{fg}; border:1px solid {border};"
+            " border-radius:4px; font-weight:bold; }"
+            "QPushButton:disabled { background:#26262c; color:#5c5c66; border:1px solid #3a3a44; }")
+
+
+def _place_popup(popup: QWidget, width: int, screen_pos: QPointF):
+    """Put a popup beside screen_pos, flipped / clamped to stay inside its parent."""
+    h = popup.sizeHint().height()
+    px = int(screen_pos.x()) + 14
+    py = int(screen_pos.y()) - h // 2
+    if px + width > popup.parent().width():
+        px = int(screen_pos.x()) - width - 14
+    py = max(4, min(py, popup.parent().height() - h - 4))
+    popup.move(px, py)
+
+
 class ValvePopup(QWidget):
     """
     Small floating widget that appears near a valve on the live canvas.
-    Shows the current state and Open / Close buttons.
+    Shows the valve, its current state and Open / Close buttons. It stays open
+    after a command (so a valve can be opened and closed again quickly) until
+    the ✕ is clicked, and follows its valve as the view pans / zooms.
     """
     open_requested  = pyqtSignal(str)   # comp_id
     close_requested = pyqtSignal(str)   # comp_id
 
     _BTN_H = 28
-    _W     = 110
+    _W     = 130
 
     def __init__(self, parent: QWidget):
         super().__init__(parent)
@@ -108,8 +148,12 @@ class ValvePopup(QWidget):
         self._is_igniter: bool = False
 
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(6, 6, 6, 6)
+        layout.setContentsMargins(6, 4, 6, 6)
         layout.setSpacing(4)
+
+        self._title = QLabel("-")
+        self._title.setStyleSheet("font-weight: bold; font-size: 9pt; color: #cccccc;")
+        layout.addLayout(_popup_header(self, self._title))
 
         self._state_lbl = QLabel("-")
         self._state_lbl.setAlignment(Qt.AlignCenter)
@@ -124,9 +168,7 @@ class ValvePopup(QWidget):
 
         self._close_btn = QPushButton("■  CLOSE")
         self._close_btn.setFixedHeight(self._BTN_H)
-        self._close_btn.setStyleSheet(
-            "background:#4a1a1a; color:#ff5544; border:1px solid #aa2222;"
-            "border-radius:4px; font-weight:bold;")
+        self._close_btn.setStyleSheet(_popup_btn_qss("#4a1a1a", "#ff5544", "#aa2222"))
         self._close_btn.clicked.connect(self._on_close)
         layout.addWidget(self._close_btn)
 
@@ -139,38 +181,30 @@ class ValvePopup(QWidget):
             "border-radius:8px; }")
         self.setAttribute(Qt.WA_StyledBackground, True)
 
-    def show_for(self, cid: str, state: str, screen_pos: QPointF, is_igniter: bool = False):
+    def show_for(self, cid: str, state: str, screen_pos: QPointF, is_igniter: bool = False,
+                 title: str = ""):
         """Position and show the popup near screen_pos."""
         self._cid = cid
         self._is_igniter = is_igniter
+        self._title.setText(title or cid)
+        self._title.setToolTip(title or cid)
 
         if is_igniter:
             self._open_btn.setText("FIRE")
-            self._open_btn.setStyleSheet(
-                "background:#4a2a00; color:#ff8800; border:1px solid #cc5500;"
-                "border-radius:4px; font-weight:bold;")
+            self._open_btn.setStyleSheet(_popup_btn_qss("#4a2a00", "#ff8800", "#cc5500"))
             self._close_btn.setText("SAFE")
         else:
             self._open_btn.setText("▶  OPEN")
-            self._open_btn.setStyleSheet(
-                "background:#1a4a1a; color:#00dd55; border:1px solid #00aa44;"
-                "border-radius:4px; font-weight:bold;")
+            self._open_btn.setStyleSheet(_popup_btn_qss("#1a4a1a", "#00dd55", "#00aa44"))
             self._close_btn.setText("■  CLOSE")
 
         self._update_state(state)
-
-        # Keep within parent bounds
-        px = int(screen_pos.x()) + 14
-        py = int(screen_pos.y()) - self.sizeHint().height() // 2
-        pw = self.parent().width()
-        ph = self.parent().height()
-        if px + self._W > pw:
-            px = int(screen_pos.x()) - self._W - 14
-        py = max(4, min(py, ph - self.sizeHint().height() - 4))
-
-        self.move(px, py)
+        self.place(screen_pos)
         self.raise_()
         self.show()
+
+    def place(self, screen_pos: QPointF):
+        _place_popup(self, self._W, screen_pos)
 
     def update_state(self, cid: str, state: str):
         if cid == self._cid and self.isVisible():
@@ -199,13 +233,11 @@ class ValvePopup(QWidget):
                 QMessageBox.Yes | QMessageBox.Cancel, QMessageBox.Cancel)
             if reply != QMessageBox.Yes:
                 return
-        self.open_requested.emit(self._cid)
-        self.hide()
+        self.open_requested.emit(self._cid)     # stays open: closed only by its ✕
 
     def _on_close(self):
         if self._cid:
             self.close_requested.emit(self._cid)
-            self.hide()
 
 
 class ActuatorPopup(QWidget):
@@ -230,9 +262,8 @@ class ActuatorPopup(QWidget):
         layout.setSpacing(5)
 
         self._title = QLabel("-")
-        self._title.setAlignment(Qt.AlignCenter)
         self._title.setStyleSheet("font-weight:bold; font-size:9pt; color:#cccccc;")
-        layout.addWidget(self._title)
+        layout.addLayout(_popup_header(self, self._title))
 
         self._state_lbl = QLabel("-")
         self._state_lbl.setAlignment(Qt.AlignCenter)
@@ -310,15 +341,12 @@ class ActuatorPopup(QWidget):
         self._update_state(state, position)
 
         self.adjustSize()
-        h = self.sizeHint().height()
-        px = int(screen_pos.x()) + 14
-        py = int(screen_pos.y()) - h // 2
-        if px + self._W > self.parent().width():
-            px = int(screen_pos.x()) - self._W - 14
-        py = max(4, min(py, self.parent().height() - h - 4))
-        self.move(px, py)
+        self.place(screen_pos)
         self.raise_()
         self.show()
+
+    def place(self, screen_pos: QPointF):
+        _place_popup(self, self._W, screen_pos)
 
     def update_actuator(self, cid: str, state: str, position: float):
         if cid == self._cid and self.isVisible():
@@ -477,6 +505,18 @@ class PIDCanvas(QWidget):
         if getattr(self, "_needs_fit", False) and self.width() > 400:
             self._needs_fit = False
             self.fit_view()
+
+    def _popup_anchor(self, cid: str) -> QPointF:
+        """Screen position of a component (where its popup is placed beside)."""
+        pos = self.project.layout[cid]
+        return QPointF((pos.x + self._pan.x()) * self._zoom, (pos.y + self._pan.y()) * self._zoom)
+
+    def _follow_popups(self):
+        """Keep open popups beside their component as the view pans / zooms (they stay
+        open until closed, so they'd otherwise drift away from their valve)."""
+        for popup in (self._valve_popup, self._actuator_popup):
+            if popup.isVisible() and popup._cid and self.project and popup._cid in self.project.layout:
+                popup.place(self._popup_anchor(popup._cid))
 
     def _request_repaint(self):
         if self._repaint_pending:
@@ -739,6 +779,7 @@ class PIDCanvas(QWidget):
             self.width()  / 2 / self._zoom - cx,
             self.height() / 2 / self._zoom - cy,
         )
+        self._follow_popups()
         self.update()
 
     def _to_world(self, sx: float, sy: float) -> QPointF:
@@ -1345,14 +1386,8 @@ class PIDCanvas(QWidget):
         world = self._to_world(event.x(), event.y())
         screen = QPointF(event.x(), event.y())
 
-        # Hide popup on any press not inside it
-        if self._valve_popup.isVisible():
-            popup_rect = self._valve_popup.geometry()
-            if not popup_rect.contains(event.pos()):
-                self._valve_popup.hide()
-        if self._actuator_popup.isVisible():
-            if not self._actuator_popup.geometry().contains(event.pos()):
-                self._actuator_popup.hide()
+        # The valve / actuator popups deliberately stay open on clicks elsewhere: they
+        # close only via their ✕ (clicking another valve re-targets them instead).
 
         if (event.button() == Qt.RightButton or
                 (event.button() == Qt.LeftButton and event.modifiers() & Qt.AltModifier)):
@@ -1436,18 +1471,15 @@ class PIDCanvas(QWidget):
                 spec = get_actuator_spec(comp) if comp else None
                 if comp and (spec is not None or comp.type in VALVE_TYPES) and not self.interactive:
                     state = self.live_valve_states.get(cid, "CLOSED")
-                    comp_pos = self.project.layout[cid]
-                    sp = QPointF(
-                        (comp_pos.x + self._pan.x()) * self._zoom,
-                        (comp_pos.y + self._pan.y()) * self._zoom,
-                    )
+                    sp = self._popup_anchor(cid)
                     if spec is not None:
                         self._actuator_popup.show_for(
                             cid, comp.label.strip() or cid, spec, state,
                             self.live_throttle_pcts.get(cid, spec.safe_pct), sp)
                     else:
                         self._valve_popup.show_for(cid, state, sp,
-                                                   is_igniter=(comp.type == COMP_IGNITER))
+                                                   is_igniter=(comp.type == COMP_IGNITER),
+                                                   title=comp.label.strip() or cid)
 
                 if self.interactive:
                     self._dragging_comp    = cid
@@ -1505,6 +1537,7 @@ class PIDCanvas(QWidget):
                 self._pan_origin.x() + delta.x() / self._zoom,
                 self._pan_origin.y() + delta.y() / self._zoom,
             )
+            self._follow_popups()
             self.update()
             return
 
@@ -1636,6 +1669,7 @@ class PIDCanvas(QWidget):
         # keeps zooming like it always has.
         if not pixel.isNull() and not (event.modifiers() & Qt.ControlModifier):
             self._pan += QPointF(pixel.x() / self._zoom, pixel.y() / self._zoom)
+            self._follow_popups()
             event.accept()
             self.update()
             return
@@ -1676,6 +1710,7 @@ class PIDCanvas(QWidget):
             screen_x / self._zoom - world_x,
             screen_y / self._zoom - world_y,
         )
+        self._follow_popups()
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key_Escape:

@@ -13,6 +13,7 @@ from PID_SCHEMA import (
 )
 from PID_CANVAS import PIDCanvas
 from GUI_CONTROLLER import GuiMode
+from GUI_ACTUATION import ActuationPanel
 
 _VALVE_TYPES = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
                 COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER)
@@ -81,6 +82,10 @@ class PIDViewWindow(QWidget):
         self.canvas.valve_close_requested.connect(self._on_valve_close_requested)
         self.canvas.actuator_position_requested.connect(self._on_actuator_position_requested)
         root.addWidget(self.canvas, stretch=1)
+
+        # Automated actuation: a button in the canvas's bottom-right corner that expands
+        # into the plan editor / runner. Follows the controller's project on its own.
+        self.actuation = ActuationPanel(self.controller, self.canvas)
 
         status_row = QWidget()
         status_layout = QHBoxLayout(status_row)

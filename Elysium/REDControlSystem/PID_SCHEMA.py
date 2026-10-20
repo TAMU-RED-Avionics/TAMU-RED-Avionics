@@ -591,6 +591,98 @@ class AbortState:
 DEFAULT_ABORT_ID = "default"
 
 
+# ---------------------------------------------------------------------------
+# Automated actuation - stored in PIDProject.actuation_plans
+# ---------------------------------------------------------------------------
+# An operator-run list of steps for valve actuation too fast or too precise to do by
+# hand (e.g. a controlled vent). Steps run in order; each step waits for its
+# conditions, then sends all of its actions at once. Conditions:
+#   "time"   - `seconds` elapsed since the previous step fired (or since Start)
+#   "sensor" - sensor `sensor` (component id) is `op` (">" | "<") `value`
+# A step with no conditions fires as soon as the previous one has; with several,
+# `match` says whether "any" (whichever happens first) or "all" must be true.
+# Valves and sensors are stored by component id and resolved to hardware ids at run
+# time, the same way abort states store their valves.
+ACT_COND_TIME   = "time"
+ACT_COND_SENSOR = "sensor"
+
+
+@dataclass
+class ActuationCondition:
+    kind:    str   = ACT_COND_TIME
+    seconds: float = 0.5        # time: delay after the previous step
+    sensor:  str   = ""         # sensor: component id
+    op:      str   = ">"        # sensor: ">" | "<"
+    value:   float = 0.0        # sensor: threshold, in the sensor's display units
+
+    def to_dict(self) -> dict:
+        if self.kind == ACT_COND_TIME:
+            return {"kind": self.kind, "seconds": self.seconds}
+        return {"kind": self.kind, "sensor": self.sensor, "op": self.op, "value": self.value}
+
+    @staticmethod
+    def from_dict(d: dict) -> "ActuationCondition":
+        kind = d.get("kind", ACT_COND_TIME)
+        return ActuationCondition(
+            kind    = kind if kind in (ACT_COND_TIME, ACT_COND_SENSOR) else ACT_COND_TIME,
+            seconds = max(0.0, float(d.get("seconds", 0.5))),
+            sensor  = d.get("sensor", ""),
+            op      = d.get("op", ">") if d.get("op") in (">", "<") else ">",
+            value   = float(d.get("value", 0.0)),
+        )
+
+
+@dataclass
+class ActuationAction:
+    valve: str  = ""            # component id
+    open:  bool = True          # True = open, False = close
+
+    def to_dict(self) -> dict:
+        return {"valve": self.valve, "open": self.open}
+
+    @staticmethod
+    def from_dict(d: dict) -> "ActuationAction":
+        return ActuationAction(valve=d.get("valve", ""), open=bool(d.get("open", True)))
+
+
+@dataclass
+class ActuationStep:
+    conditions: list = field(default_factory=list)   # list[ActuationCondition]; empty = immediately
+    actions:    list = field(default_factory=list)   # list[ActuationAction]
+    match:      str  = "any"                          # "any" | "all"
+
+    def to_dict(self) -> dict:
+        return {"match": self.match,
+                "conditions": [c.to_dict() for c in self.conditions],
+                "actions": [a.to_dict() for a in self.actions]}
+
+    @staticmethod
+    def from_dict(d: dict) -> "ActuationStep":
+        return ActuationStep(
+            conditions = [ActuationCondition.from_dict(c) for c in d.get("conditions", [])],
+            actions    = [ActuationAction.from_dict(a) for a in d.get("actions", [])],
+            match      = "all" if d.get("match") == "all" else "any",
+        )
+
+
+@dataclass
+class ActuationPlan:
+    id:    str
+    name:  str  = "Automated Actuation"
+    steps: list = field(default_factory=list)        # list[ActuationStep]
+
+    def to_dict(self) -> dict:
+        return {"id": self.id, "name": self.name, "steps": [s.to_dict() for s in self.steps]}
+
+    @staticmethod
+    def from_dict(d: dict) -> "ActuationPlan":
+        return ActuationPlan(
+            id    = d["id"],
+            name  = d.get("name", "Automated Actuation"),
+            steps = [ActuationStep.from_dict(s) for s in d.get("steps", [])],
+        )
+
+
 class PIDProject:
 
     VERSION = "1.0"
@@ -620,6 +712,9 @@ class PIDProject:
 
         # --- Calculated performance channels ----------------------------------
         self.calc_channels:      list             = []    # list[CalcChannel]
+
+        # --- Automated actuation plans (Home page P&ID panel) -------------------
+        self.actuation_plans:    list             = []    # list[ActuationPlan]
 
     def add_component(self, comp: Component, x: float = 0, y: float = 0):
         self.components[comp.id] = comp
@@ -724,6 +819,8 @@ class PIDProject:
             "active_sequence_id": self.active_sequence_id,
             # Calculated performance channels
             "calc_channels":      [c.to_dict() for c in self.calc_channels],
+            # Automated actuation plans
+            "actuation_plans":    [p.to_dict() for p in self.actuation_plans],
         }
 
     def save(self, path: str):
@@ -767,6 +864,9 @@ class PIDProject:
 
         for cd in d.get("calc_channels", []):
             proj.calc_channels.append(CalcChannel.from_dict(cd))
+
+        for pd in d.get("actuation_plans", []):
+            proj.actuation_plans.append(ActuationPlan.from_dict(pd))
 
         # Legacy flat sequence list (kept for backward-compat readers)
         for sd in d.get("sequence", []):

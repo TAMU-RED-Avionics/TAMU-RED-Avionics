@@ -71,11 +71,63 @@ const float PT_INTERCEPT[12] = { -171.9f, -171.9f, -171.9f, -171.9f,
                                    -171.9f, -171.9f,
                                    -171.9f, -171.9f, -171.9f, -171.9f };  // <-- USER INPUT, verify across more points
 
+<<<<<<< Updated upstream
 // ADS7953 channel i is NOT physical PTi - board routing is rotated
+=======
+const bool     ADS_RANGE2     = true;      // true: 0..2xVREF (0-5 V), false: 0..VREF (0-2.5 V)
+const float    ADS_VREF       = 2.5f;      // REF5025
+// Sweep showed MODE0 is clean from 250 kHz to 4 MHz. Run at the top of that range: the PTs
+// are oversampled (~20 scans per report, see pt_sample), and at 1 MHz a 14-frame scan took
+// ~250 us - about half the loop. Every frame's echoed channel address is still checked, so
+// a bad frame is dropped (and counted in PT_addr_bad), never averaged in.
+const uint32_t ADS_SPI_HZ     = 4000000;
+
+// Same math as the pt_read bring-up sketch: 160 ohm shunt, 4-20 mA -> 0-full-scale psig (per PT, below),
+// no per-channel calibration. PT_ATM_PSI is added so the GUI shows absolute pressure.
+const float    PT_SHUNT_OHMS   = 160.0f;
+const float    PT_PSI_AT_4MA   = 0.0f;
+// Full-scale (20 mA) pressure per PT, indexed by PT number (0 = P1). P7 = OMI_P and
+// P8 = MCC_P are 0-1000 psi transducers; every other PT is 0-1500 psi.
+const float    PT_PSI_AT_20MA[12] = { 1500, 1500, 1500, 1500, 1500, 1500,
+                                      1000, 1000,
+                                      1500, 1500, 1500, 1500 };
+const float    PT_ATM_PSI      = 14.7f;
+// A healthy 4-20 mA PT never reads below ~3.92 mA, while a floating / unplugged input
+// wanders around ~3.7 mA (it showed up as a phantom -2 psi). Below this threshold the
+// channel is sent as NaN, which the GUI shows as no signal.
+const float    PT_NO_SIGNAL_MA = 3.85f;
+
+// ADS channel -> PT index (0-based; 0 = P1), traced from the PCB netlist:
+//   J10 pins 1-4 = ch0-3  = PT6, PT0, PT7, PT1
+//   J15 pins 1-4 = ch4-7  = PT8, PT2, PT9, PT3
+//   J19 pins 1-4 = ch8-11 = PT10, PT4, PT11, PT5
+// Confirmed on the bench: P2 = ch3, P6 = ch11, P8 = ch2.
+>>>>>>> Stashed changes
 const uint8_t PT_NUM_FOR_CH[12] = { 6, 0, 7, 1, 8, 2, 9, 3, 10, 4, 11, 5 };
 
-const float PT_EMA_ALPHA = 0.2f;   // 0=infinitely smooth/slow, 1=no smoothing
+// PT oversampling: instead of one ADC reading per channel per report, the ADS7953 is
+// scanned every PT_SCAN_INTERVAL_US through the whole SENSOR_UPDATE_INTERVAL (pt_sample()
+// is called from the top of loop() and between the slow TC / LC reads), and each report
+// sends the average of that window. Averaging N scans cuts random noise by ~sqrt(N) while
+// adding only ~half a window (~5 ms) of delay - unlike a heavier EMA / moving average,
+// it doesn't smear real pressure changes.
+const uint32_t PT_SCAN_INTERVAL_US = 500;    // at most one scan per 0.5 ms -> up to ~20 per 10 ms report
+uint32_t pt_sum[12]      = { 0 };            // raw 12-bit counts summed over the current window
+uint32_t pt_n[12]        = { 0 };            // valid scans in the current window, per channel
+uint32_t pt_last_scan_us = 0;
+uint32_t pt_scans        = 0;                // scans in the last 1 s (debug log)
+
+// Optional EMA on top of the window average. 1.0 = off. The old single-sample EMA (0.2)
+// took ~100 ms to settle to a step; oversampling replaces it. Only lower this if the
+// averaged signal is still noisy at low frequency (e.g. 60 Hz pickup, which a 10 ms
+// window doesn't fully cancel) - it trades lag for smoothness.
+const float PT_EMA_ALPHA = 1.0f;   // 0=infinitely smooth/slow, 1=no smoothing
 float pt_filtered[12] = { NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN };
+<<<<<<< Updated upstream
+=======
+float pt_mA[12]       = { 0 };     // last reported (window-average) current per ADS channel (for diagnostics)
+uint32_t pt_addr_mismatch = 0;     // channel readings whose echoed address didn't match (reset every 1 s log)
+>>>>>>> Stashed changes
 
 const int ADS_PAD_PINS[4] = { ADS_CS_PIN, ADS_MOSI, ADS_MISO, ADS_SCK };
 uint32_t ads_pad_saved[4];
@@ -149,9 +201,36 @@ void ads7953_diagnostic() {
                          : "  -> NO channel echo: ADC not answering. Check MISO/CS/SCK/MOSI wiring and ADC power.");
 }
 
+<<<<<<< Updated upstream
 inline float pt_psi(uint8_t channel) {
     uint16_t raw = ads7953_read(channel);
     return PT_SLOPE[channel] * raw + PT_INTERCEPT[channel];
+=======
+static void ads_flush() { for (int i = 0; i < 4; i++) ads_frame(ads_cmd(0)); }
+
+// raw 12-bit count (or an average of them) -> loop current (mA) -> psi, for ADS channel ch.
+static float ads_counts_to_mA(float raw12) {
+    float lsb = (ADS_RANGE2 ? 2.0f : 1.0f) * ADS_VREF / 4096.0f;
+    return raw12 * lsb / PT_SHUNT_OHMS * 1000.0f;
+}
+static float ads_mA_to_psi(float mA, uint8_t pt_num) {
+    return PT_PSI_AT_4MA + (mA - 4.0f) / 16.0f * (PT_PSI_AT_20MA[pt_num] - PT_PSI_AT_4MA) + PT_ATM_PSI;
+}
+
+// Boot-time report: proves SPI is talking to the ADC and shows each loop's current.
+static void ads_boot_report() {
+    uint16_t word[12]; bool ok[12];
+    bool all_ok = ads_scan(word, ok);
+    DBG_PRINTLN(all_ok ? "ADS7953 link OK: SPI_MODE0 @ 1 MHz, all channel addresses echoed correctly"
+                       : "ADS7953 link BAD: channel address mismatch (check MISO/CS/SCK/MOSI, GND, VA+ at TP6)");
+    for (int k = 0; k < 12; k++) {
+        float mA = ads_counts_to_mA(word[k] & 0x0FFF);
+        DBG_PRINT("  breakout "); DBG_PRINT(k + 1); DBG_PRINT(" (ADS ch"); DBG_PRINT(k); DBG_PRINT(" -> P"); DBG_PRINT(PT_NUM_FOR_CH[k] + 1);
+        DBG_PRINT("): raw="); DBG_PRINT(word[k] & 0x0FFF);
+        DBG_PRINT(" "); DBG_PRINT(mA); DBG_PRINT("mA ");
+        DBG_PRINTLN(mA < PT_NO_SIGNAL_MA ? "(no signal)" : "");
+    }
+>>>>>>> Stashed changes
 }
 
 #define NAU7802_ADDR     0x2A
@@ -786,8 +865,26 @@ void setup() {
 uint32_t loop_iter_count = 0;
 uint32_t pt_us_accum = 0, tc_us_accum = 0, lc_us_accum = 0;
 
+// One ADS7953 scan of all 12 PT channels into the current averaging window, at most every
+// PT_SCAN_INTERVAL_US. Cheap to call often: it returns immediately until the next scan is due.
+static void pt_sample() {
+    uint32_t t0 = micros();
+    if (t0 - pt_last_scan_us < PT_SCAN_INTERVAL_US) return;
+    pt_last_scan_us = t0;
+    uint16_t word[12]; bool ok[12];
+    ads_scan(word, ok);
+    for (int i = 0; i < 12; i++) {
+        if (!ok[i]) { pt_addr_mismatch++; continue; }   // bad echo: leave this reading out of the average
+        pt_sum[i] += word[i] & 0x0FFF;
+        pt_n[i]++;
+    }
+    pt_scans++;
+    pt_us_accum += micros() - t0;
+}
+
 void loop() {
     loop_iter_count++;
+    pt_sample();
 
     unsigned long now_ms = millis();
     if (now_ms - last_loop_log_ms >= 1000) {
@@ -795,6 +892,17 @@ void loop() {
         DBG_PRINT("Loop alive; iters/sec="); DBG_PRINT(loop_iter_count);
         loop_iter_count = 0;
         DBG_PRINT("; PT_us="); DBG_PRINT(pt_us_accum);
+<<<<<<< Updated upstream
+=======
+        DBG_PRINT(" PT_scans="); DBG_PRINT(pt_scans);
+        pt_scans = 0;
+        DBG_PRINT(" PT_addr_bad="); DBG_PRINT(pt_addr_mismatch);
+        pt_addr_mismatch = 0;
+        { int nosig = 0; for (int i = 0; i < 12; i++) if (pt_mA[i] < PT_NO_SIGNAL_MA) nosig++;
+          DBG_PRINT(" PT_nosignal="); DBG_PRINT(nosig); }
+        DBG_PRINT(" mA[ch0-11]=");
+        for (int i = 0; i < 12; i++) { DBG_PRINT(pt_mA[i], 2); DBG_PRINT(i < 11 ? "," : ""); }
+>>>>>>> Stashed changes
         DBG_PRINT(" TC_us="); DBG_PRINT(tc_us_accum);
         DBG_PRINT(" LC_us="); DBG_PRINT(lc_us_accum);
         pt_us_accum = 0; tc_us_accum = 0; lc_us_accum = 0;
@@ -947,7 +1055,9 @@ void loop() {
     if ((micros() - LAST_SENSOR_UPDATE) > SENSOR_UPDATE_INTERVAL) {
         LAST_SENSOR_UPDATE = micros();
 
+        pt_sample();                    // (no-op unless a scan is due)
         uint32_t t0 = micros();
+<<<<<<< Updated upstream
         for (int i = 0; i < 12; i++) {
             uint16_t raw = ads7953_read(i);
             float psi = PT_SLOPE[i] * raw + PT_INTERCEPT[i];
@@ -956,20 +1066,49 @@ void loop() {
             // the 10ms sensor rate.
             pt_filtered[i] = isnan(pt_filtered[i]) ? psi : (PT_EMA_ALPHA * psi + (1.0f - PT_EMA_ALPHA) * pt_filtered[i]);
             send_adc_packet(0x01 + PT_NUM_FOR_CH[i], pt_filtered[i]);
+=======
+        {
+            // Report the average of every scan since the last report, then start a new window.
+            for (int i = 0; i < 12; i++) {
+                uint32_t n = pt_n[i];
+                float avg  = n ? (float)pt_sum[i] / n : 0.0f;
+                pt_sum[i] = 0;
+                pt_n[i]   = 0;
+                if (n == 0) continue;   // every reading this window had a bad echo: GUI keeps the last value
+                float mA  = ads_counts_to_mA(avg);
+                float psi = ads_mA_to_psi(mA, PT_NUM_FOR_CH[i]);
+                pt_mA[i]  = mA;
+                // An unplugged / broken loop (< PT_NO_SIGNAL_MA) is sent as NaN, which the
+                // GUI shows as "NO SIGNAL" instead of a bogus negative psi.
+                if (mA < PT_NO_SIGNAL_MA) {
+                    pt_filtered[i] = NAN;
+                    send_adc_packet(0x01 + PT_NUM_FOR_CH[i], NAN);
+                    continue;
+                }
+                // Optional extra EMA on the window average (off at PT_EMA_ALPHA = 1).
+                pt_filtered[i] = isnan(pt_filtered[i]) ? psi : (PT_EMA_ALPHA * psi + (1.0f - PT_EMA_ALPHA) * pt_filtered[i]);
+                send_adc_packet(0x01 + PT_NUM_FOR_CH[i], pt_filtered[i]);
+            }
+>>>>>>> Stashed changes
         }
         pt_us_accum += micros() - t0;
 
+        // The TC / LC reads are slow (I2C) and take up most of this branch, so PT scans are
+        // interleaved between them - otherwise the oversampling window would have a hole
+        // most of each report long. (TC_us / LC_us therefore include those scans.)
         t0 = micros();
         for (uint8_t ch = 0; ch < 8; ch++) {
             if (!TC_INSTALLED[ch] || !tc_ok[ch]) continue;
             tca_tc_select(ch);
             tc_temps[ch] = tc_sensor[ch].readThermocouple();
+            pt_sample();
         }
 
         for (uint8_t i = 0; i < 4; i++) {
             uint8_t idx = 8 + i;
             if (!TC_INSTALLED[idx] || !tc_ok[idx]) continue;
             tc_temps[idx] = tc_sensor[idx].readThermocouple();
+            pt_sample();
         }
 
         for (uint8_t i = 0; i < 12; i++) {
@@ -988,6 +1127,7 @@ void loop() {
                     int32_t raw = nau7802_read_adc();
                     lc_weights[ch] = LC_SLOPE[ch] * raw + LC_INTERCEPT[ch];
                 }
+                pt_sample();
             }
             lc_us_accum += micros() - t0;
         }
@@ -998,6 +1138,7 @@ void loop() {
         }
 
         delay(1);
+        pt_sample();
     }
 
     // Lost comms shutdown
