@@ -1,5 +1,6 @@
 import sys
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSlider, QDoubleSpinBox, QTextEdit, QCheckBox, QProgressBar
+import time
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSlider, QDoubleSpinBox, QTextEdit, QCheckBox, QProgressBar, QGroupBox, QGridLayout
 from PyQt5.QtCore import Qt, QTimer
 try:
     from vt_comms import VTComms
@@ -167,10 +168,135 @@ class VirtualTeensy(QMainWindow):
             self.actuator_sliders[name] = slider
             self.actuator_targets[name] = target
 
+        # Noise: layered on the slider values as each reading is sent
+        noise_box = QGroupBox("Noise Simulation (adds to the slider values)")
+        ng = QGridLayout(noise_box)
+        self.noise_check = QCheckBox("Enable noise")
+        self.noise_check.stateChanged.connect(lambda st: self.comms.set_noise(enabled=st == Qt.Checked))
+        ng.addWidget(self.noise_check, 0, 0, 1, 2)
+
+        def noise_spin(row, col, text, key, lo, hi, step, suffix):
+            ng.addWidget(QLabel(text), row, col * 2)
+            sp = QDoubleSpinBox()
+            sp.setRange(lo, hi)
+            sp.setSingleStep(step)
+            sp.setDecimals(2)
+            sp.setSuffix(suffix)
+            sp.setValue(self.comms.noise[key])
+            sp.valueChanged.connect(lambda v, k=key: self.comms.set_noise(**{k: v}))
+            ng.addWidget(sp, row, col * 2 + 1)
+
+        noise_spin(1, 0, "PT noise (σ)", "pt_sigma", 0, 50, 0.1, " psi")
+        noise_spin(1, 1, "PT slow drift", "drift_amp", 0, 20, 0.1, " psi")
+        noise_spin(2, 0, "TC noise (σ)", "tc_sigma", 0, 20, 0.1, " °C")
+        noise_spin(2, 1, "Drift period", "drift_period", 1, 600, 5, " s")
+        noise_spin(3, 0, "LC noise (σ)", "lc_sigma", 0, 50, 0.1, " lbf")
+        noise_spin(3, 1, "Spike rate", "spike_pct", 0, 20, 0.1, " %")
+        noise_spin(4, 1, "Spike size", "spike_sigmas", 1, 200, 1, " σ")
+        right_layout.addWidget(noise_box)
+
+        # Leak check scenario
+        leak_box = QGroupBox("Leak Check Simulation")
+        lg = QGridLayout(leak_box)
+        lg.addWidget(QLabel("Start pressure"), 0, 0)
+        self.leak_p0 = QDoubleSpinBox()
+        self.leak_p0.setRange(0, 2000)
+        self.leak_p0.setValue(500)
+        self.leak_p0.setSuffix(" psi")
+        lg.addWidget(self.leak_p0, 0, 1)
+        lg.addWidget(QLabel("Settling drop"), 0, 2)
+        self.leak_settle = QDoubleSpinBox()
+        self.leak_settle.setRange(0, 200)
+        self.leak_settle.setValue(0)
+        self.leak_settle.setSuffix(" psi")
+        self.leak_settle.setToolTip("Gas cooling after pressurizing: an exponential drop that is not a leak. "
+                                    "Use it to try the Tests tab's settle time.")
+        lg.addWidget(self.leak_settle, 0, 3)
+        lg.addWidget(QLabel("Settling τ"), 0, 4)
+        self.leak_tau = QDoubleSpinBox()
+        self.leak_tau.setRange(1, 600)
+        self.leak_tau.setValue(15)
+        self.leak_tau.setSuffix(" s")
+        lg.addWidget(self.leak_tau, 0, 5)
+
+        self.leak_checks, self.leak_rates = {}, {}
+        for i in range(12):
+            name = f"P{i + 1}"
+            chk = QCheckBox(name)
+            chk.setChecked(i < 2)
+            rate = QDoubleSpinBox()
+            rate.setRange(0, 500)
+            rate.setDecimals(2)
+            rate.setSingleStep(0.1)
+            rate.setValue(1.0 if i == 0 else 0.0)
+            rate.setSuffix(" psi/min")
+            r, c = 1 + i // 3, (i % 3) * 2
+            lg.addWidget(chk, r, c)
+            lg.addWidget(rate, r, c + 1)
+            self.leak_checks[name], self.leak_rates[name] = chk, rate
+
+        btn_row = QHBoxLayout()
+        self.leak_start_btn = QPushButton("Pressurize && start leak")
+        self.leak_start_btn.clicked.connect(self.start_leak)
+        self.leak_stop_btn = QPushButton("Stop (hold)")
+        self.leak_stop_btn.setEnabled(False)
+        self.leak_stop_btn.clicked.connect(self.stop_leak)
+        self.leak_status = QLabel("Idle. Checked PTs jump to the start pressure, then fall at their rate "
+                                  "(0 = a perfect seal).")
+        self.leak_status.setWordWrap(True)
+        btn_row.addWidget(self.leak_start_btn)
+        btn_row.addWidget(self.leak_stop_btn)
+        lg.addLayout(btn_row, 5, 0, 1, 6)
+        lg.addWidget(self.leak_status, 6, 0, 1, 6)
+        right_layout.addWidget(leak_box)
+
+        self.leak_timer = QTimer(self)
+        self.leak_timer.timeout.connect(self.refresh_leak_display)
+
         # Log
         self.log_area = QTextEdit()
         self.log_area.setReadOnly(True)
         right_layout.addWidget(self.log_area)
+
+    def start_leak(self):
+        rates = {n: self.leak_rates[n].value() for n, c in self.leak_checks.items() if c.isChecked()}
+        if not rates:
+            self.leak_status.setText("Check at least one PT.")
+            return
+        self.comms.start_leak_sim(rates, self.leak_p0.value(), self.leak_settle.value(), self.leak_tau.value())
+        self.leak_t0 = time.time()
+        for n in rates:      # the slider/spinbox is the "true" value; the scenario drives it now
+            _, spin, _ = self.sensor_inputs[n]
+            self.sensor_inputs[n][0].setEnabled(False)
+            spin.setEnabled(False)
+        self.leak_start_btn.setEnabled(False)
+        self.leak_stop_btn.setEnabled(True)
+        self.leak_timer.start(250)
+        self.refresh_leak_display()
+
+    def refresh_leak_display(self):
+        if self.comms.leak_sim is None:
+            return
+        for n in self.comms.leak_sim["rates"]:
+            v = self.comms.leak_value(n)
+            slider, spin, _ = self.sensor_inputs[n]
+            for w, val in ((slider, max(0, int(v))), (spin, v)):
+                w.blockSignals(True)
+                w.setValue(val)
+                w.blockSignals(False)
+        self.leak_status.setText(f"Running: {time.time() - self.leak_t0:.0f} s since pressurized.")
+
+    def stop_leak(self):
+        self.leak_timer.stop()
+        finals = self.comms.stop_leak_sim()
+        for n, v in finals.items():
+            slider, spin, null_check = self.sensor_inputs[n]
+            slider.setEnabled(not null_check.isChecked())
+            spin.setEnabled(not null_check.isChecked())
+            spin.setValue(v)            # normal path: the sensor now holds this value
+        self.leak_start_btn.setEnabled(True)
+        self.leak_stop_btn.setEnabled(False)
+        self.leak_status.setText("Stopped. PTs hold their last value.")
 
     def toggle_heartbeat(self, state):
         self.comms.set_heartbeat_enabled(state == Qt.Checked)

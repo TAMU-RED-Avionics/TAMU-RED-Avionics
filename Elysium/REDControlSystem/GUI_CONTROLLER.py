@@ -58,6 +58,8 @@ class Signals(QObject):
     project_received = pyqtSignal(dict)
     recording_stopped = pyqtSignal()        # DAQ file saved; Telemetry refreshes its file list
     view_only_changed = pyqtSignal(bool)
+    # A hold-test event relayed from the controller GUI to a viewer GUI (see Tests tab).
+    test_event = pyqtSignal(dict)
     connected = pyqtSignal()
     disconnected = pyqtSignal(str)
     warnings_changed = pyqtSignal(list)
@@ -163,6 +165,7 @@ class GUIController:
         self.safe_applied = False
         # View-only (viewer) GUIs mirror a controller GUI's stream and can command nothing
         self.view_only = False
+        self.active_test: dict = None   # start message of the hold test now running (for late viewers)
         # Abort states already driven to during the current ABORT episode
         self._applied_abort_states: set = set()
         # System-MAWP pre-warning dialog state (see _check_system_pressure_limits)
@@ -357,6 +360,7 @@ class GUIController:
             "actuators": dict(self.actuator_positions),
             "sensors": dict(self.current_sensor_values),
             "warnings": sorted(self._active_warnings.values()),
+            "test": self.active_test,
         }
 
     def _share_sensor(self, name, value, _ts):
@@ -390,6 +394,14 @@ class GUIController:
         if self.project is not None:
             self.share_server.broadcast({"t": "project", "project": self.project.to_dict()})
 
+    def publish_test_event(self, msg: dict):
+        """Tests tab (controller GUI): tell viewers a hold test started / stopped / was reset.
+        Viewers run the same analysis on the sensor stream they already receive."""
+        op = msg.get("op")
+        self.active_test = msg if op == "start" else (None if op in ("stop", "cancel", "finish", "reset") else self.active_test)
+        if self.share_server.listening:
+            self.share_server.broadcast({"t": "test", **msg})
+
     def _share_link_up(self):
         self.share_server.broadcast({"t": "link", "up": True})
 
@@ -411,9 +423,13 @@ class GUIController:
             for name, value in msg.get("sensors", {}).items():
                 self.apply_remote_sensor(name, value)
             self.signals.warnings_changed.emit(list(msg.get("warnings", [])))
+            if msg.get("test"):
+                self.signals.test_event.emit(msg["test"])
             self.apply_remote_mode(msg.get("mode", GuiMode.SAFE), msg.get("safe_applied", False))
             if not msg.get("link", True):
                 self.signals.system_status.emit("Controller GUI is not connected to the Teensy")
+        elif t == "test":
+            self.signals.test_event.emit(msg)
         elif t == "s":
             for name, value in msg.get("d", []):
                 self.apply_remote_sensor(name, value)

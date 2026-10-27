@@ -12,6 +12,7 @@ from PyQt5.QtGui import QColor, QDrag
 from GUI_LOGO import LogoWindow
 from GUI_WIDGETS import UpwardComboBox
 from GUI_VALVES import ValveControlPanel
+from GUI_TESTS import TestsPage
 from GUI_CONNECT import ConnectionWindow
 from GUI_DAQ import DAQWindow
 from GUI_GRAPHS import SensorGridWindow
@@ -1050,6 +1051,7 @@ class MainWindow(QMainWindow):
         self.controller.signals.recording_stopped.connect(self.telemetry_page.browser.refresh)
         self.live_data_page = LiveDataPage(self.controller)
         self.health_page = HealthPage(self.controller)
+        self.tests_page = TestsPage(self.controller)
 
         pages = [
             ("Home",          self.home_page),
@@ -1057,6 +1059,7 @@ class MainWindow(QMainWindow):
             ("Sequencing",    self.sequencing_page),
             ("New/Edit PID",  self.new_pid_page),
             ("Live Data",     self.live_data_page),
+            ("Tests",         self.tests_page),
             ("Telemetry",     self.telemetry_page),
             ("Health",        self.health_page),
         ]
@@ -1277,6 +1280,7 @@ class MainWindow(QMainWindow):
         self.apply_stylesheet()
         self.home_page.set_dark_mode(self.dark_mode)
         self.live_data_page.set_dark_mode(self.dark_mode)
+        self.tests_page.set_dark_mode(self.dark_mode)
         self.dark_mode_btn.setText("Light Mode" if self.dark_mode else "Dark Mode")
         if self.dark_mode:
             self.logo.set_dark_image()
@@ -1682,3 +1686,4 @@ class MainWindow(QMainWindow):
         """)
 
         self.home_page.sensor_grid.set_dark_mode(self.dark_mode)
+        self.tests_page.set_dark_mode(self.dark_mode)

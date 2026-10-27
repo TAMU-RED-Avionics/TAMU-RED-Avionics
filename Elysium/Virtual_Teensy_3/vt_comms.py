@@ -1,5 +1,7 @@
 import socket
 import threading
+import math
+import random
 import time
 import struct
 from PyQt5.QtCore import QObject, pyqtSignal
@@ -120,6 +122,25 @@ class VTComms(QObject):
             "B1": 0.0, "B2": 0.0,
         }
         self.start_time = time.time()
+
+        # Noise on top of the slider values ("true" readings), applied as each packet is sent.
+        # Off by default so the sliders behave as before. Spikes are in multiples of sigma.
+        self.noise = {
+            "enabled": False,
+            "pt_sigma": 1.0,       # psi, white noise per sample
+            "tc_sigma": 0.3,       # degC
+            "lc_sigma": 0.5,       # lbf
+            "spike_pct": 0.2,      # % of samples that carry a spike
+            "spike_sigmas": 25.0,  # spike size, in sigmas (random sign)
+            "drift_amp": 0.3,      # psi, slow wander on PTs (what averaging can't remove)
+            "drift_period": 40.0,  # s
+        }
+        self._drift_phase = {n: random.uniform(0, 2 * math.pi) for n in self.sensor_data}
+
+        # Leak-check scenario: the listed PTs start at p0 and then fall by rate psi/min
+        # (plus an optional exponential settling drop, like gas cooling after pressurizing).
+        # None while idle. See start_leak_sim().
+        self.leak_sim = None
 
     def start(self):
         if self.running:
@@ -339,8 +360,16 @@ class VTComms(QObject):
         if not self.last_addr or not self.sock:
             return
         
-        # Filter out NULL values and string placeholders
-        active_sensors = [(name, val) for name, val in self.sensor_data.items() if val != "NULL" and name in EGCPPacket.SENSOR_MAP]
+        # Filter out NULL values and string placeholders; apply the leak scenario and noise.
+        now = time.time()
+        active_sensors = []
+        for name, val in list(self.sensor_data.items()):
+            if val == "NULL" or name not in EGCPPacket.SENSOR_MAP:
+                continue
+            try:
+                active_sensors.append((name, self._noisy(name, self._true_value(name, val, now), now)))
+            except (TypeError, ValueError):
+                continue
         
         # Send in groups of 3 (5 bytes per sensor = 15 bytes per packet)
         for i in range(0, len(active_sensors)):
@@ -365,3 +394,55 @@ class VTComms(QObject):
         if name in self.sensor_data:
             self.sensor_data[name] = value
 
+    # -- noise ------------------------------------------------------------------
+    def set_noise(self, **kw):
+        self.noise.update(kw)
+
+    def _noisy(self, name, value, now):
+        n = self.noise
+        if not n["enabled"]:
+            return value
+        if name.startswith("P"):
+            sigma = n["pt_sigma"]
+        elif name.startswith("TC"):
+            sigma = n["tc_sigma"]
+        else:
+            sigma = n["lc_sigma"]
+        out = value + random.gauss(0.0, sigma)
+        if name.startswith("P") and n["drift_amp"] > 0 and n["drift_period"] > 0:
+            out += n["drift_amp"] * math.sin(2 * math.pi * now / n["drift_period"] + self._drift_phase.get(name, 0.0))
+        if n["spike_pct"] > 0 and random.random() < n["spike_pct"] / 100.0:
+            out += random.choice((-1, 1)) * n["spike_sigmas"] * sigma
+        return out
+
+    # -- leak-check scenario -----------------------------------------------------------
+    def start_leak_sim(self, rates, p0, settle_drop=0.0, settle_tau=15.0):
+        """rates: {pt_name: leak rate in psi/min}. Each listed PT jumps to p0 (the line was just
+        pressurized) and then decays: p0 - settle_drop*(1-exp(-t/tau)) - rate*t/60."""
+        self.leak_sim = {"t0": time.time(), "rates": dict(rates), "p0": float(p0),
+                         "settle": float(settle_drop), "tau": max(float(settle_tau), 0.1)}
+        self.log_signal.emit(f"Leak sim started: {len(rates)} PT(s) at {p0:.0f} psi")
+
+    def leak_value(self, name, now=None):
+        """Current simulated pressure of a PT in the leak scenario, or None if it isn't in it."""
+        sim = self.leak_sim
+        if sim is None or name not in sim["rates"]:
+            return None
+        t = max(0.0, (now or time.time()) - sim["t0"])
+        p = sim["p0"] - sim["settle"] * (1.0 - math.exp(-t / sim["tau"])) - sim["rates"][name] * t / 60.0
+        return max(p, 0.0)
+
+    def _true_value(self, name, base, now):
+        v = self.leak_value(name, now)
+        return base if v is None else v
+
+    def stop_leak_sim(self):
+        """End the scenario; each PT holds the pressure it had reached. Returns {name: value}."""
+        sim, now = self.leak_sim, time.time()
+        if sim is None:
+            return {}
+        finals = {n: self.leak_value(n, now) for n in sim["rates"]}
+        self.sensor_data.update(finals)
+        self.leak_sim = None
+        self.log_signal.emit("Leak sim stopped (PTs hold their last value)")
+        return finals
