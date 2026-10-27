@@ -13,6 +13,47 @@ if sys.version_info < (3, 10):
              "Run setup_conda.bat in this folder (double-click it, or ./setup_conda.bat in "
              "Git Bash) to create the red-gui environment and launch the GUI from it.")
 
+
+# PyQt5 aborts the whole process (SIGABRT) when a Python exception escapes a slot and
+# sys.excepthook is still the default one - that is how the GUI used to die at random.
+# Log it (stderr + gui_errors.log) and carry on instead. Installed before anything else
+# so the loading stage is covered too.
+import faulthandler
+import os
+import threading
+import time
+import traceback
+
+_ERROR_LOG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gui_errors.log")
+try:
+    _fault_file = open(_ERROR_LOG, "a")             # kept open: faulthandler writes to it on a native crash
+    faulthandler.enable(_fault_file, all_threads=True)
+except OSError:
+    faulthandler.enable(all_threads=True)
+
+
+def _log_unhandled(exc_type, exc, tb, where="unhandled exception"):
+    text = "".join(traceback.format_exception(exc_type, exc, tb))
+    sys.stderr.write(text)
+    try:
+        with open(_ERROR_LOG, "a") as f:
+            f.write(f"\n--- {time.strftime('%Y-%m-%d %H:%M:%S')} {where} ---\n{text}")
+    except OSError:
+        pass
+
+
+def _log_thread_unhandled(args):
+    if args.exc_type is SystemExit:
+        return
+    name = args.thread.name if args.thread else "?"
+    _log_unhandled(args.exc_type, args.exc_value, args.exc_traceback,
+                   f"unhandled exception in thread '{name}'")
+
+
+sys.excepthook = _log_unhandled
+threading.excepthook = _log_thread_unhandled    # plain Python threads don't go through sys.excepthook
+
+
 # import name -> pip package name
 REQUIRED = {
     "openpyxl": "openpyxl",
@@ -113,5 +154,7 @@ if __name__ == "__main__":
 
     splash.finished_loading.connect(swap)
     shell.show()
-    splash.start([(label, lambda m=mod: load(m)) for label, mod in LOAD_STEPS], build)
+    # Imports run on the GUI thread (importing PyQt modules off it races the splash's painting
+    # and can segfault). Only the dependency check - pip, no Qt - runs in the background.
+    splash.start([(label, lambda m=mod: load(m), mod is None) for label, mod in LOAD_STEPS], build)
     sys.exit(app.exec_())
