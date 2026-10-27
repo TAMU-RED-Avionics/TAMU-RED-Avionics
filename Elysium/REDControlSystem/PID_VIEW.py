@@ -7,7 +7,7 @@ from PyQt5.QtWidgets import (
 from PyQt5.QtCore import Qt
 
 from PID_SCHEMA import (
-    PIDProject, get_actuator_spec,
+    PIDProject, get_actuator_spec, COMMANDABLE_VALVE_TYPES,
     COMP_VALVE, COMP_THROTTLE_VALVE, COMP_PRESSURE, COMP_TEMPERATURE,
     COMP_LOAD_CELL, COMP_BALL_VALVE, COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER,
 )
@@ -15,8 +15,7 @@ from PID_CANVAS import PIDCanvas
 from GUI_CONTROLLER import GuiMode
 from GUI_ACTUATION import ActuationPanel
 
-_VALVE_TYPES = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
-                COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER)
+_VALVE_TYPES = COMMANDABLE_VALVE_TYPES
 
 
 class PIDViewWindow(QWidget):

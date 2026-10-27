@@ -4,9 +4,9 @@ This project simulates the Teensy 4.1 hardware for the Elysium Ground Support Eq
 
 ## Features
 -   **UDP Communication**: Simulates the Ethernet protocol used by the flight hardware.
--   **Sensor Simulation**: Individual sliders for Pressure Transducers (P1-P8), Thermocouples (TC1-TC3), and Load Cells (LC1-LC6). Each sends under the ADC channel that `PIDs/Elysium.red` binds it to, so the GUI shows it under the right name. If you change a sensor's ADC channel in the project, change it in `SENSOR_MAP` in `vt_comms.py` too.
+-   **Sensor Simulation**: Individual sliders for Pressure Transducers (P1-P12), Thermocouples (TC1-TC3), and Load Cells (LC1-LC6). Each sends under the ADC channel that `PIDs/Elysium.red` (and `E2_RED_Spec.red`) binds it to, so the GUI shows it under the right name. If you change a sensor's ADC channel in the project, change it in `SENSOR_MAP` in `vt_comms.py` too.
 -   **Valve Feedback**: Visual indicators for valve states request by the GUI.
--   **Actuators (SV-1, SV-2)**: Position-commanded valves. The GUI's position commands (`PKT_POS`) are ACKed immediately, then the bar travels to the target at the *Travel speed* setting. Drag an actuator's slider to actuate it by hand and the GUI follows. The FAIL box withholds the ACK like it does for on/off valves.
+-   **Actuators (SV-1, SV-2, MFV Bray)**: Position-commanded valves. The GUI's position commands (`PKT_POS`) are ACKed immediately, then the bar travels to the target at the *Travel speed* setting. Drag an actuator's slider to actuate it by hand and the GUI follows. The FAIL box withholds the ACK like it does for on/off valves.
 -   **Localhost Compatible**: Automatically handles port binding to allow running on the same machine as the GUI.
 
 ## Setup

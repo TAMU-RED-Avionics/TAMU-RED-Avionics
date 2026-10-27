@@ -42,38 +42,70 @@ long unsigned ABORT_TIME_TRACKING              = 0;             // timestamp of 
 
 const int BAUD = 115200;
 
-const int NCS1_PIN   = 31;   // relay 1
-const int NCS2_PIN   = 30;   // relay 2
-const int NCS3_PIN   = 29;   // relay 3
-// NCS4 is a manual switch
-const int NCS5_PIN   = 28;
-const int PA_BV3_PIN = 27;
-const int PA_BV1_PIN = 26;
-const int PA_BV2_PIN = 24;
-const int GV1_PIN    = 25;
+// Relay line -> Teensy pin, traced from the daughter card PCB
+// (Teensy_Daughtercard.kicad_pcb, J6 -> U1; all 16 lines are routed on copper):
+//   relay  1 = pin 31 (J6-11)    relay  9 = pin  9 (J6-7)
+//   relay  2 = pin 30 (J6-36)    relay 10 = pin  8 (J6-32)
+//   relay  3 = pin 29 (J6-10)    relay 11 = pin  7 (J6-6)
+//   relay  4 = pin 28 (J6-35)    relay 12 = pin  5 (J6-5)
+//   relay  5 = pin 27 (J6-9)     relay 13 = pin  3 (J6-4)
+//   relay  6 = pin 26 (J6-34)    relay 14 = pin  1 (J6-3)
+//   relay  7 = pin 24 (J6-33)    relay 15 = pin 21 (J6-1)
+//   relay  8 = pin 25 (J6-8)     relay 16 = pin 20 (J6-2)
+const int NCS1_PIN   = 8;    // relay 10
+const int NCS2_PIN   = 7;    // relay 11
+const int NCS3_PIN   = 5;    // relay 12
+// NCS4 is a manual switch (no relay). NCS5 = FV-1201 (ID 0x04) is wired to relay 13.
+const int NCS5_PIN   = 3;    // relay 13 (FV-1201)
+// Pins 26/27 are SPI1 MOSI/SCK, which the AD5420 (Bray valve) needs, so
+// PA-BV1/PA-BV3 are unavailable while the Bray valve is wired.
+const int PA_BV3_PIN = -1;   // was 27 (relay 5)
+const int PA_BV1_PIN = -1;   // was 26 (relay 6)
+const int PA_BV2_PIN = 24;   // relay 7 (NOTE: pins 24/25 are also Wire2 = TC_WIRE)
+const int PNEUMA_PIN = -1;   // was pin 3 (relay 13); relay 13 now drives NCS5 / FV-1201
+const int BRAY_AUX_PIN = -1;  // relay 14 = pin 1, but pin 1 is the AD5420's SPI1 MISO - unassigned until that moves
+const int FP_1201_PIN = -1;   // relay 18 - fuel pump FP-1201, TODO: set to the Teensy pin wired to this relay
+const int AP_1601_PIN = -1;   // relay 19 - air compressor AP-1601, TODO: set to the Teensy pin wired to this relay
+const int GV1_PIN    = 25;   // relay 8
 const int GV2_PIN    = -1;
 const int IGN1_PIN   = -1;
 const int IGN2_PIN   = -1;
 const int GIMBAL_PIN = -1;
 
-const int ADS_CS_PIN  = 10;   // GPIO10 = CS1   <-- UNVERIFIED
-const int ADS_MOSI    = 11;   // GPIO11 = SDI1  <-- UNVERIFIED
-const int ADS_MISO    = 12;   // GPIO12 = SDO1  <-- UNVERIFIED
-const int ADS_SCK     = 13;   // GPIO13 = SCLK1 <-- UNVERIFIED
+// ---- SERVO-1: servo valve on the stepper-1 PUL1 line ----
+// Teensy pin 34 (PUL1) -> J6 pin 38 -> JSM1. The GUI drives it like any valve:
+// PKT_VSO = open (0 deg), PKT_VSC = closed (90 deg). It is driven closed at boot and by
+// safe_all_valves() (abort / comms loss). The servo must be powered from its own supply
+// with its ground tied to the Teensy/board ground - the Teensy only sends the pulse.
+const int   SERVO_VALVE_PIN    = 34;
+const float SERVO_CLOSED_DEG   = 90.0f;
+const float SERVO_OPEN_DEG     = 0.0f;
+// Pulse widths for 0 and 180 deg of a standard 180-degree hobby servo (0 deg = 500 us,
+// 90 deg = 1500 us). If the real travel differs (e.g. a 270-degree servo, or a 1000-2000 us
+// one), change these two numbers so that 0 / 90 deg land where you want.
+const int   SERVO_US_AT_0_DEG   = 500;
+const int   SERVO_US_AT_180_DEG = 2500;
 
-// ADS7953 channel assignments
-const float PT_SLOPE[12]     = { 0.1692f, 0.1692f, 0.1692f, 0.1692f,
-                                  0.1692f, 0.1692f,
-                                  0.1692f, 0.1692f,
-                                  0.1692f, 0.1692f, 0.1692f, 0.1692f };   // 2-point fit: atmospheric + 50psig
-const float PT_INTERCEPT[12] = { -171.9f, -171.9f, -171.9f, -171.9f,
-                                   -171.9f, -171.9f,
-                                   -171.9f, -171.9f,
-                                   -171.9f, -171.9f, -171.9f, -171.9f };  // <-- USER INPUT, verify across more points
+Servo servo_valve;
 
-<<<<<<< Updated upstream
-// ADS7953 channel i is NOT physical PTi - board routing is rotated
-=======
+void servo_valve_set(bool is_open) {
+    if (!servo_valve.attached()) return;
+    float deg = is_open ? SERVO_OPEN_DEG : SERVO_CLOSED_DEG;
+    int us = (int)(SERVO_US_AT_0_DEG + (SERVO_US_AT_180_DEG - SERVO_US_AT_0_DEG) * (deg / 180.0f) + 0.5f);
+    servo_valve.writeMicroseconds(us);
+}
+
+void servo_valve_begin() {
+    servo_valve.attach(SERVO_VALVE_PIN, SERVO_US_AT_0_DEG, SERVO_US_AT_180_DEG);
+    servo_valve_set(false);   // closed at boot
+}
+
+
+const int ADS_CS_PIN  = 10;   // -> J6 pin 49 (CS1)    (verified)
+const int ADS_MOSI    = 11;   // -> J6 pin 25 (SDI1)   (verified)
+const int ADS_MISO    = 12;   // -> J6 pin 24 (SDO1)   (verified)
+const int ADS_SCK     = 13;   // -> J6 pin 50 (SCLK1)  (verified)
+
 const bool     ADS_RANGE2     = true;      // true: 0..2xVREF (0-5 V), false: 0..VREF (0-2.5 V)
 const float    ADS_VREF       = 2.5f;      // REF5025
 // Sweep showed MODE0 is clean from 250 kHz to 4 MHz. Run at the top of that range: the PTs
@@ -102,7 +134,6 @@ const float    PT_NO_SIGNAL_MA = 3.85f;
 //   J15 pins 1-4 = ch4-7  = PT8, PT2, PT9, PT3
 //   J19 pins 1-4 = ch8-11 = PT10, PT4, PT11, PT5
 // Confirmed on the bench: P2 = ch3, P6 = ch11, P8 = ch2.
->>>>>>> Stashed changes
 const uint8_t PT_NUM_FOR_CH[12] = { 6, 0, 7, 1, 8, 2, 9, 3, 10, 4, 11, 5 };
 
 // PT oversampling: instead of one ADC reading per channel per report, the ADS7953 is
@@ -123,89 +154,39 @@ uint32_t pt_scans        = 0;                // scans in the last 1 s (debug log
 // window doesn't fully cancel) - it trades lag for smoothness.
 const float PT_EMA_ALPHA = 1.0f;   // 0=infinitely smooth/slow, 1=no smoothing
 float pt_filtered[12] = { NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN };
-<<<<<<< Updated upstream
-=======
 float pt_mA[12]       = { 0 };     // last reported (window-average) current per ADS channel (for diagnostics)
 uint32_t pt_addr_mismatch = 0;     // channel readings whose echoed address didn't match (reset every 1 s log)
->>>>>>> Stashed changes
 
-const int ADS_PAD_PINS[4] = { ADS_CS_PIN, ADS_MOSI, ADS_MISO, ADS_SCK };
-uint32_t ads_pad_saved[4];
-
-void ads7953_save_pads() {
-    for (int i = 0; i < 4; i++) ads_pad_saved[i] = *portControlRegister(ADS_PAD_PINS[i]);
+// One 16-bit SPI frame. A transaction per frame (the working sketch does the same).
+static uint16_t ads_frame(uint16_t tx) {
+    SPI.beginTransaction(SPISettings(ADS_SPI_HZ, MSBFIRST, SPI_MODE0));
+    digitalWriteFast(ADS_CS_PIN, LOW);
+    uint16_t rx = SPI.transfer16(tx);
+    digitalWriteFast(ADS_CS_PIN, HIGH);
+    SPI.endTransaction();
+    return rx;
 }
 
-void ads7953_set_slow_edges() {
-    for (int i = 0; i < 4; i++) {
-        volatile uint32_t* pad = portControlRegister(ADS_PAD_PINS[i]);
-        if (ADS_PAD_PINS[i] == ADS_MISO) { *pad = ads_pad_saved[i] | IOMUXC_PAD_HYS; continue; }
-        uint32_t v = ads_pad_saved[i] & ~(IOMUXC_PAD_DSE(7) | IOMUXC_PAD_SPEED(3) | IOMUXC_PAD_SRE);
-        *pad = v | IOMUXC_PAD_DSE(1) | IOMUXC_PAD_SPEED(0);
-    }
+// Manual mode: DI15-12 = 0001, DI11 = 1 (program), DI10-07 = channel, DI06 = range,
+// DI05 = 0 (no power-down), DI04 = 0 (SDO returns channel address + 12-bit result).
+static uint16_t ads_cmd(uint8_t ch) {
+    return 0x1800 | ((uint16_t)ch << 7) | (ADS_RANGE2 ? 0x0040 : 0);
 }
 
-uint16_t ads7953_read(uint8_t channel) {
-    uint16_t cmd = 0x1800 | ((uint16_t)(channel & 0x0F) << 7);
-
-    digitalWrite(ADS_CS_PIN, LOW);
-    SPI.transfer16(cmd);
-    digitalWrite(ADS_CS_PIN, HIGH);
-
-    // Result trails the channel select by two frames (verified on this board via
-    // pt_4to20_test.ino's SPI sweep) - must repeat the SAME command, not send a
-    // bogus 0x0000 frame, or the pipeline returns a neighboring channel's stale
-    // conversion. That crosstalk is what was showing up as random spikes/dips.
-    digitalWrite(ADS_CS_PIN, LOW);
-    SPI.transfer16(cmd);
-    digitalWrite(ADS_CS_PIN, HIGH);
-
-    delayMicroseconds(10);   // let the internal sampling cap settle
-
-    digitalWrite(ADS_CS_PIN, LOW);
-    uint16_t val = SPI.transfer16(cmd);
-    digitalWrite(ADS_CS_PIN, HIGH);
-
-    return val & 0x0FFF;   // strip the echoed channel id, keep the 12-bit reading
-}
-
-// ---- ADS7953 bring-up diagnostic (prints once at boot) ----
-// Reads a few channels and prints the FULL 16-bit words. In manual mode the top
-// 4 bits echo the channel address of the conversion, so:
-//   * echo bits match the channel      -> SPI is working. If the 12-bit value is still
-//                                         ~0 the ADC INPUTS are at 0 V (PT loop supply
-//                                         off / sense resistor open or shorted).
-//   * every word is 0x0000 (or 0xFFFF) -> the chip is not answering: check MISO (pin 12),
-//                                         CS (pin 10), SCK (13), MOSI (11), ADC power/ref.
-// A healthy 0 psi PT on a 4-20 mA loop reads raw ~1016 (0.1692*1016 - 171.9 = 0).
-void ads7953_diagnostic() {
-    DBG_PRINTLN("ADS7953 diagnostic (channel: full16 -> echo, 12-bit):");
-    uint8_t chans[3] = { 0, 5, 11 };
-    bool any_echo = false;
-    for (uint8_t i = 0; i < 3; i++) {
-        uint8_t ch = chans[i];
-        uint16_t cmd = 0x1800 | ((uint16_t)(ch & 0x0F) << 7);
-        uint16_t w = 0;
-        for (int k = 0; k < 3; k++) {          // same 3-frame pipeline as ads7953_read()
-            digitalWrite(ADS_CS_PIN, LOW);
-            w = SPI.transfer16(cmd);
-            digitalWrite(ADS_CS_PIN, HIGH);
-            delayMicroseconds(10);
+static bool ads_scan(uint16_t word[12], bool ok[12]) {
+    bool all_ok = true;
+    for (int i = 0; i < 14; i++) {
+        uint16_t rx = ads_frame(ads_cmd(i < 12 ? i : 0));
+        if (i >= 2) {
+            uint8_t k = i - 2;
+            ok[k] = ((rx >> 12) == k);
+            if (!ok[k]) all_ok = false;
+            word[k] = rx;
         }
-        uint8_t echo = (w >> 12) & 0xF;
-        if (echo == ch) any_echo = true;
-        DBG_PRINT("  ch"); DBG_PRINT(ch); DBG_PRINT(": 0x"); DBG_PRINT(w, HEX);
-        DBG_PRINT(" echo="); DBG_PRINT(echo); DBG_PRINT(" raw12="); DBG_PRINTLN(w & 0x0FFF);
     }
-    DBG_PRINTLN(any_echo ? "  -> ADC IS responding over SPI. If raw12 ~0, check PT loop power / sense resistors."
-                         : "  -> NO channel echo: ADC not answering. Check MISO/CS/SCK/MOSI wiring and ADC power.");
+    return all_ok;
 }
 
-<<<<<<< Updated upstream
-inline float pt_psi(uint8_t channel) {
-    uint16_t raw = ads7953_read(channel);
-    return PT_SLOPE[channel] * raw + PT_INTERCEPT[channel];
-=======
 static void ads_flush() { for (int i = 0; i < 4; i++) ads_frame(ads_cmd(0)); }
 
 // raw 12-bit count (or an average of them) -> loop current (mA) -> psi, for ADS channel ch.
@@ -230,7 +211,6 @@ static void ads_boot_report() {
         DBG_PRINT(" "); DBG_PRINT(mA); DBG_PRINT("mA ");
         DBG_PRINTLN(mA < PT_NO_SIGNAL_MA ? "(no signal)" : "");
     }
->>>>>>> Stashed changes
 }
 
 #define NAU7802_ADDR     0x2A
@@ -491,13 +471,17 @@ void send_adc_packet(uint8_t sensor_id, float value) {
 
 int get_pin_from_valve_id(uint8_t id) {
     switch (id) {
-        case 0x01: return NCS1_PIN;
-        case 0x02: return NCS2_PIN;
-        case 0x03: return NCS3_PIN;
-        case 0x05: return NCS5_PIN;
+        case 0x0A: return NCS1_PIN;   // NCS1 = relay 10
+        case 0x0B: return NCS2_PIN;   // NCS2 = relay 11
+        case 0x0C: return NCS3_PIN;   // NCS3 = relay 12
+        case 0x04: return NCS5_PIN;   // NCS5 (FV-1201) is relay 13
         case 0x06: return PA_BV3_PIN;   // was NCS6
+        case 0x0D: return PNEUMA_PIN;   // Pneuma - unassigned (relay 13 went to NCS5)
+        case 0x0E: return BRAY_AUX_PIN;  // relay 14, also follows the Bray valve
         case 0x10: return PA_BV1_PIN;   // was LA-BV1
         case 0x11: return PA_BV2_PIN;   // was LA-BV2
+        case 0x12: return FP_1201_PIN;  // FP-1201 fuel pump = relay 18
+        case 0x13: return AP_1601_PIN;  // AP-1601 air compressor = relay 19
         case 0x20: return GV1_PIN;
         case 0x21: return GV2_PIN;
         case 0x30: return IGN1_PIN;
@@ -509,13 +493,18 @@ int get_pin_from_valve_id(uint8_t id) {
 
 const char* get_valve_name(uint8_t id) {
     switch (id) {
-        case 0x01: return "NCS1";
-        case 0x02: return "NCS2";
-        case 0x03: return "NCS3";
-        case 0x05: return "NCS5";
+        case 0x0A: return "NCS1";
+        case 0x0B: return "NCS2";
+        case 0x0C: return "NCS3";
+        case 0x04: return "NCS5";
         case 0x06: return "PA-BV3";
+        case 0x0D: return "PNEUMA";
+        case 0x0E: return "BRAY-AUX";
         case 0x10: return "PA-BV1";
         case 0x11: return "PA-BV2";
+        case 0x12: return "FP-1201";
+        case 0x13: return "AP-1601";
+        case 0x14: return "SERVO-1";
         case 0x20: return "GV-1";
         case 0x21: return "GV-2";
         case 0x30: return "IGN-1";
@@ -543,7 +532,49 @@ const char* get_valve_name(uint8_t id) {
 // pin = -1 means "not wired yet": commands are still ACK'd (same convention
 // as the valve pins above) so the GUI can be exercised on the bench.
 // ---------------------------------------------------------------------------
-enum ActuatorDriver : uint8_t { ACT_RC_SERVO, ACT_PWM_ANALOG };
+enum ActuatorDriver : uint8_t { ACT_RC_SERVO, ACT_PWM_ANALOG, ACT_AD5420 };
+
+// ---- AD5420 4-20 mA DAC on SPI1 (FMV / Bray valve) ----
+// Ported from the standalone sketch that is KNOWN TO WORK. Position 0..100 %
+// -> 16-bit code -> 4..20 mA. Not wired through ActuatorConfig::pin (the SPI
+// pins are fixed here); the row's pin field is just the LATCH pin.
+const int AD5420_LATCH_PIN = 0;    // CS1
+const int AD5420_MOSI_PIN  = 26;   // MOSI1
+const int AD5420_MISO_PIN  = 1;    // MISO1
+const int AD5420_SCK_PIN   = 27;   // SCK1
+const int AD5420_CLEAR_PIN = 19;   // CLEAR (held low)
+
+const uint8_t  AD5420_ADDR_DATA    = 0x01;
+const uint8_t  AD5420_ADDR_CONTROL = 0x55;
+const uint8_t  AD5420_ADDR_RESET   = 0x56;
+const uint16_t AD5420_CTRL_WORD    = 0x3005;   // REXT | OUTEN | 4-20 mA range
+
+const SPISettings ad5420Settings(1000000, MSBFIRST, SPI_MODE0);
+
+static void ad5420_write(uint8_t address, uint16_t data) {
+    SPI1.beginTransaction(ad5420Settings);
+    digitalWrite(AD5420_LATCH_PIN, LOW);
+    SPI1.transfer(address);
+    SPI1.transfer((data >> 8) & 0xFF);
+    SPI1.transfer(data & 0xFF);
+    digitalWrite(AD5420_LATCH_PIN, HIGH);
+    SPI1.endTransaction();
+}
+
+static void ad5420_begin() {
+    pinMode(AD5420_CLEAR_PIN, OUTPUT);
+    digitalWrite(AD5420_CLEAR_PIN, LOW);
+    pinMode(AD5420_LATCH_PIN, OUTPUT);
+    digitalWrite(AD5420_LATCH_PIN, HIGH);
+    SPI1.setMOSI(AD5420_MOSI_PIN);
+    SPI1.setMISO(AD5420_MISO_PIN);
+    SPI1.setSCK(AD5420_SCK_PIN);
+    SPI1.begin();
+    delay(10);
+    ad5420_write(AD5420_ADDR_RESET, 0x0001);
+    delay(1);
+    ad5420_write(AD5420_ADDR_CONTROL, AD5420_CTRL_WORD);
+}
 
 struct ActuatorConfig {
     uint8_t        id;
@@ -578,9 +609,9 @@ const ActuatorConfig ACTUATORS[] = {
     // boot it is driven to safe_pct, so expect it to snap to its us_min position
     // when the Teensy starts. (After the direction flip that is the 2000 us end, i.e. CLOSED.)
     //
-    // The Bray modulating valve + PWM-to-analog slave card is NOT in use right
-    // now, so there is no ACT_PWM_ANALOG row. The driver code is still above if
-    // we want it back later.
+    // The FMV (Bray) modulating valve is driven by an AD5420 over SPI1
+    // (ACT_AD5420 row below). There is no ACT_PWM_ANALOG row; that driver is
+    // kept in case the PWM-to-analog slave card comes back.
     //
     // DIRECTION FLIP (test setup): us_min/us_max are deliberately "backwards"
     // (2000, 1000) so that 0 % = CLOSED = 2000 us and 100 % = OPEN = 1000 us. With
@@ -603,6 +634,11 @@ const ActuatorConfig ACTUATORS[] = {
     // SV-2: servo #2, same setup but signal on Teensy pin 22
     { EGCPPacket::ACTUATOR_SV2, "SV-2", ACT_RC_SERVO, 22, 0.0f,
       2000, 1000,   0.0f, 0.0f, 0 },
+
+    // FMV (Bray): modulating valve driven 4-20 mA by the AD5420 on SPI1.
+    // 0 % = 4 mA, 100 % = 20 mA. pin = AD5420 LATCH (CS1).
+    { EGCPPacket::ACTUATOR_BRAY, "FMV (Bray)", ACT_AD5420, AD5420_LATCH_PIN, 0.0f,
+      0, 0,   0.0f, 0.0f, 0 },
 };
 const int NUM_ACTUATORS = sizeof(ACTUATORS) / sizeof(ACTUATORS[0]);
 
@@ -620,6 +656,11 @@ void act_apply(int i) {
     float frac = act_pct[i] / 100.0f;
     if (a.driver == ACT_RC_SERVO) {
         act_servo[i].writeMicroseconds((int)(a.us_min + (a.us_max - a.us_min) * frac + 0.5f));
+    } else if (a.driver == ACT_AD5420) {
+        ad5420_write(AD5420_ADDR_DATA, (uint16_t)(frac * 65535.0f + 0.5f));
+        // Relay 14 rides along with the Bray valve: on whenever it is commanded
+        // above 0 %, off at 0 % (which is also the safe position).
+        if (BRAY_AUX_PIN >= 0) digitalWrite(BRAY_AUX_PIN, act_pct[i] > 0.0f ? HIGH : LOW);
     } else {
         float duty = a.duty_min_pct + (a.duty_max_pct - a.duty_min_pct) * frac;   // percent
         analogWrite(a.pin, (int)(duty / 100.0f * 4095.0f + 0.5f));                // 12-bit, see setup()
@@ -639,6 +680,8 @@ void act_init() {
         if (a.pin < 0) continue;
         if (a.driver == ACT_RC_SERVO) {
             act_servo[i].attach(a.pin, a.us_min < 500 ? a.us_min : 500, a.us_max > 2500 ? a.us_max : 2500);
+        } else if (a.driver == ACT_AD5420) {
+            ad5420_begin();
         } else {
             pinMode(a.pin, OUTPUT);
             analogWriteFrequency(a.pin, a.pwm_hz);
@@ -675,12 +718,13 @@ void send_nck(uint32_t nacked_id) {
 }
 
 void safe_all_valves() {
-    const int pins[] = {NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
+    const int pins[] = {NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PNEUMA_PIN, BRAY_AUX_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, FP_1201_PIN, AP_1601_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
     for (int pin : pins) {
         if (pin >= 0) digitalWrite(pin, LOW);
     }
     // E2 abort state (confirmed): every valve closed, including NCS2 - no valve
     // is left open on abort/comms loss.
+    servo_valve_set(false);
     safe_all_actuators();
 }
 
@@ -785,17 +829,12 @@ void setup() {
         DBG_PRINT("UDP listening on port "); DBG_PRINTLN(UDP_PORT);
     }
 
-    // ---- SPI for ADS7953 ----
+    // ---- SPI for ADS7953 (PTs) - same init as the proven standalone sketch ----
     pinMode(ADS_CS_PIN, OUTPUT);
     digitalWrite(ADS_CS_PIN, HIGH);
     SPI.begin();
-    ads7953_save_pads();
-    ads7953_set_slow_edges();
-    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
-    // Dummy read to put ADS7953 into manual mode (each read() already runs the full frame handshake)
-    ads7953_read(0);
-    DBG_PRINTLN("ADS7953 SPI initialized");
-    ads7953_diagnostic();
+    ads_flush();            // prime the 2-frame pipeline so the first real scan is valid
+    ads_boot_report();
 
     // ---- I2C for NAU7802 load cells (LC1-LC6, all muxed, bit-banged) ----
     lc_i2c_begin();
@@ -847,12 +886,15 @@ void setup() {
     }
 
     {
-        const int output_pins[] = {NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
+        const int output_pins[] = {NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PNEUMA_PIN, BRAY_AUX_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, FP_1201_PIN, AP_1601_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
         for (int pin : output_pins) {
             if (pin >= 0) { pinMode(pin, OUTPUT); digitalWrite(pin, LOW); }
         }
         DBG_PRINTLN("Valve pins initialized");
     }
+
+    servo_valve_begin();
+    DBG_PRINTLN("SERVO-1 (pin 34) initialized closed");
 
     act_init();
     DBG_PRINT("Actuators initialized: "); DBG_PRINTLN(NUM_ACTUATORS);
@@ -886,14 +928,13 @@ void loop() {
     loop_iter_count++;
     pt_sample();
 
+
     unsigned long now_ms = millis();
     if (now_ms - last_loop_log_ms >= 1000) {
         last_loop_log_ms = now_ms;
         DBG_PRINT("Loop alive; iters/sec="); DBG_PRINT(loop_iter_count);
         loop_iter_count = 0;
         DBG_PRINT("; PT_us="); DBG_PRINT(pt_us_accum);
-<<<<<<< Updated upstream
-=======
         DBG_PRINT(" PT_scans="); DBG_PRINT(pt_scans);
         pt_scans = 0;
         DBG_PRINT(" PT_addr_bad="); DBG_PRINT(pt_addr_mismatch);
@@ -902,7 +943,6 @@ void loop() {
           DBG_PRINT(" PT_nosignal="); DBG_PRINT(nosig); }
         DBG_PRINT(" mA[ch0-11]=");
         for (int i = 0; i < 12; i++) { DBG_PRINT(pt_mA[i], 2); DBG_PRINT(i < 11 ? "," : ""); }
->>>>>>> Stashed changes
         DBG_PRINT(" TC_us="); DBG_PRINT(tc_us_accum);
         DBG_PRINT(" LC_us="); DBG_PRINT(lc_us_accum);
         pt_us_accum = 0; tc_us_accum = 0; lc_us_accum = 0;
@@ -918,9 +958,14 @@ void loop() {
         } else { DBG_PRINTLN("none"); }
     }
 
-    // Read incoming packets
-    int pkt_sz = udp.parsePacket();
-    if (pkt_sz > 0) {
+    // Read incoming packets. Drain up to RX_BURST datagrams per pass: one pass can
+    // take ~10 ms (ADS7953 scan, TC I2C reads, ~30 UDP sends, delay(1)), and handling
+    // only one datagram per pass let a valve command sit in the receive queue behind
+    // heartbeats/ACKs long enough to miss the GUI's ACK retry window (~0.6 s).
+    const int RX_BURST = 32;
+    int pkt_sz = 0;
+    int rx_burst_n = 0;
+    while (rx_burst_n++ < RX_BURST && (pkt_sz = udp.parsePacket()) > 0) {
         // Capture dynamic remote address so we can reply to whoever sent us a packet
         ACTIVE_REMOTE = udp.remoteIP();
         ACTIVE_REMOTE_PORT = udp.remotePort();
@@ -974,7 +1019,11 @@ void loop() {
                     if (rx.body_length >= 1) {
                         uint8_t vid = rx.body[0];
                         int     pin = get_pin_from_valve_id(vid);
-                        if (pin >= 0) {
+                        if (vid == EGCPPacket::VALVE_SERVO1) {
+                            servo_valve_set(true);
+                            DBG_PRINTLN("VSO SERVO-1 -> OPEN (0 deg)");
+                            LAST_HUMAN_UPDATE = micros();
+                        } else if (pin >= 0) {
                             digitalWrite(pin, HIGH);
                             DBG_PRINT("VSO "); DBG_PRINT(get_valve_name(vid));
                             DBG_PRINT(" pin="); DBG_PRINTLN(pin);
@@ -991,7 +1040,11 @@ void loop() {
                     if (rx.body_length >= 1) {
                         uint8_t vid = rx.body[0];
                         int     pin = get_pin_from_valve_id(vid);
-                        if (pin >= 0) {
+                        if (vid == EGCPPacket::VALVE_SERVO1) {
+                            servo_valve_set(false);
+                            DBG_PRINTLN("VSC SERVO-1 -> CLOSED (90 deg)");
+                            LAST_HUMAN_UPDATE = micros();
+                        } else if (pin >= 0) {
                             digitalWrite(pin, LOW);
                             DBG_PRINT("VSC "); DBG_PRINT(get_valve_name(vid));
                             DBG_PRINT(" pin="); DBG_PRINTLN(pin);
@@ -1057,16 +1110,6 @@ void loop() {
 
         pt_sample();                    // (no-op unless a scan is due)
         uint32_t t0 = micros();
-<<<<<<< Updated upstream
-        for (int i = 0; i < 12; i++) {
-            uint16_t raw = ads7953_read(i);
-            float psi = PT_SLOPE[i] * raw + PT_INTERCEPT[i];
-            // Light EMA smoothing on top of the crosstalk fix above - trims
-            // remaining sample-to-sample jitter without adding much lag at
-            // the 10ms sensor rate.
-            pt_filtered[i] = isnan(pt_filtered[i]) ? psi : (PT_EMA_ALPHA * psi + (1.0f - PT_EMA_ALPHA) * pt_filtered[i]);
-            send_adc_packet(0x01 + PT_NUM_FOR_CH[i], pt_filtered[i]);
-=======
         {
             // Report the average of every scan since the last report, then start a new window.
             for (int i = 0; i < 12; i++) {
@@ -1089,7 +1132,6 @@ void loop() {
                 pt_filtered[i] = isnan(pt_filtered[i]) ? psi : (PT_EMA_ALPHA * psi + (1.0f - PT_EMA_ALPHA) * pt_filtered[i]);
                 send_adc_packet(0x01 + PT_NUM_FOR_CH[i], pt_filtered[i]);
             }
->>>>>>> Stashed changes
         }
         pt_us_accum += micros() - t0;
 

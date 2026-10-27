@@ -32,14 +32,19 @@ public:
                                               //   Teensy -> GUI: position report (GUI ACKs it)
 
     // Valve ID mapping (1-byte IDs)
-    static constexpr uint8_t VALVE_NCS1 = 0x01;
-    static constexpr uint8_t VALVE_NCS2 = 0x02;
-    static constexpr uint8_t VALVE_NCS3 = 0x03;
-    static constexpr uint8_t VALVE_NCS4 = 0x04;
+    static constexpr uint8_t VALVE_NCS1 = 0x0A;
+    static constexpr uint8_t VALVE_NCS2 = 0x0B;
+    static constexpr uint8_t VALVE_NCS3 = 0x0C;
+    static constexpr uint8_t VALVE_NCS4 = 0x04;   // legacy name; NCS4 is a manual switch, relay 13 now drives NCS5 (FV-1201)
     static constexpr uint8_t VALVE_NCS5 = 0x05;
     static constexpr uint8_t VALVE_NCS6 = 0x06;
+    static constexpr uint8_t VALVE_PNEUMA = 0x0D;
+    static constexpr uint8_t VALVE_BRAY_AUX = 0x0E;
     static constexpr uint8_t VALVE_LA_BV1 = 0x10;
     static constexpr uint8_t VALVE_LA_BV2 = 0x11;
+    static constexpr uint8_t VALVE_FP_1201 = 0x12;   // fuel pump FP-1201 (on/off relay)
+    static constexpr uint8_t VALVE_AP_1601 = 0x13;   // air compressor AP-1601 (on/off relay)
+    static constexpr uint8_t VALVE_SERVO1 = 0x14;    // PUL1 servo valve (Teensy pin 34): VSO = 90 deg (open), VSC = 0 deg (closed)
     static constexpr uint8_t VALVE_GV_1 = 0x20;
     static constexpr uint8_t VALVE_GV_2 = 0x21;
     static constexpr uint8_t VALVE_GV1 = VALVE_GV_1; // Backward-compatible alias
@@ -53,9 +58,9 @@ public:
     // ID space - keep them disjoint from the valve IDs above.
     // *** TEST SETUP: two 35 kg RC servos driven straight from Teensy GPIO. ***
     // (Servos are externally powered and always on; the Teensy only sends the PWM signal.)
-    // (The Bray modulating valve / PWM-to-analog slave card is NOT used right now.)
     static constexpr uint8_t ACTUATOR_SV1 = 0x51;   // 35 kg RC servo #1 (Teensy pin 23)
     static constexpr uint8_t ACTUATOR_SV2 = 0x52;   // 35 kg RC servo #2 (Teensy pin 22)
+    static constexpr uint8_t ACTUATOR_BRAY = 0x53;  // FMV (Bray) modulating valve, 4-20 mA from AD5420 on SPI1
 
     // Sensor ID mapping (1-byte IDs) - E2: 12 pressure transducers (PT0-PT11),
     // 12 thermocouples (TCADC1-12), 6 load cells (LC1-6). Ranges are kept

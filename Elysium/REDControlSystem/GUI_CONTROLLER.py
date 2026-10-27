@@ -22,16 +22,6 @@ _TEMPLATE_TOKEN_RE = re.compile(r"\{([A-Za-z0-9_]+)\}")
 
 
 def render_message_template(template: str, context: dict) -> str:
-    """Substitute {TOKEN} placeholders in a user-authored abort/warn message.
-
-    `context` maps both special keywords (e.g. "soak_ms", "threshold",
-    "value") and sensor names (e.g. "P5") to their current values. Lookup is
-    case-sensitive first (so a lowercase keyword like {soak_ms} isn't shadowed
-    by an unrelated sensor), then falls back to an upper-cased match so sensor
-    tokens work regardless of the case the user typed. Unknown tokens are left
-    as literal text (e.g. "{TYPO}") so a mistake is visible rather than silently
-    dropped.
-    """
     def _repl(m: "re.Match") -> str:
         key = m.group(1)
         value = context.get(key)
@@ -66,6 +56,7 @@ class Signals(QObject):
     abort_notice = pyqtSignal(str, str, str)
     project_changed = pyqtSignal()
     project_received = pyqtSignal(dict)
+    recording_stopped = pyqtSignal()        # DAQ file saved; Telemetry refreshes its file list
     view_only_changed = pyqtSignal(bool)
     connected = pyqtSignal()
     disconnected = pyqtSignal(str)
@@ -148,6 +139,7 @@ class GUIController:
         self.raw_sensor_values: dict = {}
         self.tare_offsets: dict = {}
         self.calibrations: dict = {}        # name -> (gain, offset)
+        self.sensor_labels: dict = {}       # sensor key (hw_id) -> P&ID label, for display
 
         # Health tracking: last receive time + recent uncalibrated samples
         # (used for stale / flatline detection and the calibration wizard)
@@ -287,14 +279,11 @@ class GUIController:
         self.signals.abort_triggered.emit("DISCONNECTED", reason, "")
 
     def _on_connected(self):
-        """Every (re)connect lands in SAFE. Valves are assumed closed (nothing
-        is commanded on connect)."""
+        """Every (re)connect lands in SAFE and the Safe State preset is applied
+        straight away (valves to their safe positions, actuators to safe_pct)."""
         if self.view_only:
             return              # the viewer link's hello message carries the controller's mode
-        self.ethernet_client.set_system_state("SAFE")
-        self._applied_abort_states.clear()
-        self._set_safe_applied(False)
-        self._set_mode(GuiMode.SAFE, "connected")
+        self.enter_safe_state("connected")
 
     # READ-ONLY SHARING --------------------------------------------------------------
     # The controller GUI (holding the Teensy link) streams to viewer GUIs via
@@ -625,12 +614,7 @@ class GUIController:
     def _rebuild_valve_states(self, project):
         """Rebuild valve_states from project valve components (hw_id -> bool).
         Existing states are preserved for valves that carry over; new valves start closed."""
-        from PID_SCHEMA import (
-            COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE, COMP_GLOBE_VALVE,
-            COMP_SOLENOID, COMP_IGNITER, get_actuator_spec,
-        )
-        VALVE_TYPES = (COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE,
-                       COMP_GLOBE_VALVE, COMP_SOLENOID, COMP_IGNITER)
+        from PID_SCHEMA import COMP_IGNITER, COMMANDABLE_VALVE_TYPES as VALVE_TYPES, get_actuator_spec
 
         if not project:
             return
@@ -671,14 +655,22 @@ class GUIController:
         self.actuator_positions = {
             hw: self.actuator_positions.get(hw, spec.safe_pct) for hw, spec in specs.items()}
 
+    def sensor_display_name(self, key: str) -> str:
+        """Name shown to the operator for a sensor key: the P&ID label (e.g.
+        OPT-1301) when the key is a separate internal hw_id (e.g. P2)."""
+        return self.sensor_labels.get(key, key)
+
     def _rebuild_sensor_keys(self, project):
         from PID_SCHEMA import COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL
         pt, tc, lc = [], [], []
+        self.sensor_labels = {}
         if project:
             for comp in project.components.values():
                 hw_id = comp.extras.get("hw_id", comp.label) or comp.label
                 if not hw_id:
                     continue
+                if comp.type in (COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL) and comp.label:
+                    self.sensor_labels[hw_id] = comp.label
                 if comp.type == COMP_PRESSURE:
                     pt.append(hw_id)
                 elif comp.type == COMP_TEMPERATURE:
@@ -1276,6 +1268,23 @@ class GUIController:
             "ABORT TRIGGERED",
             f"Abort Type: {abort_type}\nReason: {reason}\nAbort State: {state_name}"
         )
+        self._return_to_safe_after_abort()
+
+    def _return_to_safe_after_abort(self):
+        """Once the operator has acknowledged an abort, fall back to SAFE on their
+        behalf (no manual SAFE send needed). If only the default abort ran, its
+        valve config *is* the Safe State, so apply it; if an escalated state (e.g.
+        a vent) ran, switch the mode but leave its valves as they are - SAFE then
+        shows as not applied until the operator sends it."""
+        if self.view_only or self.mode != GuiMode.ABORT:
+            return
+        if self._applied_abort_states <= {DEFAULT_ABORT_ID} and self.ethernet_client.connected:
+            self.enter_safe_state("abort acknowledged")
+        else:
+            self.ethernet_client.set_system_state("SAFE")
+            self._applied_abort_states.clear()
+            self._set_safe_applied(False)
+            self._set_mode(GuiMode.SAFE, "abort acknowledged")
 
 
     # DAQ RECORDING ------------------------------------------------------------------------------------------------
@@ -1365,9 +1374,9 @@ class GUIController:
                 "Teensy Timestamp (µs from boot)",
                 "",
             ]
-            header += self.pt_keys + [""]
-            header += self.tc_keys + [""]
-            header += self.lc_keys + [""]
+            # Columns carry the P&ID names (NPT-1101), not the internal keys (P1)
+            for keys in (self.pt_keys, self.tc_keys, self.lc_keys):
+                header += [self.sensor_display_name(k) for k in keys] + [""]
             header += ["Control State", "Event Type", "Event Details"]
 
             ws.append(header)
@@ -1407,6 +1416,7 @@ class GUIController:
             self._ws = None
             self._xlsx_path = ""
             self.recording = False
+            self.signals.recording_stopped.emit()
 
     def handle_new_data(self, data_str: str):
         """ Parse teensy timestamp (first token) (Req 4) """
@@ -1544,11 +1554,14 @@ class GUIController:
             self.signals.sensor_updated.emit(name, raw, timestamp)
         self.log_event("TARE_CLEARED", name)
 
-    def set_calibration(self, sensor_name: str, gain: float, offset: float):
-        """Install a linear calibration (display = gain·wire + offset) and
-        refresh the sensor's displayed value from its latest wire sample."""
-        name = sensor_name.upper()
-        self.calibrations[name] = (gain, offset)
+    # TEMPORARY (test setup): until each PT has its own calibration, the calibration
+    # of this PT is applied to EVERY pressure transducer. Calibrating (or loading a
+    # saved calibration for) the source PT copies it to all other PTs, overwriting
+    # whatever they had. Set to None to go back to fully independent per-PT calibration.
+    SHARED_PT_CAL_SOURCE = "P1"
+
+    def _refresh_calibrated_value(self, name: str, gain: float, offset: float):
+        """Recompute a sensor's displayed value from its latest wire sample."""
         recent = self.sensor_recent.get(name)
         if recent:
             raw = recent[-1] * gain + offset
@@ -1557,7 +1570,29 @@ class GUIController:
             self.current_sensor_values[name] = value
             self.signals.sensor_updated.emit(
                 name, value, QDateTime.currentMSecsSinceEpoch() / 1000.0)
+
+    def _share_pt_calibration(self):
+        """Copy the shared-source PT's calibration (if it has one) to every other PT."""
+        src = (self.SHARED_PT_CAL_SOURCE or "").upper()
+        cal = self.calibrations.get(src)
+        if not src or cal is None:
+            return
+        for key in self.pt_keys:
+            name = str(key).upper()
+            if name != src:
+                self.calibrations[name] = cal
+                self._refresh_calibrated_value(name, *cal)
+
+    def set_calibration(self, sensor_name: str, gain: float, offset: float):
+        """Install a linear calibration (display = gain·wire + offset) and
+        refresh the sensor's displayed value from its latest wire sample."""
+        name = sensor_name.upper()
+        self.calibrations[name] = (gain, offset)
+        self._refresh_calibrated_value(name, gain, offset)
         self.log_event("CALIBRATION", f"{name}: gain={gain:.6g} offset={offset:.6g}")
+        if name == (self.SHARED_PT_CAL_SOURCE or "").upper():
+            self._share_pt_calibration()
+            self.log_event("CALIBRATION", f"{name} calibration applied to all PTs (shared, temporary)")
 
     def clear_calibrations(self):
         self.calibrations.clear()
@@ -1575,6 +1610,7 @@ class GUIController:
             except (KeyError, TypeError, ValueError):
                 continue
             self.calibrations[str(hw_id).upper()] = (gain, offset)
+        self._share_pt_calibration()
 
     def project_lock_required(self) -> bool:
         """Whether project selection / Open P&ID should be locked right now.
@@ -1972,18 +2008,20 @@ class GUIController:
         self.signals.command_sent.emit(valve_name, 1.0 if new_state else 0.0,
                                        QDateTime.currentMSecsSinceEpoch() / 1000.0)
 
+        # Register the pending command BEFORE sending: the ACK can come back (and be
+        # handled) before send_valve_command() returns.
+        self.pending_valve_commands[valve_name] = {
+            "state": new_state,
+            "last_sent": QDateTime.currentMSecsSinceEpoch(),
+            "retries": 0
+        }
+
         try:
             self.ethernet_client.send_valve_command(valve_name, new_state)
         except Exception:
             pass
 
         self.log_event("VALVE_CHANGED", f"{valve_name}:{new_state}")
-
-        self.pending_valve_commands[valve_name] = {
-            "state": new_state,
-            "last_sent": QDateTime.currentMSecsSinceEpoch(),
-            "retries": 0
-        }
 
     def check_valve_command_timeouts(self):
         current_time = QDateTime.currentMSecsSinceEpoch()

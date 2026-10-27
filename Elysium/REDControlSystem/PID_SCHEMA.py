@@ -50,6 +50,15 @@ COMP_BELLOWS            = "bellows"             # Bellow (B)
 COMP_HEAT_EXCHANGER     = "heat_exchanger"      # Heat Exchanger (HEX)
 COMP_PANEL              = "panel"               # Panel / description container
 
+# Types the operator can command through a hardware relay (Binding): used to build the
+# controller's valve table, the live-view click popups and the Abort Config valve lists.
+# Passive parts (check valves, PSV/PRV, hand regulators, ...) are deliberately not here.
+COMMANDABLE_VALVE_TYPES = (
+    COMP_VALVE, COMP_THROTTLE_VALVE, COMP_BALL_VALVE, COMP_GLOBE_VALVE,
+    COMP_SOLENOID, COMP_IGNITER, COMP_ACTUATED_VALVE, COMP_ACTUATED_VALVE_LS,
+    COMP_EP_THROTTLE_VALVE, COMP_THREE_WAY_VALVE, COMP_PUMP,
+)
+
 
 COMPONENT_TYPES = [
     COMP_VALVE, COMP_THROTTLE_VALVE, COMP_PRESSURE, COMP_TEMPERATURE,

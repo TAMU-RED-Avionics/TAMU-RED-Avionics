@@ -40,7 +40,8 @@ class VirtualTeensy(QMainWindow):
 
 
         self.sensor_inputs = {}
-        sensor_names = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8", 
+        sensor_names = ["P1", "P2", "P3", "P4", "P5", "P6", "P7", "P8",
+                       "P9", "P10", "P11", "P12",
                        "TC1", "TC2", "TC3", 
                        "LC1", "LC2", "LC3", "LC4", "LC5", "LC6",
                        "B1", "B2"]
@@ -92,8 +93,8 @@ class VirtualTeensy(QMainWindow):
         
         self.valve_indicators = {}
         self.valve_failure_checkboxes = {}
-        valve_names = ["NCS1", "NCS2", "NCS3", "NCS4", "NCS5", "NCS6", "LA-BV1", "LA-BV2", "GV-1", "GV-2", "IG1", "IG2"]
-        valve_ids = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x10, 0x11, 0x20, 0x21, 0x30, 0x31]
+        valve_ids = list(self.comms.RELAY_NAMES)
+        valve_names = [self.comms.RELAY_NAMES[v] for v in valve_ids]
         
         for name, valve_id in zip(valve_names, valve_ids):
             v_layout = QVBoxLayout()
@@ -118,7 +119,7 @@ class VirtualTeensy(QMainWindow):
             self.valve_failure_checkboxes[name] = fail_check
 
         # Actuators (position-commanded valves): simulated travel, GUI-commanded or moved by hand here
-        act_label = QLabel("Actuators (SV-1 / SV-2)")
+        act_label = QLabel("Actuators (SV-1 / SV-2 / MFV Bray)")
         act_label.setStyleSheet("font-weight: bold; font-size: 14px;")
         right_layout.addWidget(act_label)
         act_hint = QLabel("Bar = simulated position (moves at the travel speed after the GUI commands it). "
