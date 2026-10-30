@@ -1,0 +1,10 @@
+.vscode/
+RED_AVI_GitHub.code-workspace
+/Testing/
+Data/
+__pycache__/
+*.pyc
+*.o
+moc_*
+Data Analysis/Testing
+.DS_Store
