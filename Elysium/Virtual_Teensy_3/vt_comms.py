@@ -83,7 +83,7 @@ class VTComms(QObject):
     RELAY_NAMES = {
         0x0A: "NCS1", 0x0B: "NCS2", 0x0C: "NCS3", 0x04: "NCS5",
         0x06: "PA-BV3", 0x10: "PA-BV1", 0x11: "PA-BV2",
-        0x12: "FP-1201", 0x13: "AP-1601",
+        0x09: "BRAY-PWR", 0x12: "FP-1201", 0x13: "AP-1601",
         0x0D: "PNEUMA", 0x0E: "BRAY-AUX",
         0x20: "GV-1", 0x21: "GV-2",
         0x30: "IGN-1", 0x31: "IGN-2",

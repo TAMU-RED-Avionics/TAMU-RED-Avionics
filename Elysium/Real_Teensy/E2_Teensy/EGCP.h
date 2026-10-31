@@ -39,12 +39,12 @@ public:
     static constexpr uint8_t VALVE_NCS5 = 0x05;
     static constexpr uint8_t VALVE_NCS6 = 0x06;
     static constexpr uint8_t VALVE_PNEUMA = 0x0D;
+    static constexpr uint8_t VALVE_BRAY_PWR = 0x09;   // relay 9: powers the Bray card (AD5420) via an external 12 V relay
     static constexpr uint8_t VALVE_BRAY_AUX = 0x0E;
     static constexpr uint8_t VALVE_LA_BV1 = 0x10;
     static constexpr uint8_t VALVE_LA_BV2 = 0x11;
     static constexpr uint8_t VALVE_FP_1201 = 0x12;   // fuel pump FP-1201 (on/off relay)
     static constexpr uint8_t VALVE_AP_1601 = 0x13;   // air compressor AP-1601 (on/off relay)
-    static constexpr uint8_t VALVE_SERVO1 = 0x14;    // PUL1 servo valve (Teensy pin 34): VSO = 90 deg (open), VSC = 0 deg (closed)
     static constexpr uint8_t VALVE_GV_1 = 0x20;
     static constexpr uint8_t VALVE_GV_2 = 0x21;
     static constexpr uint8_t VALVE_GV1 = VALVE_GV_1; // Backward-compatible alias

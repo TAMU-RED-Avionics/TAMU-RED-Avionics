@@ -1494,16 +1494,16 @@
       "flip": false
     },
     {
-      "id": "SERVO_1",
-      "type": "ball_valve",
-      "label": "SERVO-1",
+      "id": "BRAYPWR_1",
+      "type": "solenoid",
+      "label": "BRAY-PWR",
       "hardware": {
-        "relay": 20
+        "relay": 9
       },
       "extras": {
-        "notes": "Servo valve on stepper-1 PUL1 (Teensy pin 34 -> J6-38 -> JSM1). OPEN = 0 deg, CLOSED = 90 deg. Firmware valve ID 0x14 (decimal 20)."
+        "notes": "Relay 9 -> external 12 V relay that powers the Bray positioner card (AD5420, daughtercard J9). The firmware commands the Bray to 0% (4 mA) before dropping this relay on every abort; open it before commanding MFV."
       },
-      "rotation": 0,
+      "rotation": 270,
       "hide_lbl": false,
       "flip": false
     }
@@ -1814,9 +1814,9 @@
       "x": -140.0,
       "y": 1000.0
     },
-    "SERVO_1": {
-      "x": 1700.0,
-      "y": 200.0
+    "BRAYPWR_1": {
+      "x": 1620.0,
+      "y": 640.0
     }
   },
   "lines": [
@@ -2766,12 +2766,12 @@
       "id": "line_46",
       "points": [
         {
-          "x": 480,
-          "y": 930
+          "x": 480.0,
+          "y": 930.0
         },
         {
-          "x": 480,
-          "y": 1010
+          "x": 480.0,
+          "y": 1010.0
         }
       ],
       "fluid": "purge",
@@ -2892,7 +2892,7 @@
         "SV_6": false,
         "P_1": false,
         "P_2": false,
-        "SERVO_1": false
+        "BRAYPWR_1": false
       },
       "confirmed": true
     }
@@ -2913,7 +2913,8 @@
           "name": "Ignition 1",
           "time_offset": 9.5,
           "open_valves": [
-            "IGN_1"
+            "IGN_1",
+            "BRAYPWR_1"
           ],
           "is_terminal_count": false
         },
@@ -2922,7 +2923,8 @@
           "time_offset": 10.0,
           "open_valves": [
             "AV_3",
-            "IGN_1"
+            "IGN_1",
+            "BRAYPWR_1"
           ],
           "is_terminal_count": false
         },
@@ -2932,7 +2934,8 @@
           "open_valves": [
             "AV_3",
             "IGN_2",
-            "IGN_1"
+            "IGN_1",
+            "BRAYPWR_1"
           ],
           "is_terminal_count": false
         },
@@ -2958,7 +2961,8 @@
           "name": "Ignition 1",
           "time_offset": 9.5,
           "open_valves": [
-            "IGN_1"
+            "IGN_1",
+            "BRAYPWR_1"
           ],
           "is_terminal_count": false
         },
@@ -2967,7 +2971,8 @@
           "time_offset": 10.0,
           "open_valves": [
             "AV_3",
-            "IGN_1"
+            "IGN_1",
+            "BRAYPWR_1"
           ],
           "is_terminal_count": false
         },
@@ -2977,7 +2982,8 @@
           "open_valves": [
             "AV_3",
             "IGN_1",
-            "IGN_2"
+            "IGN_2",
+            "BRAYPWR_1"
           ],
           "is_terminal_count": false
         },
@@ -3011,5 +3017,11 @@
       "enabled": true
     }
   ],
-  "actuation_plans": []
+  "actuation_plans": [
+    {
+      "id": "act_f350bc2e",
+      "name": "Plan 1",
+      "steps": []
+    }
+  ]
 }
