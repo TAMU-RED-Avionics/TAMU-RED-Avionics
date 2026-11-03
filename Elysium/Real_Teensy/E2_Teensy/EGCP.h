@@ -39,7 +39,6 @@ public:
     static constexpr uint8_t VALVE_NCS5 = 0x05;
     static constexpr uint8_t VALVE_NCS6 = 0x06;
     static constexpr uint8_t VALVE_PNEUMA = 0x0D;
-    static constexpr uint8_t VALVE_BRAY_PWR = 0x09;   // relay 9: powers the Bray card (AD5420) via an external 12 V relay
     static constexpr uint8_t VALVE_BRAY_AUX = 0x0E;
     static constexpr uint8_t VALVE_LA_BV1 = 0x10;
     static constexpr uint8_t VALVE_LA_BV2 = 0x11;

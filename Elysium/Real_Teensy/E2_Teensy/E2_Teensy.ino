@@ -422,7 +422,6 @@ int get_pin_from_valve_id(uint8_t id) {
         case 0x04: return NCS5_PIN;   // NCS5 (FV-1201) is relay 13
         case 0x06: return PA_BV3_PIN;   // was NCS6
         case 0x0D: return PNEUMA_PIN;   // Pneuma - unassigned (relay 13 went to NCS5)
-        case 0x09: return BRAY_PWR_PIN;   // relay 9 = Bray card power
         case 0x0E: return BRAY_AUX_PIN;  // relay 14, also follows the Bray valve
         case 0x10: return PA_BV1_PIN;   // was LA-BV1
         case 0x11: return PA_BV2_PIN;   // was LA-BV2
@@ -445,7 +444,6 @@ const char* get_valve_name(uint8_t id) {
         case 0x04: return "NCS5";
         case 0x06: return "PA-BV3";
         case 0x0D: return "PNEUMA";
-        case 0x09: return "BRAY-PWR";
         case 0x0E: return "BRAY-AUX";
         case 0x10: return "PA-BV1";
         case 0x11: return "PA-BV2";
@@ -554,7 +552,10 @@ static void ad5420_begin() {
     ad5420_write(AD5420_ADDR_CONTROL, AD5420_CTRL_WORD);                      // enable IOUT
     delay(1);
 
-    ad5420_print_status();
+    // Stay silent when healthy (this runs on every automatic power-up); only report a problem.
+    uint16_t control = ad5420_read(AD5420_RB_CONTROL);
+    uint16_t status  = ad5420_read(AD5420_RB_STATUS);
+    if (control != AD5420_CTRL_WORD || (status & (AD5420_STATUS_IOUT_FAULT | AD5420_STATUS_OVER_TEMP))) ad5420_print_status();
 }
 
 struct ActuatorConfig {
@@ -631,22 +632,18 @@ int act_index(uint8_t id) {
     return -1;
 }
 
-// The AD5420 forgets its setup whenever it loses power, so powering the card up means:
-// relay on -> wait for the supply to settle -> reset + configure it (it comes up at 4 mA =
-// closed). Powering it DOWN always commands 4 mA / 0 % first, then drops the relay. The
-// position is never restored: after any power cycle the valve starts closed and only opens
-// on a new command.
-//
-// The 12 V rail settle time (BRAY_POWER_SETTLE_MS) used to be a blocking delay(50) right
-// in bray_power(true) - called straight out of the PKT_VSO handler in loop(), so opening
-// BRAY-PWR froze the whole loop (heartbeats, ACKs, and any SFE abort sitting in the UDP
-// queue) for 50+ ms. It's now a non-blocking wait: bray_power(true) just closes the relay
-// and arms a timer; bray_power_poll(), called every loop() iteration, finishes the actual
-// ad5420_begin() configure once the timer has elapsed, without ever stalling comms.
+// Bray card power is automatic - there is no separate BRAY-PWR control in the GUI:
+//   * any Bray command above 0 % closes relay 9 (if it isn't already), waits for the card's
+//     12 V rail (BRAY_POWER_SETTLE_MS = 10 ms, non-blocking), resets + configures the AD5420, and
+//     only then drives the commanded position;
+//   * a command of 0 % (this is also what every abort / SAFE sends the Bray) drives 4 mA =
+//     closed FIRST and then drops the relay, and SFE / comms-loss shutdown does the same.
+// The AD5420 forgets its setup whenever it loses power, so the position is never restored
+// after a power cycle: the valve starts closed and only opens on a new command.
 bool bray_powered = false;
 bool bray_power_pending = false;             // relay closed, waiting for the 12 V rail before configuring
 unsigned long bray_power_pending_since_ms = 0;
-const unsigned long BRAY_POWER_SETTLE_MS = 50;
+const unsigned long BRAY_POWER_SETTLE_MS = 10;   // 12 V rail settle before the card is configured (keep this short)
 
 void bray_power(bool on) {
     int i = act_index(EGCPPacket::ACTUATOR_BRAY);
@@ -664,9 +661,8 @@ void bray_power(bool on) {
         return;
     }
     if (bray_powered || bray_power_pending) return;   // already on, or already waiting on the rail
-    if (BRAY_PWR_PIN >= 0) digitalWrite(BRAY_PWR_PIN, HIGH);
-    if (i >= 0) act_pct[i] = 0.0f;
     if (BRAY_PWR_PIN >= 0) {
+        digitalWrite(BRAY_PWR_PIN, HIGH);
         bray_power_pending = true;
         bray_power_pending_since_ms = millis();
     } else {
@@ -675,30 +671,34 @@ void bray_power(bool on) {
     }
 }
 
-// Call every loop() iteration: finishes a pending Bray power-up once the 12 V rail has
-// actually had BRAY_POWER_SETTLE_MS to settle, without blocking comms while waiting.
+// Call every loop() iteration: finishes a pending Bray power-up once the 12 V rail has had
+// BRAY_POWER_SETTLE_MS to settle, without blocking comms while waiting, then drives the
+// position that was commanded while the card was still powering up.
 void bray_power_poll() {
     if (!bray_power_pending) return;
     if (millis() - bray_power_pending_since_ms < BRAY_POWER_SETTLE_MS) return;
     bray_power_pending = false;
     ad5420_begin();   // registers are blank after power-up; starts at 4 mA
     bray_powered = true;
+    int i = act_index(EGCPPacket::ACTUATOR_BRAY);
+    if (i >= 0 && act_pct[i] > 0.0f)
+        ad5420_write(AD5420_ADDR_DATA, (uint16_t)(act_pct[i] / 100.0f * 65535.0f + 0.5f));
 }
 
-void bray_report() {
+// Appends a short Bray token to the existing once-a-second "Loop alive" line (no newline,
+// no separate line): " Bray=off", " Bray=ramping", or " Bray=12.0mA" plus "!SPI" / "!IOUT" /
+// "!TEMP" if the AD5420 reports a problem.
+void bray_log_token() {
     int i = act_index(EGCPPacket::ACTUATOR_BRAY);
     if (i < 0) return;
-    if (bray_power_pending) { DBG_PRINTLN("Bray card power ramping up (waiting for 12 V rail)..."); return; }
-    if (!bray_powered) { DBG_PRINTLN("Bray card power OFF (relay 9) - open BRAY-PWR to use the Bray valve"); return; }
+    if (bray_power_pending) { DBG_PRINT(" Bray=ramping"); return; }
+    if (!bray_powered)      { DBG_PRINT(" Bray=off");     return; }
     uint16_t control = ad5420_read(AD5420_RB_CONTROL);
     uint16_t status  = ad5420_read(AD5420_RB_STATUS);
-    DBG_PRINT("Bray cmd="); DBG_PRINT(act_pct[i], 1);
-    DBG_PRINT("% -> "); DBG_PRINT(4.0f + 16.0f * act_pct[i] / 100.0f, 2);
-    DBG_PRINT(" mA");
-    if (control != AD5420_CTRL_WORD) { DBG_PRINT(" [CONTROL 0x"); DBG_PRINT(control, HEX); DBG_PRINT(" != 0x3005: SPI/config problem]"); }
-    if (status & AD5420_STATUS_IOUT_FAULT) DBG_PRINT(" [IOUT FAULT: open loop or load too high]");
-    if (status & AD5420_STATUS_OVER_TEMP)  DBG_PRINT(" [OVER TEMP]");
-    DBG_PRINTLN("");
+    DBG_PRINT(" Bray="); DBG_PRINT(4.0f + 16.0f * act_pct[i] / 100.0f, 1); DBG_PRINT("mA");
+    if (control != AD5420_CTRL_WORD)             DBG_PRINT("!SPI");
+    if (status & AD5420_STATUS_IOUT_FAULT)       DBG_PRINT("!IOUT");
+    if (status & AD5420_STATUS_OVER_TEMP)        DBG_PRINT("!TEMP");
 }
 
 void act_apply(int i) {
@@ -708,7 +708,8 @@ void act_apply(int i) {
     if (a.driver == ACT_RC_SERVO) {
         act_servo[i].writeMicroseconds((int)(a.us_min + (a.us_max - a.us_min) * frac + 0.5f));
     } else if (a.driver == ACT_AD5420) {
-        if (!bray_powered) return;   // card is off (relay 9): nothing to drive; the PKT_POS handler refuses opens
+        if (act_pct[i] <= 0.0f) { bray_power(false); return; }   // closed: 4 mA first, then the card's power off
+        if (!bray_powered) { bray_power(true); return; }          // power the card up; bray_power_poll() drives the position once it's configured
         ad5420_write(AD5420_ADDR_DATA, (uint16_t)(frac * 65535.0f + 0.5f));
         // Relay 14 rides along with the Bray valve: on whenever it is commanded
         // above 0 %, off at 0 % (which is also the safe position).
@@ -733,7 +734,7 @@ void act_init() {
         if (a.driver == ACT_RC_SERVO) {
             act_servo[i].attach(a.pin, a.us_min < 500 ? a.us_min : 500, a.us_max > 2500 ? a.us_max : 2500);
         } else if (a.driver == ACT_AD5420) {
-            if (BRAY_PWR_PIN >= 0) { bray_powered = false; continue; }   // card stays off until BRAY-PWR (relay 9) is opened
+            if (BRAY_PWR_PIN >= 0) { bray_powered = false; continue; }   // card stays off until the first Bray command above 0 %
             bray_power(true);                                            // wired straight to the rail: configure now
         } else {
             pinMode(a.pin, OUTPUT);
@@ -975,6 +976,7 @@ void loop() {
         for (int i = 0; i < 12; i++) { DBG_PRINT(pt_mA[i], 2); DBG_PRINT(i < 11 ? "," : ""); }
         DBG_PRINT(" TC_us="); DBG_PRINT(tc_us_accum);
         DBG_PRINT(" LC_us="); DBG_PRINT(lc_us_accum);
+        bray_log_token();
         pt_us_accum = 0; tc_us_accum = 0; lc_us_accum = 0;
         DBG_PRINT("; link=");
         DBG_PRINT(Ethernet.linkStatus() == LinkON ? "UP" : "DOWN");
@@ -989,11 +991,6 @@ void loop() {
     }
 
     bray_power_poll();   // non-blocking finish of a pending Bray power-up; check every pass
-
-    {   // Bray positioner health, once a second (alongside the loop log above)
-        static unsigned long last_bray_ms = 0;
-        if (now_ms - last_bray_ms >= 1000) { last_bray_ms = now_ms; bray_report(); }
-    }
 
     // Read incoming packets. Drain up to RX_BURST datagrams per pass: one pass can
     // take ~10 ms (ADS7953 scan, TC I2C reads, ~30 UDP sends, delay(1)), and handling
@@ -1056,11 +1053,7 @@ void loop() {
                     if (rx.body_length >= 1) {
                         uint8_t vid = rx.body[0];
                         int     pin = get_pin_from_valve_id(vid);
-                        if (vid == EGCPPacket::VALVE_BRAY_PWR && pin >= 0) {
-                            bray_power(true);
-                            DBG_PRINTLN("VSO BRAY-PWR (card power on)");
-                            LAST_HUMAN_UPDATE = micros();
-                        } else if (pin >= 0) {
+                        if (pin >= 0) {
                             digitalWrite(pin, HIGH);
                             DBG_PRINT("VSO "); DBG_PRINT(get_valve_name(vid));
                             DBG_PRINT(" pin="); DBG_PRINTLN(pin);
@@ -1077,11 +1070,7 @@ void loop() {
                     if (rx.body_length >= 1) {
                         uint8_t vid = rx.body[0];
                         int     pin = get_pin_from_valve_id(vid);
-                        if (vid == EGCPPacket::VALVE_BRAY_PWR && pin >= 0) {
-                            bray_power(false);
-                            DBG_PRINTLN("VSC BRAY-PWR (card power off)");
-                            LAST_HUMAN_UPDATE = micros();
-                        } else if (pin >= 0) {
+                        if (pin >= 0) {
                             digitalWrite(pin, LOW);
                             DBG_PRINT("VSC "); DBG_PRINT(get_valve_name(vid));
                             DBG_PRINT(" pin="); DBG_PRINTLN(pin);
@@ -1099,10 +1088,7 @@ void loop() {
                         uint8_t  aid = rx.body[0];
                         uint16_t raw = ((uint16_t)rx.body[1] << 8) | rx.body[2];
                         int      idx = act_index(aid);
-                        if (idx >= 0 && aid == EGCPPacket::ACTUATOR_BRAY && !bray_powered && raw > 0) {
-                            DBG_PRINTLN("POS Bray refused: card power is OFF (open BRAY-PWR / relay 9 first)");
-                            send_nck(rx.packet_id);
-                        } else if (idx >= 0) {
+                        if (idx >= 0) {
                             act_set(idx, raw / 100.0f);
                             DBG_PRINT("POS "); DBG_PRINT(ACTUATORS[idx].name);
                             DBG_PRINT(" = "); DBG_PRINT(act_pct[idx]);

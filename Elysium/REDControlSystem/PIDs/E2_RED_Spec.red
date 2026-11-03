@@ -1492,20 +1492,6 @@
       "rotation": 0,
       "hide_lbl": false,
       "flip": false
-    },
-    {
-      "id": "BRAYPWR_1",
-      "type": "solenoid",
-      "label": "BRAY-PWR",
-      "hardware": {
-        "relay": 9
-      },
-      "extras": {
-        "notes": "Relay 9 -> external 12 V relay that powers the Bray positioner card (AD5420, daughtercard J9). The firmware commands the Bray to 0% (4 mA) before dropping this relay on every abort; open it before commanding MFV."
-      },
-      "rotation": 270,
-      "hide_lbl": false,
-      "flip": false
     }
   ],
   "connections": [],
@@ -1813,10 +1799,6 @@
     "IGN_2": {
       "x": -140.0,
       "y": 1000.0
-    },
-    "BRAYPWR_1": {
-      "x": 1620.0,
-      "y": 640.0
     }
   },
   "lines": [
@@ -2891,8 +2873,7 @@
         "AV_3": false,
         "SV_6": false,
         "P_1": false,
-        "P_2": false,
-        "BRAYPWR_1": false
+        "P_2": false
       },
       "confirmed": true
     }
@@ -2913,8 +2894,7 @@
           "name": "Ignition 1",
           "time_offset": 9.5,
           "open_valves": [
-            "IGN_1",
-            "BRAYPWR_1"
+            "IGN_1"
           ],
           "is_terminal_count": false
         },
@@ -2923,8 +2903,7 @@
           "time_offset": 10.0,
           "open_valves": [
             "AV_3",
-            "IGN_1",
-            "BRAYPWR_1"
+            "IGN_1"
           ],
           "is_terminal_count": false
         },
@@ -2934,8 +2913,7 @@
           "open_valves": [
             "AV_3",
             "IGN_2",
-            "IGN_1",
-            "BRAYPWR_1"
+            "IGN_1"
           ],
           "is_terminal_count": false
         },
@@ -2961,8 +2939,7 @@
           "name": "Ignition 1",
           "time_offset": 9.5,
           "open_valves": [
-            "IGN_1",
-            "BRAYPWR_1"
+            "IGN_1"
           ],
           "is_terminal_count": false
         },
@@ -2971,8 +2948,7 @@
           "time_offset": 10.0,
           "open_valves": [
             "AV_3",
-            "IGN_1",
-            "BRAYPWR_1"
+            "IGN_1"
           ],
           "is_terminal_count": false
         },
@@ -2982,8 +2958,7 @@
           "open_valves": [
             "AV_3",
             "IGN_1",
-            "IGN_2",
-            "BRAYPWR_1"
+            "IGN_2"
           ],
           "is_terminal_count": false
         },
