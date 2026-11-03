@@ -322,8 +322,27 @@ bool nau7802_init() {
 }
 
 // LC1-LC6 calibration: lbs = slope * raw24bit + intercept
-const float LC_SLOPE[6]     = { 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f };     // <-- USER INPUT  (calibrate on hardware)
-const float LC_INTERCEPT[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };     // <-- USER INPUT
+// LC2 (index 1) is TEMPORARY: 3-point fit (0, 4.2, 27.78 lb), worst error 0.42 lb, measured with the
+// LoadCell_Test sketch on input VIN2 at gain 128. Only valid up to ~28 lb and relative to that session's zero.
+const float LC_SLOPE[6]     = { 0.063616813928f, 0.063616813928f, 0.063616813928f, 1.0f, 1.0f, 1.0f };     // <-- USER INPUT  (calibrate on hardware)
+const float LC_INTERCEPT[6] = { -1039.7978f, -1039.7978f, -1039.7978f, 0.0f, 0.0f, 0.0f };     // <-- USER INPUTs
+/*
+point 1: raw 16350.5 = 0.000
+point 2: raw 16404.1 = 4.200
+fit of 2 points, worst error = 0.0000
+LC_SLOPE[1] = 0.078358208954f;   LC_INTERCEPT[1] = -1281.1959f;
+point 3: raw 16782.2 = 27.780
+fit of 3 points, worst error = 0.4212
+LC_SLOPE[1] = 0.063616813928f;   LC_INTERCEPT[1] = -1039.7978f;
+point 4: raw 16400.3 = 2.580
+fit of 4 points, worst error = 0.7141
+LC_SLOPE[1] = 0.064285788756f;   LC_INTERCEPT[1] = -1051.0646f;
+point 5: raw 16434.3 = 3.500
+fit of 5 points, worst error = 1.5166
+LC_SLOPE[1] = 0.064916693037f;   LC_INTERCEPT[1] = -1061.8438f;
+fit of 5 points, worst error = 1.5166
+LC_SLOPE[1] = 0.064916693037f;   LC_INTERCEPT[1] = -1061.8438f;
+*/
 
 float lc_weights[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
 bool LC_INSTALLED[6] = { false, false, false, false, false, false };   // LC1-6 = NAU7802s U8,U10-U14 on mux channels 1-6; set a slot false if that load cell is not fitted
