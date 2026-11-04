@@ -1,12 +1,15 @@
 import re
 from PyQt5.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
-    QScrollArea, QWidget,
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QWidget, QFrame,
 )
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, QPoint
 
 from GUI_CONTROLLER import GUIController
+from GUI_WIDGETS import DragHandle, RenameLabel, ask_new_name
 from PID_SCHEMA import COMMANDABLE_VALVE_TYPES, COMP_IGNITER, get_actuator_spec
+
+
+_VALVE_MIME = "application/x-red-valve-row"
 
 
 def _natural_key(text: str):
@@ -15,14 +18,19 @@ def _natural_key(text: str):
 
 
 class ValveControlPanel(QWidget):
-    """Open / Close buttons for every relay-bound valve and pump in the project, sorted
-    alphabetically then numerically. Position-commanded actuators (servos, the Bray
-    valve) open to 100 % and close to 0 %. Igniters are left out on purpose, and so are
-    passive parts (PRVs, check valves) and manual valves, which have no binding."""
+    """Open / Close buttons for every relay-bound valve and pump in the project. Position-
+    commanded actuators (servos, the Bray valve) open to 100 % and close to 0 %. Igniters are
+    left out on purpose, and so are passive parts (PRVs, check valves) and manual valves,
+    which have no binding.
+
+    Rows start sorted alphabetically then numerically. Drag a row's grip (the dots on its
+    left) to reorder, and double-click a name to rename it. Both are for this session only:
+    nothing is saved, so a restart brings back the original order and names."""
 
     def __init__(self, controller: GUIController, parent=None):
         super().__init__(parent)
         self.controller = controller
+        self.setAcceptDrops(True)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(4, 4, 4, 4)
         self._hint = QLabel()
@@ -31,13 +39,20 @@ class ValveControlPanel(QWidget):
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.NoFrame)
         self._body = QWidget()
-        self._grid = QGridLayout(self._body)
-        self._grid.setColumnStretch(1, 1)
+        self._list = QVBoxLayout(self._body)
+        self._list.setContentsMargins(0, 0, 0, 0)
+        self._list.setSpacing(4)
         scroll.setWidget(self._body)
         outer.addWidget(scroll, 1)
 
-        self._rows = {}         # hw_id -> (state label, open btn, close btn)
+        self._drop_line = QFrame(self)              # insertion marker shown while dragging a row
+        self._drop_line.setStyleSheet("background-color: #4488ff; border-radius: 1px;")
+        self._drop_line.hide()
+
+        self._rows = {}         # hw_id -> (state label, open btn, close btn, row widget, name label)
+        self._order = []        # session-only row order (hw_ids)
 
         s = controller.signals
         s.valve_updated.connect(self._on_valve_updated)
@@ -45,11 +60,12 @@ class ValveControlPanel(QWidget):
         s.mode_changed.connect(self._refresh_enabled)
         s.view_only_changed.connect(lambda *_: self._refresh_enabled())
         s.project_changed.connect(self.rebuild)
+        s.names_changed.connect(self._refresh_names)
         self.rebuild()
 
     def rebuild(self):
-        while self._grid.count():
-            item = self._grid.takeAt(0)
+        while self._list.count():
+            item = self._list.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
         self._rows.clear()
@@ -66,25 +82,102 @@ class ValveControlPanel(QWidget):
                 if not hw_id or hw_id not in self.controller.valve_states:
                     continue
                 entries.append((comp.label or hw_id, hw_id))
-        entries.sort(key=lambda e: _natural_key(e[0]))
+        # Alphabetical/numerical by default; anything the operator already dragged keeps its place
+        known = {h: i for i, h in enumerate(self._order)}
+        entries.sort(key=lambda e: (0, known[e[1]], []) if e[1] in known else (1, 0, _natural_key(e[0])))
+        self._order = [h for _l, h in entries]
 
-        for row, (label, hw_id) in enumerate(entries):
-            name = QLabel(label)
+        for _label, hw_id in entries:
+            row = QWidget()
+            lay = QHBoxLayout(row)
+            lay.setContentsMargins(2, 2, 2, 2)
+            lay.setSpacing(8)
+            handle = DragHandle(hw_id, _VALVE_MIME)
+            name = RenameLabel(self.controller.valve_display_name(hw_id))
             name.setStyleSheet("font-weight: bold;")
+            name.setMinimumWidth(110)
+            name.rename_requested.connect(lambda h=hw_id: self._rename(h))
             state = QLabel("---")
             state.setMinimumWidth(70)
             open_btn = QPushButton("Open")
             close_btn = QPushButton("Close")
             open_btn.clicked.connect(lambda _=False, h=hw_id: self._command(h, True))
             close_btn.clicked.connect(lambda _=False, h=hw_id: self._command(h, False))
-            self._grid.addWidget(name, row, 0)
-            self._grid.addWidget(state, row, 1)
-            self._grid.addWidget(open_btn, row, 2)
-            self._grid.addWidget(close_btn, row, 3)
-            self._rows[hw_id] = (state, open_btn, close_btn)
+            lay.addWidget(handle)
+            lay.addWidget(name)
+            lay.addWidget(state, 1)
+            lay.addWidget(open_btn)
+            lay.addWidget(close_btn)
+            self._list.addWidget(row)
+            self._rows[hw_id] = (state, open_btn, close_btn, row, name)
             self._show_state(hw_id)
-        self._grid.setRowStretch(len(entries), 1)
+        self._list.addStretch(1)
         self._refresh_enabled()
+
+    # --- renaming (session only) ---------------------------------------------------
+    def _rename(self, hw_id: str):
+        c = self.controller
+        new = ask_new_name(self, c.valve_display_name(hw_id), c.original_name(hw_id))
+        if new is not None:
+            c.rename_item(hw_id, new)
+
+    def _refresh_names(self):
+        for hw_id, row in self._rows.items():
+            row[4].setText(self.controller.valve_display_name(hw_id))
+
+    # --- drag-and-drop reordering (session only) -----------------------------------
+    def _drop_target(self, event):
+        """(dragged hw_id, new index, line y, line x, line width) for a drag over the panel."""
+        if not event.mimeData().hasFormat(_VALVE_MIME):
+            return None
+        key = bytes(event.mimeData().data(_VALVE_MIME)).decode()
+        if key not in self._rows:
+            return None
+        row = self._rows[key][3]
+        others = [self._rows[h][3] for h in self._order if h != key]
+        if not others:
+            return None
+        cursor_y = event.pos().y()
+        new = sum(1 for r in others
+                  if self.mapFromGlobal(r.mapToGlobal(QPoint(0, r.height() // 2))).y() < cursor_y)
+        if new == 0:
+            line_y = self.mapFromGlobal(others[0].mapToGlobal(QPoint(0, 0))).y()
+        else:
+            ref = others[new - 1]
+            line_y = self.mapFromGlobal(ref.mapToGlobal(QPoint(0, ref.height()))).y()
+        x = self.mapFromGlobal(others[0].mapToGlobal(QPoint(0, 0))).x()
+        return key, new, line_y, x, others[0].width()
+
+    def dragEnterEvent(self, event):
+        if event.mimeData().hasFormat(_VALVE_MIME):
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event):
+        t = self._drop_target(event)
+        if t is None:
+            self._drop_line.hide()
+        else:
+            _key, _new, y, x, w = t
+            self._drop_line.setGeometry(x, y - 1, w, 3)
+            self._drop_line.show()
+            self._drop_line.raise_()
+        event.acceptProposedAction()
+
+    def dragLeaveEvent(self, event):
+        self._drop_line.hide()
+
+    def dropEvent(self, event):
+        self._drop_line.hide()
+        t = self._drop_target(event)
+        event.acceptProposedAction()
+        if t is None:
+            return
+        key, new, *_ = t
+        self._order.remove(key)
+        self._order.insert(new, key)
+        row = self._rows[key][3]
+        self._list.removeWidget(row)
+        self._list.insertWidget(new, row)
 
     def _command(self, hw_id: str, want_open: bool):
         c = self.controller
@@ -116,7 +209,7 @@ class ValveControlPanel(QWidget):
 
     def _refresh_enabled(self, *_):
         locked = self.controller.lockout
-        for _state, open_btn, close_btn in self._rows.values():
+        for _state, open_btn, close_btn, _row, _name in self._rows.values():
             open_btn.setEnabled(not locked)
             close_btn.setEnabled(not locked)
         if self.controller.view_only:

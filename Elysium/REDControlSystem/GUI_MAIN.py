@@ -132,6 +132,11 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     state = {}
 
+    # Keep the display (and the machine) awake for as long as the GUI is open.
+    import GUI_AWAKE
+    print(f"[GUI_AWAKE] {GUI_AWAKE.start()}")
+    app.aboutToQuit.connect(GUI_AWAKE.stop)
+
     # The loading screen is the content of the app window itself. It has the same title and
     # geometry as the real MainWindow, which replaces it in place the moment loading finishes.
     shell = QMainWindow()

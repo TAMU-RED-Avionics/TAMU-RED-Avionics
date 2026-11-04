@@ -6,11 +6,11 @@ from PyQt5.QtWidgets import (
     QToolButton, QMessageBox,
     QDialog, QDialogButtonBox, QDoubleSpinBox, QApplication,
 )
-from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QMimeData, QPoint, QSettings
-from PyQt5.QtGui import QColor, QDrag
+from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QPoint, QSettings
+from PyQt5.QtGui import QColor
 
 from GUI_LOGO import LogoWindow
-from GUI_WIDGETS import UpwardComboBox
+from GUI_WIDGETS import UpwardComboBox, DragHandle, RenameLabel, ask_new_name
 from GUI_VALVES import ValveControlPanel
 from GUI_TESTS import TestsPage
 from GUI_CONNECT import ConnectionWindow
@@ -130,42 +130,6 @@ _SENSOR_MIME = "application/x-red-sensor-row"
 _SETTINGS_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "gui_settings.ini")
 
 
-class _DragHandle(QLabel):
-    """Grip on the left of a sensor row. Dragging it starts a reorder; the SensorPanel
-    handles the drop."""
-
-    def __init__(self, name: str, parent=None):
-        super().__init__("⋮⋮", parent)
-        self._name = name
-        self._press = None
-        self.setFixedWidth(16)
-        self.setAlignment(Qt.AlignCenter)
-        self.setCursor(Qt.SizeAllCursor)
-        self.setToolTip("Drag to reorder")
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self._press = event.pos()
-
-    def mouseMoveEvent(self, event):
-        if self._press is None or not (event.buttons() & Qt.LeftButton):
-            return
-        if (event.pos() - self._press).manhattanLength() < QApplication.startDragDistance():
-            return
-        self._press = None
-        row = self.parentWidget()
-        mime = QMimeData()
-        mime.setData(_SENSOR_MIME, self._name.encode())
-        drag = QDrag(self)
-        drag.setMimeData(mime)
-        drag.setPixmap(row.grab())
-        drag.setHotSpot(self.mapTo(row, event.pos()))
-        drag.exec_(Qt.MoveAction)
-
-    def mouseReleaseEvent(self, event):
-        self._press = None
-
-
 class SensorRow(QWidget):
     """One sensor line in the right sidebar: name, live value, unit, tare."""
     clicked = pyqtSignal(str)
@@ -179,9 +143,10 @@ class SensorRow(QWidget):
         layout.setContentsMargins(2, 2, 2, 2)
         layout.setSpacing(10)
 
-        self.name_lbl = QLabel(f"{controller.sensor_display_name(name)}:")
+        self.name_lbl = RenameLabel(f"{controller.sensor_display_name(name)}:")
         self.name_lbl.setMinimumWidth(52)
         self.name_lbl.setObjectName("sensor_name_label")
+        self.name_lbl.rename_requested.connect(self._rename)
 
         self.value_lbl = QLabel("---")
         self.value_lbl.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
@@ -199,7 +164,7 @@ class SensorRow(QWidget):
 
         # Drag handle: grab it and drop the row elsewhere in its section (session only -
         # the order resets when the project is reloaded)
-        self.handle = _DragHandle(name)
+        self.handle = DragHandle(name, _SENSOR_MIME)
         layout.addWidget(self.handle)
         layout.addWidget(self.name_lbl)
         layout.addWidget(self.value_lbl, stretch=1)
@@ -207,6 +172,15 @@ class SensorRow(QWidget):
         layout.addWidget(self.tare_btn)
 
         self.setCursor(Qt.PointingHandCursor)
+
+    def refresh_name(self):
+        self.name_lbl.setText(f"{self.controller.sensor_display_name(self.name)}:")
+
+    def _rename(self):
+        c = self.controller
+        new = ask_new_name(self, c.sensor_display_name(self.name), c.original_name(self.name))
+        if new is not None:
+            c.rename_item(self.name, new)
 
     def mousePressEvent(self, event):
         """Emit clicked signal with sensor name when row is clicked."""
@@ -249,6 +223,8 @@ class SensorPanel(QWidget):
         super().__init__(parent)
         self.controller = controller
         self.controller.signals.sensor_updated.connect(self._on_sensor_updated)
+        self.controller.signals.names_changed.connect(
+            lambda: [r.refresh_name() for r in self._all_rows().values()])
 
         self._selected_sensor = None
 

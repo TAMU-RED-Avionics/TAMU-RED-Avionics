@@ -107,6 +107,7 @@ class PIDViewWindow(QWidget):
         c.signals.valve_updated.connect(self._on_valve_updated)
         c.signals.actuator_updated.connect(self._on_actuator_updated)
         c.signals.sensor_updated.connect(self._on_sensor_updated)
+        c.signals.names_changed.connect(self._apply_name_overrides)
 
         # Same lock rule as the project selector: locked while live (MANUAL /
         # LOCKED) or while any valve is open. See
@@ -153,6 +154,15 @@ class PIDViewWindow(QWidget):
                 hw_id = self._comp_to_valve_hw.get(cid)
                 self.canvas.update_throttle(
                     cid, self.controller.actuator_positions.get(hw_id, spec.safe_pct))
+
+    def _apply_name_overrides(self):
+        """Show the operator's session-only renames (sensors and valves) on the P&ID labels."""
+        ov = {}
+        for key, text in self.controller.name_overrides.items():
+            cid = self._valve_hw_to_comp.get(key) or self._sensor_hw_to_comp.get(key)
+            if cid:
+                ov[cid] = text
+        self.canvas.set_label_overrides(ov)
 
     def _build_hw_maps(self):
         """Build comp_id <-> hardware_id lookup tables from the loaded project."""

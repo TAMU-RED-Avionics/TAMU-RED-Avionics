@@ -6,6 +6,7 @@
 # PID_RENDERER.py's job - this file calls into it (Renderer.draw, world_rect,
 # the theme palette) rather than drawing shapes itself.
 
+from dataclasses import replace as _dc_replace
 import math
 from PyQt5.QtWidgets import (
     QWidget, QSizePolicy, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QMessageBox,
@@ -424,6 +425,7 @@ class PIDCanvas(QWidget):
         self.interactive = interactive
         self.project: PIDProject = None
 
+        self.label_overrides:    dict = {}   # cid -> session-only display name (see GUIController.rename_item)
         self.live_valve_states:  dict = {}
         self.live_sensor_values: dict = {}
         self.live_throttle_pcts: dict = {}
@@ -527,6 +529,10 @@ class PIDCanvas(QWidget):
     def _flush_repaint(self):
         self._repaint_pending = False
         self.update()
+
+    def set_label_overrides(self, overrides: dict):
+        self.label_overrides = dict(overrides)
+        self._request_repaint()
 
     def update_valve_state(self, cid: str, state: str):
         self.live_valve_states[cid] = state
@@ -1040,7 +1046,7 @@ class PIDCanvas(QWidget):
             else:
                 val_str = f"{value:.1f}"
             unit = SENSOR_UNIT.get(comp.type, "")
-            lbl  = comp.label or cid
+            lbl  = self.label_overrides.get(cid) or comp.label or cid
 
             # Compact single-line pill:  P1  512.30 psi
             lbl_w  = fm_lbl.horizontalAdvance(lbl)
@@ -1325,6 +1331,8 @@ class PIDCanvas(QWidget):
             pos = self.project.layout.get(cid)
             if not pos:
                 continue
+            if cid in self.label_overrides:
+                comp = _dc_replace(comp, label=self.label_overrides[cid])   # draw the renamed label; the project is untouched
             state = self.live_valve_states.get(cid, "CLOSED")
             value = self.live_sensor_values.get(cid)
             actuator_pct = None
@@ -1478,12 +1486,12 @@ class PIDCanvas(QWidget):
                     sp = self._popup_anchor(cid)
                     if spec is not None:
                         self._actuator_popup.show_for(
-                            cid, comp.label.strip() or cid, spec, state,
+                            cid, (self.label_overrides.get(cid) or comp.label).strip() or cid, spec, state,
                             self.live_throttle_pcts.get(cid, spec.safe_pct), sp)
                     else:
                         self._valve_popup.show_for(cid, state, sp,
                                                    is_igniter=(comp.type == COMP_IGNITER),
-                                                   title=comp.label.strip() or cid)
+                                                   title=(self.label_overrides.get(cid) or comp.label).strip() or cid)
 
                 if self.interactive:
                     self._dragging_comp    = cid

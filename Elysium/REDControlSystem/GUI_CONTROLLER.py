@@ -57,6 +57,7 @@ class Signals(QObject):
     project_changed = pyqtSignal()
     project_received = pyqtSignal(dict)
     recording_stopped = pyqtSignal()        # DAQ file saved; Telemetry refreshes its file list
+    names_changed = pyqtSignal()            # a sensor / valve display name was renamed (or reset)
     view_only_changed = pyqtSignal(bool)
     # A hold-test event relayed from the controller GUI to a viewer GUI (see Tests tab).
     test_event = pyqtSignal(dict)
@@ -152,6 +153,8 @@ class GUIController:
         self.tare_offsets: dict = {}
         self.calibrations: dict = {}        # name -> (gain, offset)
         self.sensor_labels: dict = {}       # sensor key (hw_id) -> P&ID label, for display
+        self.valve_labels: dict = {}        # valve hw_id -> P&ID label, for display
+        self.name_overrides: dict = {}      # key -> session-only display name (see rename_item)
 
         # Health tracking: last receive time + recent uncalibrated samples
         # (used for stale / flatline detection and the calibration wizard)
@@ -624,6 +627,9 @@ class GUIController:
 
     def load_project(self, project, path: str = None):
         self.project = project
+        if self.name_overrides:
+            self.name_overrides.clear()         # renames belong to the session's current project
+            self.signals.names_changed.emit()
         if path:
             self.project_path = path
         self._rebuild_sensor_keys(project)
@@ -647,6 +653,7 @@ class GUIController:
 
         new_states: dict[str, bool] = {}
         new_igniters: set = set()
+        self.valve_labels = {}
         for comp in project.components.values():
             # Anything carrying an actuator spec (e.g. an ep_throttle_valve or a
             # servo-driven ball valve) is commandable even if its type isn't listed.
@@ -657,6 +664,7 @@ class GUIController:
                 continue
             # Preserve state if valve was already known, default to closed
             new_states[hw_id] = self.valve_states.get(hw_id, False)
+            self.valve_labels[hw_id] = comp.label or hw_id
             if comp.type == COMP_IGNITER:
                 new_igniters.add(hw_id)
 
@@ -684,7 +692,26 @@ class GUIController:
     def sensor_display_name(self, key: str) -> str:
         """Name shown to the operator for a sensor key: the P&ID label (e.g.
         OPT-1301) when the key is a separate internal hw_id (e.g. P2)."""
-        return self.sensor_labels.get(key, key)
+        return self.name_overrides.get(key) or self.sensor_labels.get(key, key)
+
+    # Session-only display names: renaming a sensor or valve changes what the operator SEES
+    # (sidebar, Valve Controls, P&ID labels). The internal key (hw_id) that rules, sequences,
+    # recordings and the firmware use is untouched, and nothing is saved - a restart (or
+    # loading a project) puts every original name back.
+    def valve_display_name(self, hw_id: str) -> str:
+        return self.name_overrides.get(hw_id) or self.valve_labels.get(hw_id, hw_id)
+
+    def original_name(self, key: str) -> str:
+        return self.valve_labels.get(key) or self.sensor_labels.get(key, key)
+
+    def rename_item(self, key: str, new_name: str):
+        """Set (or, with an empty/same name, clear) the display name of a sensor or valve."""
+        new_name = (new_name or "").strip()
+        if not new_name or new_name == self.original_name(key):
+            self.name_overrides.pop(key, None)
+        else:
+            self.name_overrides[key] = new_name
+        self.signals.names_changed.emit()
 
     def _rebuild_sensor_keys(self, project):
         from PID_SCHEMA import COMP_PRESSURE, COMP_TEMPERATURE, COMP_LOAD_CELL
