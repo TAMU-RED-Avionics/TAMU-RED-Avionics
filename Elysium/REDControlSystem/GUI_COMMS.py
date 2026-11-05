@@ -885,7 +885,7 @@ class EthernetClient:
         """Command a proportional actuator to ``pct`` (already clamped by the
         caller to the component's ActuatorSpec range). The actuator is addressed
         by the same hardware.relay ID as any other valve; the firmware decides
-        how to turn the position into a servo pulse / 4-20 mA / etc."""
+        how to turn the position into 4-20 mA / etc."""
         if not self.connected:
             print(f"[EthernetClient] send_actuator_command({name}, {pct}) SKIPPED: not connected")
             return

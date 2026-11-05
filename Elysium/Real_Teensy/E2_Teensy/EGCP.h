@@ -55,10 +55,6 @@ public:
     // Proportional actuator IDs (PKT_POS). These are the same 1-byte IDs the
     // P&ID stores in a component's hardware.relay, so they share the VSO/VSC
     // ID space - keep them disjoint from the valve IDs above.
-    // *** TEST SETUP: two 35 kg RC servos driven straight from Teensy GPIO. ***
-    // (Servos are externally powered and always on; the Teensy only sends the PWM signal.)
-    static constexpr uint8_t ACTUATOR_SV1 = 0x51;   // 35 kg RC servo #1 (Teensy pin 23)
-    static constexpr uint8_t ACTUATOR_SV2 = 0x52;   // 35 kg RC servo #2 (Teensy pin 22)
     static constexpr uint8_t ACTUATOR_BRAY = 0x53;  // FMV (Bray) modulating valve, 4-20 mA from AD5420 on SPI1
 
     // Sensor ID mapping (1-byte IDs) - E2: 12 pressure transducers (PT0-PT11),

@@ -965,38 +965,6 @@
       "flip": false
     },
     {
-      "id": "AV_2",
-      "type": "actuated_valve",
-      "label": "FV-1202",
-      "hardware": {
-        "relay": 82
-      },
-      "extras": {
-        "label_offset": [
-          44.0,
-          -28.2
-        ],
-        "actuator": {
-          "min_pct": 0,
-          "max_pct": 100,
-          "safe_pct": 0,
-          "open_pct": 100,
-          "unit": "%",
-          "presets": [
-            0,
-            25,
-            50,
-            75,
-            100
-          ],
-          "step": 1
-        }
-      },
-      "rotation": 270,
-      "hide_lbl": false,
-      "flip": false
-    },
-    {
       "id": "AV_3",
       "type": "actuated_valve",
       "label": "MFV",
@@ -1707,10 +1675,6 @@
     "AV_1": {
       "x": 1260.0,
       "y": 700.0
-    },
-    "AV_2": {
-      "x": 1260.0,
-      "y": 100.0
     },
     "AV_3": {
       "x": 1500.0,
@@ -2869,7 +2833,6 @@
         "SV_2": false,
         "SV_4": false,
         "AV_1": false,
-        "AV_2": false,
         "AV_3": false,
         "SV_6": false,
         "P_1": false,

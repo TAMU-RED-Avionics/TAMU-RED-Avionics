@@ -426,7 +426,7 @@ over UDP.
 
 > **`PKT_GVS`/`PKT_BGP`/`PKT_HGP` are dead protocol.** `GUIController.toggle_gimbaling`
 > only flips a local flag and logs it, and `E2_Teensy.ino` has no handler for any of
-> the three. Gimbaling is UI-only today. Proportional valve/servo control no longer
+> the three. Gimbaling is UI-only today. Proportional valve control no longer
 > goes through `PKT_GVS`: it uses `PKT_POS` (see §6.4), and `GUIController.set_throttle`
 > now exists as a thin wrapper over it.
 
@@ -462,13 +462,13 @@ directly, which `GUIController.handle_new_data` turns into a
 
 ### 6.3 Proportional actuators (`PKT_POS`)
 
-Modulating valves and servos are **data-driven**: the GUI has no per-device code.
+Modulating valves are **data-driven**: the GUI has no per-device code.
 
 | Concern | Where it lives |
 |---|---|
 | Which components are positioned, their range, safe / open positions, unit, presets, step | the P&ID: `Component.extras["actuator"]` (`PID_SCHEMA.ActuatorSpec`, edited in the P&ID editor's *Proportional Actuator* section) |
 | Which firmware actuator it is | the P&ID: `hardware.relay` (same 1-byte ID space as valves, e.g. `0x50`) |
-| How a position becomes a physical signal (servo pulse, PWM into the 4-20 mA card, ...) | the firmware: the `ACTUATORS[]` table in `E2_Teensy.ino` |
+| How a position becomes a physical signal (4-20 mA from the AD5420, PWM into the analog card, ...) | the firmware: the `ACTUATORS[]` table in `E2_Teensy.ino` |
 
 ```json
 "extras": { "actuator": { "min_pct": 0, "max_pct": 100, "safe_pct": 0, "open_pct": 100,
@@ -488,8 +488,8 @@ position on the symbol. In a sequence step, an actuator listed under `open_valve
 means "go to `open_pct`"; unlisted means "go to `safe_pct`" (per-step setpoints are not
 supported yet).
 
-Firmware side (`E2_Teensy.ino`): `ACT_RC_SERVO` (50 Hz pulse `us_min..us_max` on a GPIO)
-and `ACT_PWM_ANALOG` (fixed-frequency PWM into the PWM-to-analog slave card). Every
+Firmware side (`E2_Teensy.ino`): `ACT_AD5420` (4-20 mA over SPI1, used by the Bray valve)
+and `ACT_PWM_ANALOG` (fixed-frequency PWM into the PWM-to-analog slave card, unused). Every
 actuator is driven to `safe_pct` at boot and in `safe_all_valves()` (so SFE, comms loss
 and `trigger_shutdown` safe them), and the current positions are sent to the GUI after
 each `PKT_STA`. An unknown actuator ID is NCK'd (the GUI shows the command as failed);
@@ -614,8 +614,6 @@ goes to the wrong relay). Current bindings, current firmware constants:
 | `VALVE_GV_1` / `VALVE_GV_2` | `0x20` / `0x21` | `GV-1` / `GV-2` |
 | `VALVE_IG1` / `VALVE_IG2` | `0x30` / `0x31` | `IGN_1` / `IGN_2` |
 | `VALVE_GIMBAL` | `0x40` | *(none — gimbaling unimplemented, see §6)* |
-| `ACTUATOR_SV1` | `0x51` | `SV-1` (`SV_1`, 35 kg RC servo on Teensy pin 23; `PKT_POS`) |
-| `ACTUATOR_SV2` | `0x52` | `SV-2` (`SV_2`, 35 kg RC servo on Teensy pin 22; `PKT_POS`) |
 | `SENSOR_P1`..`SENSOR_P8` | `0x01`-`0x08` | `P1`..`P8` |
 | `SENSOR_TC1`..`SENSOR_TC3` | `0x09`-`0x0B` | `TC1`..`TC3` |
 | `SENSOR_L1`..`SENSOR_L3` | `0x0C`-`0x0E` | `LC1`..`LC3` |
@@ -675,10 +673,10 @@ commandable again.
 
 ## 9. Known limitations (as of this writing)
 
-- Gimbaling is UI-only — see the callout in §6. (Proportional valves/servos work via
+- Gimbaling is UI-only — see the callout in §6. (Proportional valves work via
   `PKT_POS`, §6.3, but the `GV-1`/`GV-2` globe valves in `Elysium.red` are still plain
   on/off relays.)
-- **Test setup:** `SV-1` / `SV-2` are two 35 kg RC servos wired straight to Teensy pins 23 / 22 (red to 5 V) in `E2_Teensy.ino`. A 35 kg servo can draw more than the Teensy 5 V pin supplies; use a separate supply with a shared ground if the board resets. The Bray valve / PWM-to-analog driver (`ACT_PWM_ANALOG`) is kept in the firmware but unused. In `Elysium.red` both servos are placed unconnected at the right edge of the canvas and need to be dragged into position and piped.
+- The PWM-to-analog driver (`ACT_PWM_ANALOG`) is kept in the firmware but unused.
 - `GUIController.toggle_abort_mode` was removed as dead code during the last cleanup
   pass; abort behavior is entirely driven by `project.rules` / per-sensor
   `thresholds` now, not by any in-memory "mode" toggle.

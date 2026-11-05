@@ -19,7 +19,7 @@ def _natural_key(text: str):
 
 class ValveControlPanel(QWidget):
     """Open / Close buttons for every relay-bound valve and pump in the project. Position-
-    commanded actuators (servos, the Bray valve) open to 100 % and close to 0 %. Igniters are
+    commanded actuators (the Bray valve) open to 100 % and close to 0 %. Igniters are
     left out on purpose, and so are passive parts (PRVs, check valves) and manual valves,
     which have no binding.
 

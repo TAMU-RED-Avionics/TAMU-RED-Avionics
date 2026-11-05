@@ -243,7 +243,7 @@ class ValvePopup(QWidget):
 
 class ActuatorPopup(QWidget):
     """
-    Floating control for a proportional actuator (modulating valve, RC servo,
+    Floating control for a proportional actuator (modulating valve,
     ...). Everything it shows - range, unit, safe position, presets - comes from
     the component's ActuatorSpec in the P&ID, so one popup serves any hardware.
     """

@@ -814,60 +814,6 @@
       "hide_lbl": false
     },
     {
-      "id": "SV_1",
-      "type": "ball_valve",
-      "label": "SV-1",
-      "hardware": {
-        "relay": 81
-      },
-      "extras": {
-        "actuator": {
-          "min_pct": 0,
-          "max_pct": 100,
-          "safe_pct": 0,
-          "open_pct": 100,
-          "unit": "%",
-          "presets": [
-            0,
-            25,
-            50,
-            75,
-            100
-          ],
-          "step": 1
-        }
-      },
-      "rotation": 90,
-      "hide_lbl": false
-    },
-    {
-      "id": "SV_2",
-      "type": "ball_valve",
-      "label": "SV-2",
-      "hardware": {
-        "relay": 82
-      },
-      "extras": {
-        "actuator": {
-          "min_pct": 0,
-          "max_pct": 100,
-          "safe_pct": 0,
-          "open_pct": 100,
-          "unit": "%",
-          "presets": [
-            0,
-            25,
-            50,
-            75,
-            100
-          ],
-          "step": 1
-        }
-      },
-      "rotation": 90,
-      "hide_lbl": false
-    },
-    {
       "id": "PT_9",
       "type": "pressure",
       "label": "P9",
@@ -1197,14 +1143,6 @@
     "LOA_6": {
       "x": 150.0,
       "y": 780.0
-    },
-    "SV_1": {
-      "x": 1200.0,
-      "y": 460.0
-    },
-    "SV_2": {
-      "x": 1200.0,
-      "y": 300.0
     },
     "PT_9": {
       "x": 1000.0,
@@ -1773,9 +1711,7 @@
         "VAL_5": false,
         "VAL_6": false,
         "BV_3": false,
-        "GV_2": false,
-        "SV_1": false,
-        "SV_2": false
+        "GV_2": false
       },
       "confirmed": true
     }
@@ -1907,10 +1843,7 @@
         {
           "name": "2",
           "time_offset": 15.0,
-          "open_valves": [
-            "SV_2",
-            "SV_1"
-          ],
+          "open_valves": [],
           "is_terminal_count": false
         },
         {

@@ -146,11 +146,11 @@ class Component:
 # Proportional actuator spec - stored in Component.extras["actuator"]
 # ---------------------------------------------------------------------------
 # Any valve-type component can carry this to become a *positioned* actuator
-# (modulating valve, RC servo, ...) instead of a plain open/close relay. It
+# (modulating valve, ...) instead of a plain open/close relay. It
 # describes only what the GUI needs: the commandable range, which position is
 # "safe", and what "open" means for sequences/rules that only know open/closed.
-# HOW the position is physically produced (4-20mA via a PWM->analog card, RC
-# servo pulse, stepper...) is the firmware's business - the GUI just sends a
+# HOW the position is physically produced (4-20mA card, stepper...) is the
+# firmware's business - the GUI just sends a
 # position (PKT_POS) to the component's hardware.relay ID.
 #
 #   "actuator": {

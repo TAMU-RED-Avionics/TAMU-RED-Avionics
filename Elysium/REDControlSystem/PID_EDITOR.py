@@ -323,11 +323,11 @@ class PropertyPanel(QWidget):
         explicit = isinstance(comp.extras.get("actuator"), dict)
         spec = get_actuator_spec(comp)
 
-        cb = QCheckBox("Positioned (modulating valve / servo)")
+        cb = QCheckBox("Positioned (modulating valve)")
         cb.setChecked(spec is not None)
         cb.setToolTip("Control this component with a 0-100 position instead of open/close.\n"
                       "Sends PKT_POS to the Binding ID; the firmware decides how\n"
-                      "(RC servo pulse, 4-20 mA card, ...).")
+                      "(4-20 mA card, ...).")
         cb.toggled.connect(lambda checked: self.property_changed.emit("act_enabled", checked))
         self.form.addRow(cb)
 

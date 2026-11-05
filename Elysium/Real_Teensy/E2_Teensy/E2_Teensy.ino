@@ -11,7 +11,6 @@ VARIABLES & USER INPUT
 #include <Adafruit_I2CDevice.h>
 #include <Adafruit_I2CRegister.h>
 #include <Adafruit_MCP9600.h>
-#include <Servo.h>
 #include "EGCP.h"
 
 #define SERIAL_DEBUG 1
@@ -43,7 +42,9 @@ long unsigned ABORT_TIME_TRACKING              = 0;             // timestamp of 
 const int BAUD = 115200;
 
 // Relay line -> Teensy pin, traced from the daughter card PCB
-// (Teensy_Daughtercard.kicad_pcb, J6 -> U1; all 16 lines are routed on copper):
+// (Teensy_Daughtercard.kicad_pcb v2.5, J6 -> U1). Relays 5, 6 and 14 stop at J6: their
+// pins now carry SPI1 to the AD5420, so those three lines are not driven by anything.
+// The other 13 are routed on copper. Relay 16 is spare.
 //   relay  1 = pin 31 (J6-11)    relay  9 = pin  9 (J6-7)
 //   relay  2 = pin 30 (J6-36)    relay 10 = pin  8 (J6-32)
 //   relay  3 = pin 29 (J6-10)    relay 11 = pin  7 (J6-6)
@@ -57,9 +58,9 @@ const int NCS2_PIN   = 7;    // relay 11
 const int NCS3_PIN   = 5;    // relay 12
 // NCS4 is a manual switch (no relay). NCS5 = FV-1201 (ID 0x04) is wired to relay 13.
 const int NCS5_PIN   = 3;    // relay 13 (FV-1201)
-// Pins 26/27 are SPI1 MOSI/SCK, which the AD5420 (Bray valve) needs, so
-// PA-BV1/PA-BV3 are unavailable while the Bray valve is wired.
-const int PA_BV3_PIN = -1;   // was 27 (relay 5)
+// Pins 26/27 are SPI1 MOSI/SCK, which the AD5420 (Bray valve) needs, so PA-BV1 has no
+// relay and PA-BV3 / NCS6 (ID 0x06) moved from relay 5 to relay 15.
+const int PA_BV3_PIN = 21;   // relay 15 (J6-1)
 const int PA_BV1_PIN = -1;   // was 26 (relay 6)
 const int PA_BV2_PIN = 24;   // relay 7
 const int PNEUMA_PIN = -1;   // was pin 3 (relay 13); relay 13 now drives NCS5 / FV-1201
@@ -69,12 +70,12 @@ const int PNEUMA_PIN = -1;   // was pin 3 (relay 13); relay 13 now drives NCS5 /
 // ground stays tied to the Teensy ground. -1 = card is wired straight to the rail (always on).
 const int BRAY_PWR_PIN = 9;    // relay 9 (J6-7)
 const int BRAY_AUX_PIN = -1;  // relay 14 = pin 1, but pin 1 is the AD5420's SPI1 MISO - unassigned until that moves
-const int FP_1201_PIN = -1;   // relay 18 - fuel pump FP-1201, TODO: set to the Teensy pin wired to this relay
-const int AP_1601_PIN = -1;   // relay 19 - air compressor AP-1601, TODO: set to the Teensy pin wired to this relay
+const int FP_1201_PIN = 29;   // relay 3 - fuel pump FP-1201 (ID 0x12)
+const int AP_1601_PIN = 28;   // relay 4 - air compressor AP-1601 (ID 0x13)
 const int GV1_PIN    = 25;   // relay 8
 const int GV2_PIN    = -1;
-const int IGN1_PIN   = -1;
-const int IGN2_PIN   = -1;
+const int IGN1_PIN   = 31;   // relay 1
+const int IGN2_PIN   = 30;   // relay 2
 const int GIMBAL_PIN = -1;
 
 
@@ -439,13 +440,13 @@ int get_pin_from_valve_id(uint8_t id) {
         case 0x0B: return NCS2_PIN;   // NCS2 = relay 11
         case 0x0C: return NCS3_PIN;   // NCS3 = relay 12
         case 0x04: return NCS5_PIN;   // NCS5 (FV-1201) is relay 13
-        case 0x06: return PA_BV3_PIN;   // was NCS6
+        case 0x06: return PA_BV3_PIN;   // NCS6 = relay 15
         case 0x0D: return PNEUMA_PIN;   // Pneuma - unassigned (relay 13 went to NCS5)
         case 0x0E: return BRAY_AUX_PIN;  // relay 14, also follows the Bray valve
         case 0x10: return PA_BV1_PIN;   // was LA-BV1
         case 0x11: return PA_BV2_PIN;   // was LA-BV2
-        case 0x12: return FP_1201_PIN;  // FP-1201 fuel pump = relay 18
-        case 0x13: return AP_1601_PIN;  // AP-1601 air compressor = relay 19
+        case 0x12: return FP_1201_PIN;  // FP-1201 fuel pump = relay 3
+        case 0x13: return AP_1601_PIN;  // AP-1601 air compressor = relay 4
         case 0x20: return GV1_PIN;
         case 0x21: return GV2_PIN;
         case 0x30: return IGN1_PIN;
@@ -477,7 +478,7 @@ const char* get_valve_name(uint8_t id) {
     }
 }
 
-enum ActuatorDriver : uint8_t { ACT_RC_SERVO, ACT_PWM_ANALOG, ACT_AD5420 };
+enum ActuatorDriver : uint8_t { ACT_PWM_ANALOG, ACT_AD5420 };
 
 // AD5420 (Bray valve, SPI1) - driver ported from the validated
 // AD5420_Sweep_Test_Daughtercard sketch (Real_Teensy/AD5420_Sweep_Test_Daughtercard/),
@@ -546,11 +547,16 @@ static void ad5420_print_status() {
     DBG_PRINTLN("");
 }
 
+// The MFV current is inverted here and only here: the position the GUI and the rest of this
+// firmware use is unchanged (0 % = closed, 100 % = open), but 0 % = 20 mA and 100 % = 4 mA.
+const uint16_t BRAY_CLOSED_DATA = 0xFFFF;   // full-scale = 20 mA
+static uint16_t bray_data(float pct) { return (uint16_t)((100.0f - pct) / 100.0f * 65535.0f + 0.5f); }
+
 // Init sequence bench-validated by AD5420_Sweep_Test_Daughtercard: configure the range with
-// OUTEN still clear (output stays off), zero the DATA register (4 mA = closed) WHILE the
+// OUTEN still clear (output stays off), load the DATA register (20 mA = closed) WHILE the
 // output is still disabled, and only then enable OUTEN - so the valve never briefly sees
 // a stale/garbage DATA value with the output already live. Writing the full CTRL_WORD
-// (OUTEN included) before zeroing DATA, as an earlier revision did, risks exactly that.
+// (OUTEN included) before loading DATA, as an earlier revision did, risks exactly that.
 static void ad5420_begin() {
     if (AD5420_CLEAR_PIN >= 0) {
         pinMode(AD5420_CLEAR_PIN, OUTPUT);
@@ -567,7 +573,7 @@ static void ad5420_begin() {
     ad5420_write(AD5420_ADDR_RESET, 0x0001);                                  // software reset, output tristated
     delay(1);
     ad5420_write(AD5420_ADDR_CONTROL, AD5420_CTRL_REXT | AD5420_RANGE_4_20);  // configure range, OUTEN still off
-    ad5420_write(AD5420_ADDR_DATA, 0x0000);                                   // zero-scale = 4 mA, output still off
+    ad5420_write(AD5420_ADDR_DATA, BRAY_CLOSED_DATA);                         // full-scale = 20 mA = closed, output still off
     ad5420_write(AD5420_ADDR_CONTROL, AD5420_CTRL_WORD);                      // enable IOUT
     delay(1);
 
@@ -583,67 +589,21 @@ struct ActuatorConfig {
     ActuatorDriver driver;
     int            pin;
     float          safe_pct;       // where abort / boot / loss-of-comms puts it
-    // ACT_RC_SERVO
-    uint16_t       us_min, us_max; // pulse widths at 0 % and 100 %
     // ACT_PWM_ANALOG
     float          duty_min_pct, duty_max_pct;
     uint32_t       pwm_hz;
 };
 
 const ActuatorConfig ACTUATORS[] = {
-    // =====================================================================
-    // *** TEMPORARY TEST SETUP - NOT THE FINAL WIRING ***
-    //
-    // Two 35 kg hobby RC servos, signal wires plugged DIRECTLY into the Teensy so we
-    // can exercise the GUI / PKT_POS path end to end. Wiring per servo:
-    //   - signal (PWM) wire -> Teensy pin (23 for SV-1, 22 for SV-2)
-    //   - power (red)       -> EXTERNAL supply at the servo's rated voltage. The servos
-    //                          are ALWAYS powered; the Teensy only sends the PWM signal.
-    //                          Nothing in this firmware or the GUI switches servo power.
-    //   - ground            -> external supply ground AND Teensy GND tied together
-    //                          (MUST be common, or the signal has no reference and the
-    //                          servo jitters).
-    // Do NOT power them from the Teensy 5 V pin: a 35 kg servo pulls several amps and
-    // can brown out / reset the Teensy (which trips the comms-loss abort).
-    //
-    // Because the servo is always powered, it moves as soon as a pulse appears: at
-    // boot it is driven to safe_pct, so expect it to snap to its us_min position
-    // when the Teensy starts. (After the direction flip that is the 2000 us end, i.e. CLOSED.)
-    //
-    // The FMV (Bray) modulating valve is driven by an AD5420 over SPI1
-    // (ACT_AD5420 row below). There is no ACT_PWM_ANALOG row; that driver is
-    // kept in case the PWM-to-analog slave card comes back.
-    //
-    // DIRECTION FLIP (test setup): us_min/us_max are deliberately "backwards"
-    // (2000, 1000) so that 0 % = CLOSED = 2000 us and 100 % = OPEN = 1000 us. With
-    // the original (1000, 2000) these servos were reversed (100 % closed, 0 % open).
-    // To flip it back, just swap the two numbers on both rows. The math handles
-    // us_min > us_max fine.
-    //
-    // us_min/us_max = pulse widths at 0 % / 100 % in the GUI. 1000-2000 us is
-    // the standard RC range and a SAFE starting point. Many 35 kg servos can go
-    // wider (500-2500 us) but if the linkage hits a hard stop the servo will
-    // stall and draw max current, so widen it gradually while watching it.
-    // safe_pct = 0 means: boot, abort, comms loss and the GUI "SAFE" button all
-    // drive the servo to its us_min position.
-    // =====================================================================
-
-    // SV-1: servo #1, signal on Teensy pin 23
-    { EGCPPacket::ACTUATOR_SV1, "SV-1", ACT_RC_SERVO, 23, 0.0f,
-      2000, 1000,   0.0f, 0.0f, 0 },
-
-    // SV-2: servo #2, same setup but signal on Teensy pin 22
-    { EGCPPacket::ACTUATOR_SV2, "SV-2", ACT_RC_SERVO, 22, 0.0f,
-      2000, 1000,   0.0f, 0.0f, 0 },
-
     // FMV (Bray): modulating valve driven 4-20 mA by the AD5420 on SPI1.
-    // 0 % = 4 mA, 100 % = 20 mA. pin = AD5420 LATCH (CS1).
+    // 0 % = 20 mA, 100 % = 4 mA (see bray_data). pin = AD5420 LATCH (CS1).
+    // There is no ACT_PWM_ANALOG row; that driver is kept in case the PWM-to-analog
+    // slave card comes back.
     { EGCPPacket::ACTUATOR_BRAY, "FMV (Bray)", ACT_AD5420, AD5420_LATCH_PIN, 0.0f,
-      0, 0,   0.0f, 0.0f, 0 },
+      0.0f, 0.0f, 0 },
 };
 const int NUM_ACTUATORS = sizeof(ACTUATORS) / sizeof(ACTUATORS[0]);
 
-Servo act_servo[NUM_ACTUATORS];
 float act_pct[NUM_ACTUATORS];
 
 int act_index(uint8_t id) {
@@ -655,7 +615,7 @@ int act_index(uint8_t id) {
 //   * any Bray command above 0 % closes relay 9 (if it isn't already), waits for the card's
 //     12 V rail (BRAY_POWER_SETTLE_MS = 10 ms, non-blocking), resets + configures the AD5420, and
 //     only then drives the commanded position;
-//   * a command of 0 % (this is also what every abort / SAFE sends the Bray) drives 4 mA =
+//   * a command of 0 % (this is also what every abort / SAFE sends the Bray) drives 20 mA =
 //     closed FIRST and then drops the relay, and SFE / comms-loss shutdown does the same.
 // The AD5420 forgets its setup whenever it loses power, so the position is never restored
 // after a power cycle: the valve starts closed and only opens on a new command.
@@ -670,13 +630,13 @@ void bray_power(bool on) {
         bray_power_pending = false;   // cancel a power-up that hasn't finished settling yet
         if (bray_powered) {
             if (i >= 0) act_pct[i] = 0.0f;
-            ad5420_write(AD5420_ADDR_DATA, 0x0000);   // 4 mA = closed, BEFORE the supply goes
+            ad5420_write(AD5420_ADDR_DATA, BRAY_CLOSED_DATA);   // 20 mA = closed, BEFORE the supply goes
             delay(20);                                 // let the DAC output settle
         }
         if (BRAY_PWR_PIN >= 0) {
             digitalWrite(BRAY_PWR_PIN, LOW);
             bray_powered = false;
-        }   // else: card is wired straight to the rail, so it stays configured at 4 mA
+        }   // else: card is wired straight to the rail, so it stays configured at 20 mA
         return;
     }
     if (bray_powered || bray_power_pending) return;   // already on, or already waiting on the rail
@@ -697,11 +657,11 @@ void bray_power_poll() {
     if (!bray_power_pending) return;
     if (millis() - bray_power_pending_since_ms < BRAY_POWER_SETTLE_MS) return;
     bray_power_pending = false;
-    ad5420_begin();   // registers are blank after power-up; starts at 4 mA
+    ad5420_begin();   // registers are blank after power-up; starts at 20 mA = closed
     bray_powered = true;
     int i = act_index(EGCPPacket::ACTUATOR_BRAY);
     if (i >= 0 && act_pct[i] > 0.0f)
-        ad5420_write(AD5420_ADDR_DATA, (uint16_t)(act_pct[i] / 100.0f * 65535.0f + 0.5f));
+        ad5420_write(AD5420_ADDR_DATA, bray_data(act_pct[i]));
 }
 
 // Appends a short Bray token to the existing once-a-second "Loop alive" line (no newline,
@@ -714,7 +674,7 @@ void bray_log_token() {
     if (!bray_powered)      { DBG_PRINT(" Bray=off");     return; }
     uint16_t control = ad5420_read(AD5420_RB_CONTROL);
     uint16_t status  = ad5420_read(AD5420_RB_STATUS);
-    DBG_PRINT(" Bray="); DBG_PRINT(4.0f + 16.0f * act_pct[i] / 100.0f, 1); DBG_PRINT("mA");
+    DBG_PRINT(" Bray="); DBG_PRINT(20.0f - 16.0f * act_pct[i] / 100.0f, 1); DBG_PRINT("mA");
     if (control != AD5420_CTRL_WORD)             DBG_PRINT("!SPI");
     if (status & AD5420_STATUS_IOUT_FAULT)       DBG_PRINT("!IOUT");
     if (status & AD5420_STATUS_OVER_TEMP)        DBG_PRINT("!TEMP");
@@ -724,12 +684,10 @@ void act_apply(int i) {
     const ActuatorConfig& a = ACTUATORS[i];
     if (a.pin < 0) return;
     float frac = act_pct[i] / 100.0f;
-    if (a.driver == ACT_RC_SERVO) {
-        act_servo[i].writeMicroseconds((int)(a.us_min + (a.us_max - a.us_min) * frac + 0.5f));
-    } else if (a.driver == ACT_AD5420) {
-        if (act_pct[i] <= 0.0f) { bray_power(false); return; }   // closed: 4 mA first, then the card's power off
+    if (a.driver == ACT_AD5420) {
+        if (act_pct[i] <= 0.0f) { bray_power(false); return; }   // closed: 20 mA first, then the card's power off
         if (!bray_powered) { bray_power(true); return; }          // power the card up; bray_power_poll() drives the position once it's configured
-        ad5420_write(AD5420_ADDR_DATA, (uint16_t)(frac * 65535.0f + 0.5f));
+        ad5420_write(AD5420_ADDR_DATA, bray_data(act_pct[i]));
         // Relay 14 rides along with the Bray valve: on whenever it is commanded
         // above 0 %, off at 0 % (which is also the safe position).
         if (BRAY_AUX_PIN >= 0) digitalWrite(BRAY_AUX_PIN, act_pct[i] > 0.0f ? HIGH : LOW);
@@ -750,9 +708,7 @@ void act_init() {
         const ActuatorConfig& a = ACTUATORS[i];
         act_pct[i] = a.safe_pct;
         if (a.pin < 0) continue;
-        if (a.driver == ACT_RC_SERVO) {
-            act_servo[i].attach(a.pin, a.us_min < 500 ? a.us_min : 500, a.us_max > 2500 ? a.us_max : 2500);
-        } else if (a.driver == ACT_AD5420) {
+        if (a.driver == ACT_AD5420) {
             if (BRAY_PWR_PIN >= 0) { bray_powered = false; continue; }   // card stays off until the first Bray command above 0 %
             bray_power(true);                                            // wired straight to the rail: configure now
         } else {
@@ -798,7 +754,7 @@ void safe_all_valves() {
     // E2 abort state (confirmed): every valve closed, including NCS2 - no valve
     // is left open on abort/comms loss.
     safe_all_actuators();
-    bray_power(false);   // Bray (main fuel): 4 mA / closed first, then the card's relay off
+    bray_power(false);   // Bray (main fuel): 20 mA / closed first, then the card's relay off
 }
 
 void trigger_shutdown(const char* reason) {
