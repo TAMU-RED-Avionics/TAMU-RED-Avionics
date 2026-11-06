@@ -220,7 +220,7 @@ class GUIController:
             "GV-2": False
         }
 
-        # Proportional actuators (modulating valves, ...): hw_id ->
+        # Proportional actuators (modulating valves, RC servos, ...): hw_id ->
         # ActuatorSpec, rebuilt from the project's component extras["actuator"]
         # on every load_project. actuator_positions holds the last position the
         # MCU confirmed (%). Actuators also live in valve_states (True = off its
@@ -655,8 +655,8 @@ class GUIController:
         new_igniters: set = set()
         self.valve_labels = {}
         for comp in project.components.values():
-            # Anything carrying an actuator spec (e.g. an ep_throttle_valve) is
-            # commandable even if its type isn't listed.
+            # Anything carrying an actuator spec (e.g. an ep_throttle_valve or a
+            # servo-driven ball valve) is commandable even if its type isn't listed.
             if comp.type not in VALVE_TYPES and get_actuator_spec(comp) is None:
                 continue
             hw_id = comp.extras.get("hw_id") or comp.label
