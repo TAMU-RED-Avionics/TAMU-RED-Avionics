@@ -498,7 +498,7 @@ const uint8_t  AD5420_ADDR_RESET    = 0x56;
 const uint16_t AD5420_CTRL_REXT  = 1u << 13;
 const uint16_t AD5420_CTRL_OUTEN = 1u << 12;
 const uint16_t AD5420_RANGE_4_20 = 0b101;
-const uint16_t AD5420_CTRL_WORD  = AD5420_CTRL_REXT | AD5420_CTRL_OUTEN | AD5420_RANGE_4_20;   // 0x3005
+const uint16_t AD5420_CTRL_WORD  = AD5420_CTRL_OUTEN | AD5420_RANGE_4_20;   // 0x3005
 
 const uint16_t AD5420_RB_STATUS  = 0b00;
 const uint16_t AD5420_RB_DATA    = 0b01;
@@ -547,16 +547,16 @@ static void ad5420_print_status() {
     DBG_PRINTLN("");
 }
 
-// The MFV current is inverted here and only here: the position the GUI and the rest of this
-// firmware use is unchanged (0 % = closed, 100 % = open), but 0 % = 20 mA and 100 % = 4 mA.
-const uint16_t BRAY_CLOSED_DATA = 0xFFFF;   // full-scale = 20 mA
-static uint16_t bray_data(float pct) { return (uint16_t)((100.0f - pct) / 100.0f * 65535.0f + 0.5f); }
+// MFV (Bray) current: standard 4-20 mA positioner scaling - 0 % = 4 mA = closed,
+// 100 % = 20 mA = open.
+const uint16_t BRAY_CLOSED_DATA = 0x0000;   // zero-scale = 4 mA
+static uint16_t bray_data(float pct) { return (uint16_t)(pct / 100.0f * 65535.0f + 0.5f); }
 
 // Init sequence bench-validated by AD5420_Sweep_Test_Daughtercard: configure the range with
-// OUTEN still clear (output stays off), load the DATA register (20 mA = closed) WHILE the
+// OUTEN still clear (output stays off), zero the DATA register (4 mA = closed) WHILE the
 // output is still disabled, and only then enable OUTEN - so the valve never briefly sees
 // a stale/garbage DATA value with the output already live. Writing the full CTRL_WORD
-// (OUTEN included) before loading DATA, as an earlier revision did, risks exactly that.
+// (OUTEN included) before zeroing DATA, as an earlier revision did, risks exactly that.
 static void ad5420_begin() {
     if (AD5420_CLEAR_PIN >= 0) {
         pinMode(AD5420_CLEAR_PIN, OUTPUT);
@@ -572,8 +572,8 @@ static void ad5420_begin() {
 
     ad5420_write(AD5420_ADDR_RESET, 0x0001);                                  // software reset, output tristated
     delay(1);
-    ad5420_write(AD5420_ADDR_CONTROL, AD5420_CTRL_REXT | AD5420_RANGE_4_20);  // configure range, OUTEN still off
-    ad5420_write(AD5420_ADDR_DATA, BRAY_CLOSED_DATA);                         // full-scale = 20 mA = closed, output still off
+    ad5420_write(AD5420_ADDR_CONTROL, AD5420_RANGE_4_20);  // configure range, OUTEN still off
+    ad5420_write(AD5420_ADDR_DATA, BRAY_CLOSED_DATA);                         // zero-scale = 4 mA = closed, output still off
     ad5420_write(AD5420_ADDR_CONTROL, AD5420_CTRL_WORD);                      // enable IOUT
     delay(1);
 
@@ -596,7 +596,7 @@ struct ActuatorConfig {
 
 const ActuatorConfig ACTUATORS[] = {
     // FMV (Bray): modulating valve driven 4-20 mA by the AD5420 on SPI1.
-    // 0 % = 20 mA, 100 % = 4 mA (see bray_data). pin = AD5420 LATCH (CS1).
+    // 0 % = 4 mA (closed), 100 % = 20 mA (open). pin = AD5420 LATCH (CS1).
     // There is no ACT_PWM_ANALOG row; that driver is kept in case the PWM-to-analog
     // slave card comes back.
     { EGCPPacket::ACTUATOR_BRAY, "FMV (Bray)", ACT_AD5420, AD5420_LATCH_PIN, 0.0f,
@@ -615,7 +615,7 @@ int act_index(uint8_t id) {
 //   * any Bray command above 0 % closes relay 9 (if it isn't already), waits for the card's
 //     12 V rail (BRAY_POWER_SETTLE_MS = 10 ms, non-blocking), resets + configures the AD5420, and
 //     only then drives the commanded position;
-//   * a command of 0 % (this is also what every abort / SAFE sends the Bray) drives 20 mA =
+//   * a command of 0 % (this is also what every abort / SAFE sends the Bray) drives 4 mA =
 //     closed FIRST and then drops the relay, and SFE / comms-loss shutdown does the same.
 // The AD5420 forgets its setup whenever it loses power, so the position is never restored
 // after a power cycle: the valve starts closed and only opens on a new command.
@@ -630,13 +630,13 @@ void bray_power(bool on) {
         bray_power_pending = false;   // cancel a power-up that hasn't finished settling yet
         if (bray_powered) {
             if (i >= 0) act_pct[i] = 0.0f;
-            ad5420_write(AD5420_ADDR_DATA, BRAY_CLOSED_DATA);   // 20 mA = closed, BEFORE the supply goes
+            ad5420_write(AD5420_ADDR_DATA, BRAY_CLOSED_DATA);   // 4 mA = closed, BEFORE the supply goes
             delay(20);                                 // let the DAC output settle
         }
         if (BRAY_PWR_PIN >= 0) {
             digitalWrite(BRAY_PWR_PIN, LOW);
             bray_powered = false;
-        }   // else: card is wired straight to the rail, so it stays configured at 20 mA
+        }   // else: card is wired straight to the rail, so it stays configured at 4 mA
         return;
     }
     if (bray_powered || bray_power_pending) return;   // already on, or already waiting on the rail
@@ -657,7 +657,7 @@ void bray_power_poll() {
     if (!bray_power_pending) return;
     if (millis() - bray_power_pending_since_ms < BRAY_POWER_SETTLE_MS) return;
     bray_power_pending = false;
-    ad5420_begin();   // registers are blank after power-up; starts at 20 mA = closed
+    ad5420_begin();   // registers are blank after power-up; starts at 4 mA = closed
     bray_powered = true;
     int i = act_index(EGCPPacket::ACTUATOR_BRAY);
     if (i >= 0 && act_pct[i] > 0.0f)
@@ -674,7 +674,7 @@ void bray_log_token() {
     if (!bray_powered)      { DBG_PRINT(" Bray=off");     return; }
     uint16_t control = ad5420_read(AD5420_RB_CONTROL);
     uint16_t status  = ad5420_read(AD5420_RB_STATUS);
-    DBG_PRINT(" Bray="); DBG_PRINT(20.0f - 16.0f * act_pct[i] / 100.0f, 1); DBG_PRINT("mA");
+    DBG_PRINT(" Bray="); DBG_PRINT(4.0f + 16.0f * act_pct[i] / 100.0f, 1); DBG_PRINT("mA");
     if (control != AD5420_CTRL_WORD)             DBG_PRINT("!SPI");
     if (status & AD5420_STATUS_IOUT_FAULT)       DBG_PRINT("!IOUT");
     if (status & AD5420_STATUS_OVER_TEMP)        DBG_PRINT("!TEMP");
@@ -685,7 +685,7 @@ void act_apply(int i) {
     if (a.pin < 0) return;
     float frac = act_pct[i] / 100.0f;
     if (a.driver == ACT_AD5420) {
-        if (act_pct[i] <= 0.0f) { bray_power(false); return; }   // closed: 20 mA first, then the card's power off
+        if (act_pct[i] <= 0.0f) { bray_power(false); return; }   // closed: 4 mA first, then the card's power off
         if (!bray_powered) { bray_power(true); return; }          // power the card up; bray_power_poll() drives the position once it's configured
         ad5420_write(AD5420_ADDR_DATA, bray_data(act_pct[i]));
         // Relay 14 rides along with the Bray valve: on whenever it is commanded
@@ -754,7 +754,7 @@ void safe_all_valves() {
     // E2 abort state (confirmed): every valve closed, including NCS2 - no valve
     // is left open on abort/comms loss.
     safe_all_actuators();
-    bray_power(false);   // Bray (main fuel): 20 mA / closed first, then the card's relay off
+    bray_power(false);   // Bray (main fuel): 4 mA / closed first, then the card's relay off
 }
 
 void trigger_shutdown(const char* reason) {
