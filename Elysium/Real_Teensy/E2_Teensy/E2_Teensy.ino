@@ -322,11 +322,8 @@ bool nau7802_init() {
     return true;
 }
 
-// LC1-LC6 calibration: lbs = slope * raw24bit + intercept
-// LC2 (index 1) is TEMPORARY: 3-point fit (0, 4.2, 27.78 lb), worst error 0.42 lb, measured with the
-// LoadCell_Test sketch on input VIN2 at gain 128. Only valid up to ~28 lb and relative to that session's zero.
-const float LC_SLOPE[6]     = { 0.063616813928f, 0.063616813928f, 0.063616813928f, 1.0f, 1.0f, 1.0f };     // <-- USER INPUT  (calibrate on hardware)
-const float LC_INTERCEPT[6] = { -1039.7978f, -1039.7978f, -1039.7978f, 0.0f, 0.0f, 0.0f };     // <-- USER INPUTs
+const float LC_SLOPE[6]     = { 0.063616813928f, 0.063616813928f, 0.063616813928f, 1.0f, 0.006289308176101f, 0.006546644844517f };     // <-- USER INPUT  (calibrate on hardware)
+const float LC_INTERCEPT[6] = { -1039.7978f, -1039.7978f, -1039.7978f, 0.0f, -104.044025157232709f, -2.114566284779051f };     // <-- USER INPUTs
 /*
 point 1: raw 16350.5 = 0.000
 point 2: raw 16404.1 = 4.200
