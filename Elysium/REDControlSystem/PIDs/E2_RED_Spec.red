@@ -840,6 +840,21 @@
       "flip": false
     },
     {
+      "id": "SV_6",
+      "type": "solenoid",
+      "label": "NV-1600",
+      "hardware": {
+        "relay": 6
+      },
+      "extras": {
+        "notes": "160 Bar 12V NC US Solid Solenoid",
+        "hw_id": "PA-BV3"
+      },
+      "rotation": 270,
+      "hide_lbl": false,
+      "flip": false
+    },
+    {
       "id": "H_8",
       "type": "flex_hose",
       "label": "NH-1101",
@@ -969,28 +984,14 @@
       "type": "actuated_valve",
       "label": "FV-1202",
       "hardware": {
-        "relay": 82
+        "relay": 20
       },
       "extras": {
         "label_offset": [
           44.0,
           -28.2
         ],
-        "actuator": {
-          "min_pct": 0,
-          "max_pct": 100,
-          "safe_pct": 0,
-          "open_pct": 100,
-          "unit": "%",
-          "presets": [
-            0,
-            25,
-            50,
-            75,
-            100
-          ],
-          "step": 1
-        }
+        "hw_id": "FV-1202"
       },
       "rotation": 270,
       "hide_lbl": false,
@@ -1675,6 +1676,10 @@
     "SV_5": {
       "x": 940.0,
       "y": 780.0
+    },
+    "SV_6": {
+      "x": 940.0,
+      "y": 880.0
     },
     "H_8": {
       "x": 390.0,
@@ -2781,8 +2786,8 @@
       "enabled": false,
       "sensor_id": "",
       "expression": "P8 > 700",
-      "description": "high chamber pressure",
-      "message_template": "P8 ({P8}) > 700",
+      "description": "High MCC_P (chamber pressure, P8)",
+      "message_template": "MCC_P ({P8}) > 700",
       "target_valve": "",
       "close_valve_below": null,
       "soak_ms": 0
@@ -2795,8 +2800,8 @@
       "enabled": false,
       "sensor_id": "",
       "expression": "P8 > P7",
-      "description": "reverse flow",
-      "message_template": "P8 ({P8}) > P7 ({P7})",
+      "description": "Reverse flow: MCC_P (P8) > OMI_P (P7)",
+      "message_template": "MCC_P ({P8}) > OMI_P ({P7})",
       "target_valve": "",
       "close_valve_below": null,
       "soak_ms": 0
@@ -2809,8 +2814,8 @@
       "enabled": false,
       "sensor_id": "",
       "expression": "P5 - P3 >= 5",
-      "description": "high upstream pressure",
-      "message_template": "P5 ({P5}) > P3 ({P3}) by 5 PSI for > {soak_ms}ms",
+      "description": "High upstream pressure: OPT-1502 (P5) > OPT-1501 (P3)",
+      "message_template": "OPT-1502 ({P5}) > OPT-1501 ({P3}) by 5 PSI for > {soak_ms}ms",
       "target_valve": "",
       "close_valve_below": null,
       "soak_ms": 150
@@ -2823,8 +2828,8 @@
       "enabled": false,
       "sensor_id": "",
       "expression": "P6 - P4 >= 5",
-      "description": "high upstream pressure",
-      "message_template": "P6 ({P6}) > P4 ({P4}) by 5 PSI for > {soak_ms}ms",
+      "description": "High upstream pressure: FPT-1402 (P6) > FPT-1401 (P4)",
+      "message_template": "FPT-1402 ({P6}) > FPT-1401 ({P4}) by 5 PSI for > {soak_ms}ms",
       "target_valve": "",
       "close_valve_below": null,
       "soak_ms": 150
@@ -2837,7 +2842,7 @@
       "enabled": false,
       "sensor_id": "",
       "expression": "P2 > 1375",
-      "description": "high p2",
+      "description": "High OPT-1301 (P2); opens NV-1105 (NCS3)",
       "message_template": "",
       "target_valve": "NCS3",
       "close_valve_below": 1250.0,
@@ -2851,7 +2856,7 @@
       "enabled": false,
       "sensor_id": "",
       "expression": "P2 > 1375",
-      "description": "Warning: P2 > 1375. Opening NCS3...",
+      "description": "Warning: OPT-1301 (P2) > 1375. Opening NV-1105 (NCS3)...",
       "message_template": "",
       "target_valve": "",
       "close_valve_below": null,
@@ -2894,7 +2899,8 @@
           "name": "Ignition 1",
           "time_offset": 9.5,
           "open_valves": [
-            "IGN_1"
+            "IGN_1",
+            "AV_1"
           ],
           "is_terminal_count": false
         },
@@ -2903,7 +2909,8 @@
           "time_offset": 10.0,
           "open_valves": [
             "AV_3",
-            "IGN_1"
+            "IGN_1",
+            "AV_1"
           ],
           "is_terminal_count": false
         },
@@ -2913,7 +2920,8 @@
           "open_valves": [
             "AV_3",
             "IGN_2",
-            "IGN_1"
+            "IGN_1",
+            "AV_1"
           ],
           "is_terminal_count": false
         },

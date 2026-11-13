@@ -8,15 +8,18 @@ from PyQt5.QtCore import Qt
 from PID_CANVAS import PIDCanvas
 from PID_SCHEMA import (
     SequenceStep, NamedSequence,
-    COMP_VALVE, COMP_BALL_VALVE, COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_IGNITER,
+    COMMANDABLE_VALVE_TYPES,
     get_actuator_spec,
 )
 
 # Component types that a sequence step can command open/closed (or, for the
-# igniter, fire/safe).
+# igniter, fire/safe). Reuses the same COMMANDABLE_VALVE_TYPES list the valve
+# table / Abort Config use, instead of a hand-maintained subset - a separate
+# list here previously omitted COMP_ACTUATED_VALVE, which silently hid any
+# plain on/off actuated valve (e.g. MOV/PA-BV2) from this editor.
 # Proportional actuators (any component with an ActuatorSpec) are also commandable:
 # "open" in a step means the actuator's open_pct, "closed" its safe_pct.
-_STEP_ACTUATOR_TYPES = [COMP_VALVE, COMP_BALL_VALVE, COMP_SOLENOID, COMP_GLOBE_VALVE, COMP_IGNITER]
+_STEP_ACTUATOR_TYPES = list(COMMANDABLE_VALVE_TYPES)
 
 
 def _is_step_actuator(comp) -> bool:

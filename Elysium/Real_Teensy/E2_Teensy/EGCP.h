@@ -44,6 +44,7 @@ public:
     static constexpr uint8_t VALVE_LA_BV2 = 0x11;
     static constexpr uint8_t VALVE_FP_1201 = 0x12;   // fuel pump FP-1201 (on/off relay)
     static constexpr uint8_t VALVE_AP_1601 = 0x13;   // air compressor AP-1601 (on/off relay)
+    static constexpr uint8_t VALVE_FV_1202 = 0x14;   // FV-1202, a plain on/off solenoid (relay 16) - NOT the old ACTUATOR_SV2 servo channel
     static constexpr uint8_t VALVE_GV_1 = 0x20;
     static constexpr uint8_t VALVE_GV_2 = 0x21;
     static constexpr uint8_t VALVE_GV1 = VALVE_GV_1; // Backward-compatible alias

@@ -77,6 +77,7 @@ const int GV2_PIN    = -1;
 const int IGN1_PIN   = 31;   // relay 1
 const int IGN2_PIN   = 30;   // relay 2
 const int GIMBAL_PIN = -1;
+const int FV_1202_PIN = 20;  // relay 16 (J6-2) - was spare; FV-1202 is a plain on/off solenoid, not the SV2 servo channel
 
 
 const int ADS_CS_PIN  = 10;   // -> J6 pin 49 (CS1)    (verified)
@@ -174,99 +175,76 @@ static void ads_boot_report() {
 #define NAU7802_ADDR     0x2A
 #define TCA_LC_ADDR      0x70
 
-// NAU7802 register addresses
-#define NAU7802_PU_CTRL  0x00
-#define NAU7802_CTRL1    0x01
-#define NAU7802_ADCO_B2  0x12
+// ---- Load cells: NAU7802 x6 behind a TCA9548A mux, read EXACTLY like the loadcell_cal sketch ----
+// (the calibration constants below were measured with that sketch, so the chip is configured and read
+// the same way here): hardware Wire1 (SCL1 = pin 16, SDA1 = pin 17) at 100 kHz, mux 0x70 with LC1-6 on
+// channels 1-6, NAU7802 0x2A: reset -> power up -> LDO 3.0 V, gain x128 -> chopper clock off + PGA cap ->
+// 80 samples/s, input VIN1 (JLC pins 4/5) -> internal offset calibration (CALS) -> start converting.
+#define LC_PIN_SCL        16
+#define LC_PIN_SDA        17
+#define LC_FIRST_MUX_CH   1          // LC1 is on mux channel 1 (channel 0 is unused)
+#define LC_USE_CHANNEL2   false      // false = NAU7802 input VIN1, true = VIN2
+#define LC_GAIN_BITS      7          // 0..7 = x1..x128
+#define LC_LDO_BITS       5          // 0b101 = 3.0 V (excitation + ADC reference)
+#define LC_RATE_BITS      3          // 0=10, 1=20, 2=40, 3=80, 7=320 samples/s
 
-#define LC_PIN_SCL       16
-#define LC_PIN_SDA       17
-#define LC_HALF_US       5     // ~100 kHz
+#define NAU7802_ADDR      0x2A
+#define TCA_LC_ADDR       0x70
+#define NAU_R_PU_CTRL     0x00
+#define NAU_R_CTRL1       0x01
+#define NAU_R_CTRL2       0x02
+#define NAU_R_ADCO_B2     0x12
+#define NAU_R_ADC         0x15
+#define NAU_R_PGA_PWR     0x1C
+#define NAU_PU_RR         0x01
+#define NAU_PU_PUD        0x02
+#define NAU_PU_PUA        0x04
+#define NAU_PU_PUR        0x08
+#define NAU_PU_CS         0x10
+#define NAU_PU_CR         0x20
+#define NAU_PU_AVDDS      0x80
 
-inline void lc_dly()    { delayMicroseconds(LC_HALF_US); }
-inline void lc_sdaRel() { pinMode(LC_PIN_SDA, INPUT); }
-inline void lc_sdaLow() { pinMode(LC_PIN_SDA, OUTPUT); digitalWrite(LC_PIN_SDA, LOW); }
-inline void lc_sclLow() { pinMode(LC_PIN_SCL, OUTPUT); digitalWrite(LC_PIN_SCL, LOW); }
-inline void lc_sclRel() {
-    pinMode(LC_PIN_SCL, INPUT);
-    uint32_t t = micros();
-    while (!digitalRead(LC_PIN_SCL) && micros() - t < 100) {}
+void lc_i2c_begin() {
+    static bool started = false;
+    if (started) return;
+    Wire1.begin();
+    Wire1.setClock(100000);
+    started = true;
 }
 
-void lc_i2c_start() {   // also serves as repeated start
-    lc_sdaRel(); lc_dly(); lc_sclRel(); lc_dly();
-    lc_sdaLow(); lc_dly(); lc_sclLow(); lc_dly();
+static bool lc_mux_select(uint8_t ch) {
+    Wire1.beginTransmission(TCA_LC_ADDR);
+    Wire1.write((uint8_t)(1 << (ch + LC_FIRST_MUX_CH)));
+    return Wire1.endTransmission() == 0;
 }
 
-void lc_i2c_stop() {
-    lc_sdaLow(); lc_dly(); lc_sclRel(); lc_dly(); lc_sdaRel(); lc_dly();
+static bool nau_write(uint8_t reg, uint8_t val) {
+    Wire1.beginTransmission(NAU7802_ADDR);
+    Wire1.write(reg);
+    Wire1.write(val);
+    return Wire1.endTransmission() == 0;
 }
 
-bool lc_i2c_write_byte(uint8_t b) {
-    for (int i = 0; i < 8; i++) {
-        if (b & 0x80) lc_sdaRel(); else lc_sdaLow();
-        lc_dly(); lc_sclRel(); lc_dly(); lc_sclLow();
-        b <<= 1;
-    }
-    lc_sdaRel(); lc_dly(); lc_sclRel(); lc_dly();
-    bool ack = !digitalRead(LC_PIN_SDA);
-    lc_sclLow(); lc_dly();
-    return ack;
-}
-
-uint8_t lc_i2c_read_byte(bool ack) {
-    uint8_t b = 0;
-    lc_sdaRel();
-    for (int i = 0; i < 8; i++) {
-        lc_dly(); lc_sclRel(); lc_dly();
-        b = (b << 1) | (digitalRead(LC_PIN_SDA) ? 1 : 0);
-        lc_sclLow();
-    }
-    if (ack) lc_sdaLow(); else lc_sdaRel();
-    lc_dly(); lc_sclRel(); lc_dly(); lc_sclLow();
-    lc_sdaRel(); lc_dly();
-    return b;
-}
-
-bool lc_i2c_write(uint8_t addr, const uint8_t* d, uint8_t n) {
-    lc_i2c_start();
-    bool ok = lc_i2c_write_byte(addr << 1);
-    for (uint8_t i = 0; ok && i < n; i++) ok = lc_i2c_write_byte(d[i]);
-    lc_i2c_stop();
-    return ok;
-}
-
-bool lc_i2c_write_read(uint8_t addr, uint8_t reg, uint8_t* d, uint8_t n) {
-    lc_i2c_start();
-    if (!lc_i2c_write_byte(addr << 1) || !lc_i2c_write_byte(reg)) { lc_i2c_stop(); return false; }
-    lc_i2c_start();
-    if (!lc_i2c_write_byte((addr << 1) | 1)) { lc_i2c_stop(); return false; }
-    for (uint8_t i = 0; i < n; i++) d[i] = lc_i2c_read_byte(i < n - 1);
-    lc_i2c_stop();
+static bool nau_read_regs(uint8_t reg, uint8_t* buf, uint8_t n) {   // repeated start, auto-incrementing read
+    Wire1.beginTransmission(NAU7802_ADDR);
+    Wire1.write(reg);
+    if (Wire1.endTransmission(false) != 0) return false;
+    if (Wire1.requestFrom((uint8_t)NAU7802_ADDR, n) != n) return false;
+    for (uint8_t i = 0; i < n; i++) buf[i] = Wire1.read();
     return true;
 }
 
-void lc_i2c_bus_recover() {
-    lc_sdaRel();
-    for (int i = 0; i < 9; i++) { lc_sclLow(); lc_dly(); lc_sclRel(); lc_dly(); }
-    lc_i2c_stop();
-}
-
-void lc_i2c_begin() {
-    lc_sdaRel();
-    lc_sclRel();
-    lc_i2c_bus_recover();
-}
-
-bool lc_i2c_ping(uint8_t addr) {
-    return lc_i2c_write(addr, nullptr, 0);
+static int nau_read(uint8_t reg) {   // -1 = bus error
+    uint8_t v;
+    return nau_read_regs(reg, &v, 1) ? v : -1;
 }
 
 void lc_scan_trunk() {
-    DBG_PRINTLN("  LC trunk scan (pins 16/17):");
+    DBG_PRINTLN("  LC trunk scan (Wire1, pins 16/17):");
     uint8_t found = 0;
     for (uint8_t a = 0x08; a < 0x78; a++) {
-        if (lc_i2c_ping(a)) {
+        Wire1.beginTransmission(a);
+        if (Wire1.endTransmission() == 0) {
             DBG_PRINT("    0x"); DBG_PRINTLN(a, HEX);
             found++;
         }
@@ -274,57 +252,59 @@ void lc_scan_trunk() {
     if (!found) DBG_PRINTLN("    NOTHING FOUND on LC trunk.");
 }
 
-void tca_lc_select(uint8_t channel) {
-    // Select TCA9548A channel on the LC I2C bus. Physical mapping is rotated:
-    // LC1-6 sit on mux channels 1-6 (bytes 0x02-0x40); channel 0 (0x01) is unused.
-    uint8_t b = 1 << (channel + 1);
-    lc_i2c_write(TCA_LC_ADDR, &b, 1);
-}
-
-bool nau7802_write(uint8_t reg, uint8_t val) {
-    uint8_t d[2] = { reg, val };
-    return lc_i2c_write(NAU7802_ADDR, d, 2);
-}
-
-uint8_t nau7802_read_byte(uint8_t reg) {
-    uint8_t val = 0;
-    lc_i2c_write_read(NAU7802_ADDR, reg, &val, 1);
-    return val;
-}
-
-bool nau7802_data_ready() {
-    return (nau7802_read_byte(NAU7802_PU_CTRL) & 0x20) != 0;
-}
-
-int32_t nau7802_read_adc() {
-    // Read 24-bit signed result from ADCO registers
-    uint8_t b[3];
-    int32_t val = 0;
-    if (lc_i2c_write_read(NAU7802_ADDR, NAU7802_ADCO_B2, b, 3)) {
-        val  = (int32_t)b[0] << 16;
-        val |= (int32_t)b[1] << 8;
-        val |= (int32_t)b[2];
-        if (val & 0x800000) val |= 0xFF000000;   // sign extend
+// Full NAU7802 bring-up for load cell `ch` (0 = LC1). Blocking; called from setup() only.
+bool lc_init_cell(uint8_t ch) {
+    if (!lc_mux_select(ch)) return false;
+    if (!nau_write(NAU_R_PU_CTRL, NAU_PU_RR)) return false;                    // reset
+    delay(2);
+    nau_write(NAU_R_PU_CTRL, NAU_PU_PUD);                                      // digital on
+    nau_write(NAU_R_PU_CTRL, NAU_PU_PUD | NAU_PU_PUA);                         // analog on
+    unsigned long t = millis();
+    for (;;) {                                                                  // wait for power-up ready
+        int pu = nau_read(NAU_R_PU_CTRL);
+        if (pu >= 0 && (pu & NAU_PU_PUR)) break;
+        if (millis() - t > 300) return false;
+        delay(2);
     }
-    return val;
-}
-
-bool nau7802_init() {
-    // Reset and power up NAU7802
-    nau7802_write(NAU7802_PU_CTRL, 0x01);   // RR: reset
-    delay(1);
-    nau7802_write(NAU7802_PU_CTRL, 0x02);   // PUD: power up digital
-    delay(1);
-    uint8_t ready = nau7802_read_byte(NAU7802_PU_CTRL);
-    if (!(ready & 0x08)) return false;       // PUR bit must set
-    nau7802_write(NAU7802_PU_CTRL, 0x86);   // AVDDS=1, PGA=1, PUD=1
-    nau7802_write(NAU7802_CTRL1, 0x2F);     // gain=128, LDO=3.0V  <-- USER INPUT if gain differs
+    nau_write(NAU_R_CTRL1, (uint8_t)((LC_LDO_BITS << 3) | LC_GAIN_BITS));      // LDO 3.0 V, gain x128
+    nau_write(NAU_R_PU_CTRL, NAU_PU_AVDDS | NAU_PU_PUD | NAU_PU_PUA);          // AVDD from the internal LDO
+    nau_write(NAU_R_ADC, 0x30);                                                 // chopper clock off (datasheet power-up sequence)
+    int pga = nau_read(NAU_R_PGA_PWR);
+    if (pga >= 0) nau_write(NAU_R_PGA_PWR, (uint8_t)(pga | 0x80));             // PGA cap on
+    uint8_t c2 = (uint8_t)((LC_RATE_BITS << 4) | (LC_USE_CHANNEL2 ? 0x80 : 0x00));
+    nau_write(NAU_R_CTRL2, c2);
+    nau_write(NAU_R_CTRL2, c2 | 0x04);                                          // CALS: internal offset calibration
+    t = millis();
+    for (;;) {
+        int c = nau_read(NAU_R_CTRL2);
+        if (c >= 0 && !(c & 0x04)) { if (c & 0x08) return false; break; }       // done; CAL_ERR = failed
+        if (millis() - t > 1000) return false;
+        delay(5);
+    }
+    nau_write(NAU_R_PU_CTRL, NAU_PU_AVDDS | NAU_PU_CS | NAU_PU_PUD | NAU_PU_PUA);   // start converting
     return true;
 }
 
-const float LC_SLOPE[6]     = { 0.063616813928f, 0.063616813928f, 0.063616813928f, 1.0f, 0.006289308176101f, 0.006546644844517f };     // <-- USER INPUT  (calibrate on hardware)
-const float LC_INTERCEPT[6] = { -1039.7978f, -1039.7978f, -1039.7978f, 0.0f, -104.044025157232709f, -2.114566284779051f };     // <-- USER INPUTs
-/*
+// One raw 24-bit sample if the chip has a new conversion ready; false = nothing new (never blocks).
+bool lc_read_raw(uint8_t ch, int32_t& raw) {
+    if (!lc_mux_select(ch)) return false;
+    int pu = nau_read(NAU_R_PU_CTRL);
+    if (pu < 0 || !(pu & NAU_PU_CR)) return false;
+    uint8_t b[3];
+    if (!nau_read_regs(NAU_R_ADCO_B2, b, 3)) return false;                      // all three bytes from one conversion
+    int32_t v = ((int32_t)b[0] << 16) | ((int32_t)b[1] << 8) | b[2];
+    if (v & 0x800000) v |= (int32_t)0xFF000000;                                 // sign extend
+    raw = v;
+    return true;
+}
+
+//const double LC_SLOPE[6]     = { 0.063616813928, 0.063616813928, 0.063616813928, 0.005974607916355, 0.006289308176101, 0.006546644844517 };
+//const double LC_INTERCEPT[6] = { -1039.7978, -1039.7978, -1039.7978, 16.185212845407022, -104.044025157232709, -2.114566284779051 };
+
+const double LC_SLOPE[6]     = { 0.005974607916355, 0.006289308176101, 0.006546644844517, 0.005974607916355, 0.006289308176101, 0.006546644844517 };
+const double LC_INTERCEPT[6] = { 16.185212845407022, -104.044025157232709, -2.114566284779051, 16.185212845407022, -104.044025157232709, -2.114566284779051 };
+
+/* calibration history log, not code:
 point 1: raw 16350.5 = 0.000
 point 2: raw 16404.1 = 4.200
 fit of 2 points, worst error = 0.0000
@@ -343,7 +323,8 @@ LC_SLOPE[1] = 0.064916693037f;   LC_INTERCEPT[1] = -1061.8438f;
 */
 
 float lc_weights[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
-bool LC_INSTALLED[6] = { false, false, false, false, false, false };   // LC1-6 = NAU7802s U8,U10-U14 on mux channels 1-6; set a slot false if that load cell is not fitted
+bool  lc_ok[6]      = { false, false, false, false, false, false };   // LC_INSTALLED and answered at boot: only these are read / sent
+bool LC_INSTALLED[6] = { true, false, false, false, true, true };   // LC1-6 = NAU7802s U8,U10-U14 on mux channels 1-6; only LC1, LC5, LC6 are actually fitted right now
 
 #define TCA_TC_ADDR      0x70
 #define MCP9600_MUXED_ADDR 0x67
@@ -356,7 +337,7 @@ Adafruit_MCP9600 tc_sensor[12];
 bool tc_ok[12] = { false };
 float tc_temps[12] = { 0.0f };
 
-bool TC_INSTALLED[12] = { false, false, false, false, false, false, false, false, false, false, false, false };
+bool TC_INSTALLED[12] = { true, true, true, true, true, true, true, true, true, true, true, true };   // always attempt all 12; a missing/unwired channel just reports "not found" and gets skipped at runtime
 
 void tca_tc_select(uint8_t channel) {
     TC_WIRE.beginTransmission(TCA_TC_ADDR);
@@ -444,6 +425,7 @@ int get_pin_from_valve_id(uint8_t id) {
         case 0x11: return PA_BV2_PIN;   // was LA-BV2
         case 0x12: return FP_1201_PIN;  // FP-1201 fuel pump = relay 3
         case 0x13: return AP_1601_PIN;  // AP-1601 air compressor = relay 4
+        case 0x14: return FV_1202_PIN;  // FV-1202 solenoid = relay 16
         case 0x20: return GV1_PIN;
         case 0x21: return GV2_PIN;
         case 0x30: return IGN1_PIN;
@@ -466,6 +448,7 @@ const char* get_valve_name(uint8_t id) {
         case 0x11: return "PA-BV2";
         case 0x12: return "FP-1201";
         case 0x13: return "AP-1601";
+        case 0x14: return "FV-1202";
         case 0x20: return "GV-1";
         case 0x21: return "GV-2";
         case 0x30: return "IGN-1";
@@ -744,7 +727,7 @@ void send_nck(uint32_t nacked_id) {
 }
 
 void safe_all_valves() {
-    const int pins[] = {NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PNEUMA_PIN, BRAY_AUX_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, FP_1201_PIN, AP_1601_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
+    const int pins[] = {NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PNEUMA_PIN, BRAY_AUX_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, FP_1201_PIN, AP_1601_PIN, FV_1202_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
     for (int pin : pins) {
         if (pin >= 0) digitalWrite(pin, LOW);
     }
@@ -862,18 +845,18 @@ void setup() {
     ads_flush();            // prime the 2-frame pipeline so the first real scan is valid
     ads_boot_report();
 
-    // ---- I2C for NAU7802 load cells (LC1-LC6, all muxed, bit-banged) ----
+    // ---- I2C for NAU7802 load cells (LC1-LC6, all muxed, hardware Wire1) ----
     lc_i2c_begin();
     for (uint8_t ch = 0; ch < 6; ch++) {
         if (!LC_INSTALLED[ch]) {
             DBG_PRINT("LC"); DBG_PRINT(ch + 1); DBG_PRINTLN(" skipped (not installed)");
             continue;
         }
-        tca_lc_select(ch);
-        if (nau7802_init()) {
+        lc_ok[ch] = lc_init_cell(ch);
+        if (lc_ok[ch]) {
             DBG_PRINT("LC"); DBG_PRINT(ch + 1); DBG_PRINTLN(" (NAU7802) ready");
         } else {
-            DBG_PRINT("WARN: LC"); DBG_PRINT(ch + 1); DBG_PRINTLN(" NAU7802 not responding");
+            DBG_PRINT("WARN: LC"); DBG_PRINT(ch + 1); DBG_PRINTLN(" NAU7802 not responding - skipped");
         }
     }
 
@@ -912,7 +895,7 @@ void setup() {
     }
 
     {
-        const int output_pins[] = {BRAY_PWR_PIN, NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PNEUMA_PIN, BRAY_AUX_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, FP_1201_PIN, AP_1601_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
+        const int output_pins[] = {BRAY_PWR_PIN, NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PNEUMA_PIN, BRAY_AUX_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, FP_1201_PIN, AP_1601_PIN, FV_1202_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
         for (int pin : output_pins) {
             if (pin >= 0) { pinMode(pin, OUTPUT); digitalWrite(pin, LOW); }
         }
@@ -1153,19 +1136,18 @@ void loop() {
             LAST_LC_UPDATE = LAST_SENSOR_UPDATE;
             t0 = micros();
             for (uint8_t ch = 0; ch < 6; ch++) {
-                if (!LC_INSTALLED[ch]) continue;
-                tca_lc_select(ch);
-                if (nau7802_data_ready()) {
-                    int32_t raw = nau7802_read_adc();
-                    lc_weights[ch] = LC_SLOPE[ch] * raw + LC_INTERCEPT[ch];
+                if (!lc_ok[ch]) continue;
+                int32_t raw;
+                if (lc_read_raw(ch, raw)) {
+                    lc_weights[ch] = (float)(LC_SLOPE[ch] * (double)raw + LC_INTERCEPT[ch]);
                 }
             }
             lc_us_accum += micros() - t0;
         }
 
         for (uint8_t ch = 0; ch < 6; ch++) {
-            if (!LC_INSTALLED[ch]) continue;
-            send_adc_packet(0x19 + ch, lc_weights[ch]);
+            if (!lc_ok[ch]) continue;
+            send_adc_packet(0x19 + ch, lc_weights[ch]);   // sensor ID 0x19 + ch = 25..30 = the P&ID's LC1..LC6 channels
         }
 
         delay(1);

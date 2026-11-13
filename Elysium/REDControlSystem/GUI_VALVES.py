@@ -1,12 +1,12 @@
 import re
 from PyQt5.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QWidget, QFrame,
+    QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea, QWidget, QFrame, QMessageBox,
 )
 from PyQt5.QtCore import Qt, QPoint
 
 from GUI_CONTROLLER import GUIController
 from GUI_WIDGETS import DragHandle, RenameLabel, ask_new_name
-from PID_SCHEMA import COMMANDABLE_VALVE_TYPES, COMP_IGNITER, get_actuator_spec
+from PID_SCHEMA import COMMANDABLE_VALVE_TYPES, get_actuator_spec
 
 
 _VALVE_MIME = "application/x-red-valve-row"
@@ -18,10 +18,10 @@ def _natural_key(text: str):
 
 
 class ValveControlPanel(QWidget):
-    """Open / Close buttons for every relay-bound valve and pump in the project. Position-
-    commanded actuators (servos, the Bray valve) open to 100 % and close to 0 %. Igniters are
-    left out on purpose, and so are passive parts (PRVs, check valves) and manual valves,
-    which have no binding.
+    """Open / Close buttons for every relay-bound valve, pump and igniter in the project. Position-
+    commanded actuators (servos, the Bray valve) open to 100 % and close to 0 %. An igniter is just
+    a relay pin, like a valve: On / Off (turning it on asks for confirmation first). Passive parts
+    (PRVs, check valves) and manual valves, which have no binding, are left out.
 
     Rows start sorted alphabetically then numerically. Drag a row's grip (the dots on its
     left) to reorder, and double-click a name to rename it. Both are for this session only:
@@ -74,7 +74,7 @@ class ValveControlPanel(QWidget):
         entries = []
         if project is not None:
             for cid, comp in project.components.items():
-                if comp.type not in COMMANDABLE_VALVE_TYPES or comp.type == COMP_IGNITER:
+                if comp.type not in COMMANDABLE_VALVE_TYPES:
                     continue
                 if comp.hardware.relay is None:
                     continue
@@ -99,8 +99,9 @@ class ValveControlPanel(QWidget):
             name.rename_requested.connect(lambda h=hw_id: self._rename(h))
             state = QLabel("---")
             state.setMinimumWidth(70)
-            open_btn = QPushButton("Open")
-            close_btn = QPushButton("Close")
+            is_ign = hw_id in self.controller.igniter_hw_ids
+            open_btn = QPushButton("On" if is_ign else "Open")      # an igniter is just a pin: on / off
+            close_btn = QPushButton("Off" if is_ign else "Close")
             open_btn.clicked.connect(lambda _=False, h=hw_id: self._command(h, True))
             close_btn.clicked.connect(lambda _=False, h=hw_id: self._command(h, False))
             lay.addWidget(handle)
@@ -181,6 +182,12 @@ class ValveControlPanel(QWidget):
 
     def _command(self, hw_id: str, want_open: bool):
         c = self.controller
+        if want_open and hw_id in c.igniter_hw_ids:
+            # Same confirmation the P&ID popup asks before firing an igniter
+            if QMessageBox.question(
+                    self, "Confirm Ignition", "Fire this igniter now?\n\nThis sends a live command to the hardware.",
+                    QMessageBox.Yes | QMessageBox.No, QMessageBox.No) != QMessageBox.Yes:
+                return
         spec = c.actuator_specs.get(hw_id)
         if spec is not None:
             c.set_actuator_position(hw_id, 100.0 if want_open else 0.0)
@@ -195,6 +202,8 @@ class ValveControlPanel(QWidget):
         if state is None:
             state = "OPEN" if c.valve_states.get(hw_id) else "CLOSED"
         text = state
+        if hw_id in c.igniter_hw_ids and state in ("OPEN", "CLOSED"):
+            text = "ON" if state == "OPEN" else "OFF"
         if hw_id in c.actuator_specs and state != "PENDING":
             text = f"{c.actuator_positions.get(hw_id, 0.0):g} %"
         row[0].setText(text)
