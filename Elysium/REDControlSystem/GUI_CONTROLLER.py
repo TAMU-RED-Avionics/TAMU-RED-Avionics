@@ -1897,21 +1897,51 @@ class GUIController:
                     if hw_id:
                         open_hw_ids.add(hw_id)
 
-        # Set every valve in hw space to its desired state
-        for hw_id in list(self.valve_states.keys()):
-            self.toggle_valve(hw_id, hw_id in open_hw_ids)
+        # Set every valve in hw space to its desired state (servos / the Bray valve to the step's position)
+        step_pcts = self._apply_step_valves(step, open_hw_ids)
 
         self.ethernet_client.set_system_state(step.name)
         self.signals.system_status.emit(step.name)
         self.log_event("SEQUENCE:STEP", step.name)
         def _named(hw):                      # "PA-BV2 (MOV)": the hardware name plus the P&ID label
             label = self.valve_labels.get(hw, "")
-            return f"{hw} ({label})" if label and label != hw else hw
+            txt = f"{hw} ({label})" if label and label != hw else hw
+            return f"{txt} @ {step_pcts[hw]:g}%" if hw in step_pcts else txt
         self.log_event("STEP_ACTIONS", "open: " + (", ".join(_named(h) for h in sorted(open_hw_ids)) if open_hw_ids else "none (all closed)"))
 
         if getattr(step, "is_terminal_count", False):
             tc_length = getattr(self.project.parameters, "terminal_count_s", 10.0)
             self._show_terminal_count_overlay(step.name, tc_length)
+
+    def _step_position_for(self, step, hw_id: str):
+        """Position (%) this step asks of proportional actuator `hw_id`, or None if the step leaves it
+        closed. Steps saved before per-step positions existed open it to its spec's open_pct."""
+        spec = self.actuator_specs.get(hw_id)
+        if spec is None or not self.project:
+            return None
+        for cid in step.open_valves:
+            comp = self.project.components.get(cid)
+            if comp and (comp.extras.get("hw_id") or comp.label) == hw_id:
+                pct = getattr(step, "positions", {}).get(cid)
+                return spec.clamp(spec.open_pct if pct is None else pct)
+        return None
+
+    def _apply_step_valves(self, step, open_hw_ids: set) -> dict:
+        """Drive every valve to the state the step wants. Returns {hw_id: pct} for the proportional
+        actuators the step opens (used for the log)."""
+        pcts = {}
+        for hw_id in list(self.valve_states.keys()):
+            spec = self.actuator_specs.get(hw_id)
+            if spec is not None:
+                pct = self._step_position_for(step, hw_id)
+                if pct is None:
+                    self._drive_actuator(hw_id, spec.safe_pct)
+                else:
+                    pcts[hw_id] = pct
+                    self._drive_actuator(hw_id, pct)
+            else:
+                self.toggle_valve(hw_id, hw_id in open_hw_ids)
+        return pcts
 
     def _show_terminal_count_overlay(self, step_name: str, seconds: float):
         """Live, non-blocking T-minus display for the terminal-count hold.
@@ -2232,8 +2262,7 @@ class GUIController:
                         hw_id = comp.extras.get("hw_id") or comp.label
                         if hw_id:
                             open_hw_ids.add(hw_id)
-                for hw_id in list(self.valve_states.keys()):
-                    self.toggle_valve(hw_id, hw_id in open_hw_ids)
+                self._apply_step_valves(step, open_hw_ids)
                 return
 
         self.log_event("OPERATION:WARN", f"No sequence step named '{operation}' in project")

@@ -2912,7 +2912,10 @@
             "IGN_1",
             "AV_1"
           ],
-          "is_terminal_count": false
+          "is_terminal_count": false,
+          "positions": {
+            "AV_3": 100.0
+          }
         },
         {
           "name": "Ignition 2",
@@ -2956,11 +2959,14 @@
           "name": "Main Valves",
           "time_offset": 10.0,
           "open_valves": [
-            "AV_3",
             "IGN_1",
+            "AV_3",
             "AV_1"
           ],
-          "is_terminal_count": false
+          "is_terminal_count": false,
+          "positions": {
+            "AV_3": 100.0
+          }
         },
         {
           "name": "Ignition 2",
@@ -2971,7 +2977,10 @@
             "IGN_2",
             "AV_1"
           ],
-          "is_terminal_count": false
+          "is_terminal_count": false,
+          "positions": {
+            "AV_3": 100.0
+          }
         },
         {
           "name": "Shutdown",
