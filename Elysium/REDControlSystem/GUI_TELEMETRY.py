@@ -5,14 +5,14 @@ from typing import Optional
 import openpyxl
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QSplitter, QTreeWidget,
-    QTreeWidgetItem, QTableWidget, QTableWidgetItem, QLabel,
+    QTreeWidgetItem, QTableView, QLabel,
     QHeaderView, QFrame, QPushButton, QAbstractItemView,
     QSizePolicy, QToolButton, QStackedWidget, QComboBox,
     QLineEdit, QMessageBox, QListWidget, QListWidgetItem,
     QDoubleSpinBox, QShortcut,
 )
-from PyQt5.QtCore import Qt, pyqtSignal
-from PyQt5.QtGui import QColor, QKeySequence
+from PyQt5.QtCore import Qt, pyqtSignal, QThread, QAbstractTableModel, QModelIndex
+from PyQt5.QtGui import QColor, QKeySequence, QFont, QFontMetrics
 
 import matplotlib
 matplotlib.use("Qt5Agg")
@@ -182,7 +182,97 @@ class FileBrowser(QWidget):
 
 
 
-class SpreadsheetTable(QTableWidget):
+class _SheetModel(QAbstractTableModel):
+    """The recording as a virtual table: Qt only asks for the cells on screen, so a 50,000-row
+    file opens instantly (the old QTableWidget made one item per cell - over a million for a
+    long recording - and froze the GUI while it did)."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._headers: list = []
+        self._items: list = []          # [(row, kind)] ; kind 0 plain, 1 event, 2 sequence, 3 abort
+        self._bg = {}
+        self._bold = QFont()
+        self._bold.setBold(True)
+
+    def set_colors(self, dark: bool):
+        self._bg = {
+            1: QColor("#26323a") if dark else QColor("#eaf2fb"),     # any logged action
+            2: QColor("#4a3a12") if dark else QColor("#fff3cd"),     # sequence events
+            3: QColor("#4a1c1c") if dark else QColor("#fde2e1"),     # aborts
+        }
+
+    def load(self, headers: list, rows: list, event_col: Optional[int]):
+        self.beginResetModel()
+        self._headers = list(headers)
+        items = []
+        for row in rows:
+            kind = 0
+            if event_col is not None and event_col < len(row):
+                ev = row[event_col].strip().upper()
+                if ev:
+                    kind = 2 if ev.startswith("SEQUENCE") else 3 if ev.startswith("ABORT") else 1
+            items.append((row, kind))
+        self._items = items
+        self.endResetModel()
+
+    def clear(self):
+        self.beginResetModel()
+        self._headers, self._items = [], []
+        self.endResetModel()
+
+    def rowCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self._items)
+
+    def columnCount(self, parent=QModelIndex()):
+        return 0 if parent.isValid() else len(self._headers)
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid():
+            return None
+        row, kind = self._items[index.row()]
+        if role == Qt.DisplayRole:
+            c = index.column()
+            return row[c] if c < len(row) else ""
+        if role == Qt.TextAlignmentRole:
+            return int(Qt.AlignRight | Qt.AlignVCenter)
+        if role == Qt.BackgroundRole and kind:
+            return self._bg.get(kind)
+        if role == Qt.FontRole and kind >= 2:
+            return self._bold
+        return None
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if role == Qt.DisplayRole:
+            if orientation == Qt.Horizontal:
+                return self._headers[section] if section < len(self._headers) else ""
+            return str(section + 1)
+        return None
+
+    def sort(self, column, order=Qt.AscendingOrder):
+        if column < 0 or column >= len(self._headers):
+            return
+
+        def value(item):
+            row = item[0]
+            return row[column] if column < len(row) else ""
+
+        def key(item):
+            v = value(item)
+            try:
+                return (0, float(v), "")
+            except ValueError:
+                return (1, 0.0, v)
+
+        self.layoutAboutToBeChanged.emit()
+        filled = [it for it in self._items if value(it) != ""]
+        blanks = [it for it in self._items if value(it) == ""]      # empty cells stay at the bottom either way
+        filled.sort(key=key, reverse=(order == Qt.DescendingOrder))
+        self._items = filled + blanks
+        self.layoutChanged.emit()
+
+
+class SpreadsheetTable(QTableView):
 
     HEADER_BG = "#8b1a1a"
     HEADER_FG = "#ffffff"
@@ -201,10 +291,13 @@ class SpreadsheetTable(QTableWidget):
         self.controller = controller
 
         self.setObjectName("telemetry_table")
+        self._model = _SheetModel(self)
+        self.setModel(self._model)
         self.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.setSelectionBehavior(QAbstractItemView.SelectItems)
         self.setAlternatingRowColors(True)
+        self.horizontalHeader().setSortIndicator(-1, Qt.AscendingOrder)   # no sort until a header is clicked
         self.setSortingEnabled(True)
 
         self.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
@@ -227,7 +320,7 @@ class SpreadsheetTable(QTableWidget):
         if dark_mode:
 
             style += f"""
-                QTableWidget {{
+                QTableView {{
                     background-color: #1e1e24;
                     alternate-background-color: {self.ALT_ROW};
                     color: #e6e6e6;
@@ -324,45 +417,53 @@ class SpreadsheetTable(QTableWidget):
         self.setStyleSheet(style)
 
     def load(self, headers: list[str], rows: list[list]):
-
-        self.setSortingEnabled(False)
-
-        self.clear()
-
-        self.setRowCount(len(rows))
-        self.setColumnCount(len(headers))
-        self.setHorizontalHeaderLabels(headers)
-
         event_col = next((i for i, h in enumerate(headers)
                           if h.strip().lower() == "event type"), None)
         dark_mode = bool(self.controller and getattr(self.controller, "dark_mode", True))
-        highlight_bg = self.SEQUENCE_ROW_BG_DARK if dark_mode else self.SEQUENCE_ROW_BG_LIGHT
+        self._model.set_colors(dark_mode)
+        self.horizontalHeader().setSortIndicator(-1, Qt.AscendingOrder)
+        self._model.load(headers, rows, event_col)
 
-        for r, row in enumerate(rows):
-            is_sequence_row = (event_col is not None and event_col < len(row)
-                              and row[event_col].strip().upper().startswith("SEQUENCE"))
+        # Column widths from the header text and a sample of rows (measuring every row of a
+        # long recording would take as long as the old populate did)
+        fm = QFontMetrics(self.font())
+        sample = rows[:200]
+        for c, h in enumerate(headers):
+            w = fm.horizontalAdvance(h) + 24
+            for row in sample:
+                if c < len(row):
+                    w = max(w, fm.horizontalAdvance(row[c]) + 16)
+            self.setColumnWidth(c, min(w, 200))
 
-            for c, val in enumerate(row):
+    # Compatibility with the old QTableWidget API (FilePanel.clear used these)
+    def clear(self):
+        self._model.clear()
 
-                item = QTableWidgetItem(val)
-                item.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+    def setRowCount(self, n: int):
+        if n == 0:
+            self._model.clear()
 
-                if is_sequence_row:
-                    font = item.font()
-                    font.setBold(True)
-                    item.setFont(font)
-                    item.setBackground(highlight_bg)
+    def setColumnCount(self, n: int):
+        if n == 0:
+            self._model.clear()
 
-                self.setItem(r, c, item)
 
-        self.resizeColumnsToContents()
+class _LoadWorker(QThread):
+    """Reads a recording (.xlsx) and extracts the plot data off the GUI thread."""
+    loaded = pyqtSignal(str, object, object, object)     # path, headers, rows, sensor data
+    failed = pyqtSignal(str, str)                         # path, message
 
-        for c in range(self.columnCount()):
+    def __init__(self, path: str, parent=None):
+        super().__init__(parent)
+        self._path = path
 
-            if self.columnWidth(c) > 200:
-                self.setColumnWidth(c, 200)
-
-        self.setSortingEnabled(True)
+    def run(self):
+        try:
+            headers, rows = _load_xlsx(self._path)
+            data = _extract_sensor_data(headers, rows)
+            self.loaded.emit(self._path, headers, rows, data)
+        except Exception as exc:
+            self.failed.emit(self._path, str(exc))
 
 
 class FilePanel(QWidget):
@@ -375,6 +476,7 @@ class FilePanel(QWidget):
         self._path: Optional[str] = None
         self._headers: list[str] = []
         self._rows: list[list] = []
+        self._loaders: set = set()
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -440,26 +542,37 @@ class FilePanel(QWidget):
         self._graph_btn.setChecked(idx == 1)
 
     def load_file(self, path: str):
+        """Open a recording. The file is read on a worker thread (a long recording takes many
+        seconds to read), so the window stays responsive while it loads."""
         self._path = path
         fname = os.path.basename(path)
         self.file_label.setText(fname)
         self.file_label.setToolTip(path)
+        self.stats_label.setText("Loading ...")
 
-        try:
-            headers, rows = _load_xlsx(path)
-            self._headers = headers
-            self._rows = rows
+        loader = _LoadWorker(path, self)
+        loader.loaded.connect(self._on_loaded)
+        loader.failed.connect(self._on_load_failed)
+        loader.finished.connect(lambda ld=loader: self._loaders.discard(ld))
+        self._loaders.add(loader)                # keep the thread object alive until it is done
+        loader.start()
 
-            self.table.load(headers, rows)
-            self.graph.load_data(headers, rows)
+    def _on_loaded(self, path: str, headers, rows, data):
+        if path != self._path:
+            return                                # a newer file was opened while this one loaded
+        self._headers = headers
+        self._rows = rows
+        self.table.load(headers, rows)
+        self.graph.load_data(headers, rows, data)
+        self.stats_label.setText(f"{len(rows)} rows × {len(headers)} cols")
 
-            self.stats_label.setText(f"{len(rows)} rows × {len(headers)} cols")
-
-        except Exception as exc:
-            QMessageBox.critical(self, "Load Error",
-                                 f"Could not load file:\n{path}\n\n{exc}")
-            self.file_label.setText("(load error)")
-            self.stats_label.setText("")
+    def _on_load_failed(self, path: str, message: str):
+        if path != self._path:
+            return
+        QMessageBox.critical(self, "Load Error",
+                             f"Could not load file:\n{path}\n\n{message}")
+        self.file_label.setText("(load error)")
+        self.stats_label.setText("")
 
     def clear(self):
         self._path = None
@@ -733,9 +846,9 @@ class SensorGraphPanel(QWidget):
         self._zoom_back_btn.setEnabled(zoomed)
         self._zoom_home_btn.setEnabled(zoomed)
 
-    def load_data(self, headers: list[str], rows: list[list]):
+    def load_data(self, headers: list[str], rows: list[list], data=None):
 
-        self._data = _extract_sensor_data(headers, rows)
+        self._data = data if data is not None else _extract_sensor_data(headers, rows)
 
         self._sensor_list.clear()
 
@@ -963,7 +1076,7 @@ class SensorGraphPanel(QWidget):
 
     # Event types that count as "sequence operations"
     _SEQ_EVENT_TYPES = ("SEQUENCE:START", "SEQUENCE:STEP", "OPERATION",
-                        "ABORT", "SAFE_STATE")
+                        "ABORT", "SAFE_STATE", "MODE_CHANGE")
     # Valve-level events
     _VALVE_EVENT_TYPES = ("VALVE_CHANGED", "AUTO_VALVE_OPEN")
 

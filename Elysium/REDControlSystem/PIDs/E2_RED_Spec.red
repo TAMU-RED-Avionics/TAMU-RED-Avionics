@@ -2947,7 +2947,8 @@
           "name": "Ignition 1",
           "time_offset": 9.5,
           "open_valves": [
-            "IGN_1"
+            "IGN_1",
+            "AV_1"
           ],
           "is_terminal_count": false
         },
@@ -2956,7 +2957,8 @@
           "time_offset": 10.0,
           "open_valves": [
             "AV_3",
-            "IGN_1"
+            "IGN_1",
+            "AV_1"
           ],
           "is_terminal_count": false
         },
@@ -2966,7 +2968,8 @@
           "open_valves": [
             "AV_3",
             "IGN_1",
-            "IGN_2"
+            "IGN_2",
+            "AV_1"
           ],
           "is_terminal_count": false
         },

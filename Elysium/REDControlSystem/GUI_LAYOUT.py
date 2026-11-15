@@ -791,6 +791,7 @@ class ActionBar(QWidget):
 
         # Keep a reference to daq_window so our handlers can call it
         self._daq_window = daq_window
+        controller.signals.recording_state_changed.connect(self._on_recording_state)
 
         divider_perf = QFrame()
         divider_perf.setFrameShape(QFrame.VLine)
@@ -900,20 +901,15 @@ class ActionBar(QWidget):
             self.state_label.setText(f"State: {valve_txt}")
 
     def _on_start_recording(self):
-        """Start recording and update button states in the action bar."""
-        if self._daq_window.controller.start_recording():
-            fname = self._daq_window.controller._xlsx_path
-            short = fname.replace("\\", "/").split("/")[-1]
-            self._daq_window.filename_preview.setText(short)
-            self.start_rec_btn.setEnabled(False)
-            self.stop_rec_btn.setEnabled(True)
+        """Start recording; the buttons follow recording_state_changed (also for automatic recordings)."""
+        self._daq_window.controller.start_recording()
 
     def _on_stop_recording(self):
-        """Stop recording and update button states in the action bar."""
         self._daq_window.controller.stop_recording()
-        self.start_rec_btn.setEnabled(True)
-        self.stop_rec_btn.setEnabled(False)
-        self._daq_window.filename_preview.setText(self._daq_window._get_preview())
+
+    def _on_recording_state(self, recording: bool):
+        self.start_rec_btn.setEnabled(not recording)
+        self.stop_rec_btn.setEnabled(recording)
 
 class TabBar(QWidget):
 
@@ -972,6 +968,20 @@ class _HScrollBar(QScrollArea):
 
 
 class MainWindow(QMainWindow):
+    def closeEvent(self, event):
+        """Save an in-progress (or still-saving) recording before the window goes away."""
+        c = self.controller
+        if c.recording or c._saving_count:
+            box = QMessageBox(self)
+            box.setWindowTitle("Saving")
+            box.setText("Saving the data recording...")
+            box.setStandardButtons(QMessageBox.NoButton)
+            box.show()
+            QApplication.processEvents()
+            c.shutdown_recording()
+            box.close()
+        event.accept()
+
     def __init__(self):
         super().__init__()
         self.setWindowTitle("RED Control System")

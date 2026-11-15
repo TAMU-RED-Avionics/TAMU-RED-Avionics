@@ -301,8 +301,8 @@ bool lc_read_raw(uint8_t ch, int32_t& raw) {
 //const double LC_SLOPE[6]     = { 0.063616813928, 0.063616813928, 0.063616813928, 0.005974607916355, 0.006289308176101, 0.006546644844517 };
 //const double LC_INTERCEPT[6] = { -1039.7978, -1039.7978, -1039.7978, 16.185212845407022, -104.044025157232709, -2.114566284779051 };
 
-const double LC_SLOPE[6]     = { 0.005974607916355, 0.006289308176101, 0.006546644844517, 0.005974607916355, 0.006289308176101, 0.006546644844517 };
-const double LC_INTERCEPT[6] = { 16.185212845407022, -104.044025157232709, -2.114566284779051, 16.185212845407022, -104.044025157232709, -2.114566284779051 };
+const double LC_SLOPE[6]     = { 0.057147694873078, 0.058057781983798, 2.599801220618e-04, 2.541333e-05, 0.005607686345671, 0.005663427662917 };
+const double LC_INTERCEPT[6] = { 9913.891760249649450, 1804.583760735878968, -4.507705094873, -0.3590, 178.640133783997953, 526.810882791494009 };
 
 /* calibration history log, not code:
 point 1: raw 16350.5 = 0.000
@@ -324,7 +324,7 @@ LC_SLOPE[1] = 0.064916693037f;   LC_INTERCEPT[1] = -1061.8438f;
 
 float lc_weights[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
 bool  lc_ok[6]      = { false, false, false, false, false, false };   // LC_INSTALLED and answered at boot: only these are read / sent
-bool LC_INSTALLED[6] = { true, false, false, false, true, true };   // LC1-6 = NAU7802s U8,U10-U14 on mux channels 1-6; only LC1, LC5, LC6 are actually fitted right now
+bool LC_INSTALLED[6] = { true, true, true, true, true, true };   // LC1-6 = NAU7802s U8,U10-U14 on mux channels 1-6; all six enabled (any that don't answer at boot are skipped via lc_ok)
 
 #define TCA_TC_ADDR      0x70
 #define MCP9600_MUXED_ADDR 0x67

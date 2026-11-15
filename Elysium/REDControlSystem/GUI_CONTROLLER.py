@@ -1,15 +1,15 @@
 import os
 import re
 import math
+import time
 from collections import deque
 from datetime import datetime
 from typing import Optional
 
-from openpyxl import Workbook
-from openpyxl.styles import Font, PatternFill, Alignment
 from PyQt5.QtWidgets import QApplication, QWidget, QVBoxLayout, QPushButton, QDialog, QLabel, QDialogButtonBox, QMessageBox
 from PyQt5.QtCore import Qt, QTimer, QDateTime, QObject, pyqtSignal
 from GUI_COMMS import EthernetClient
+from GUI_RECORDER import DaqRecorder, csv_path_for, recover_orphans
 from PID_SCHEMA import DEFAULT_ABORT_ID
 from GUI_SHARE import ShareServer, ViewerClient, DEFAULT_SHARE_PORT
 
@@ -56,6 +56,8 @@ class Signals(QObject):
     abort_notice = pyqtSignal(str, str, str)
     project_changed = pyqtSignal()
     project_received = pyqtSignal(dict)
+    recording_started = pyqtSignal(str)     # a recording began (xlsx path) - manual or automatic
+    recording_state_changed = pyqtSignal(bool)  # True = recording, False = stopped (buttons follow this)
     recording_stopped = pyqtSignal()        # DAQ file saved; Telemetry refreshes its file list
     names_changed = pyqtSignal()            # a sensor / valve display name was renamed (or reset)
     view_only_changed = pyqtSignal(bool)
@@ -124,6 +126,10 @@ class GUIController:
         self.signals.comms_connect_result.connect(self.handle_connect)
         self.signals.disconnected.connect(self._on_disconnected)
         QApplication.instance().aboutToQuit.connect(self.ethernet_client.shutdown)
+        QApplication.instance().aboutToQuit.connect(self.shutdown_recording)    # never lose a recording on exit
+        # A recording the GUI died in the middle of is finished (converted to .xlsx) in the background
+        recover_orphans("Data", on_done=lambda names: self.signals.system_status.emit(
+            "Recovered unfinished recording(s): " + ", ".join(names)))
         self.signals.connected.connect(self._on_connected)
         self.signals.abort_triggered.connect(self.handle_abort)
         self.signals.valve_updated.connect(self.update_valve_state)
@@ -134,9 +140,13 @@ class GUIController:
         self.signals.countdown_close.connect(self.close_abort_countdown_dialog)
 
         # For file recording (xlsx)
-        self._wb: Optional["Workbook"] = None       # openpyxl Workbook
-        self._ws = None                              # active Sheet
-        self._xlsx_path: str = ""                   # full path of open file
+        self._recorder: Optional[DaqRecorder] = None    # background writer (GUI_RECORDER)
+        self._xlsx_path: str = ""                   # full path of the file being recorded
+        self._auto_recording = False                # this recording was started by a sequence's terminal count
+        self._sequence_stage = ""                   # current auto-fire step name, "" when no sequence is running
+        self._auto_stop_timer: Optional[QTimer] = None
+        self._sequence_end_timer: Optional[QTimer] = None
+        self._saving_count = 0                      # recordings still being converted to .xlsx in the background
 
         # Sensor columns - rebuilt from project on load_project(); fallback to empty lists
         self.pt_keys:    list = []   # pressure transducers
@@ -756,7 +766,8 @@ class GUIController:
         n = 1
         while True:
             name = f"{base}_test{n}.xlsx"
-            if not os.path.exists(os.path.join(data_dir, name)):
+            path = os.path.join(data_dir, name)
+            if not os.path.exists(path) and not os.path.exists(csv_path_for(path)):
                 return name
             n += 1
 
@@ -1290,6 +1301,7 @@ class GUIController:
 
         # Stop any running auto-fire sequence immediately
         self._cancel_sequence()
+        self._schedule_auto_stop()          # an automatic recording keeps a short tail after the abort
         in_flight = self._abandon_pending_commands()
 
         self.ethernet_client.set_system_state("ABORT")
@@ -1366,13 +1378,34 @@ class GUIController:
         if event_type.startswith("COMMS_AUTO_ABORT:"):
             self.signals.countdown_close.emit()
 
-        if not self._ws:
+        # Event rows: "Event Type" is the kind of action and "Event Details" says which
+        # valve / value, so the saved file filters and reads cleanly. Commands from the comms
+        # layer arrive as one string ("VALVE_CMD:NCS1:OPEN"); split those. SEQUENCE:*, RECORDING:*
+        # etc. keep their names (the Telemetry tab keys off them).
+        if not event_details and ":" in event_type:
+            head, _, rest = event_type.partition(":")
+            if head in self._SPLIT_EVENT_HEADS:
+                event_type, event_details = head, rest
+
+        if not self._recording_active():
             return
 
         self._write_daq_row(teensy_ts=self.latest_teensy_ts, event_type=event_type, event_details=event_details)
 
+    _SPLIT_EVENT_HEADS = ("VALVE_CMD", "ACTUATOR_CMD", "VALVE_ERROR", "RETRY", "TIMEOUT", "NCK",
+                          "RX_SFE", "COMMS_AUTO_ABORT", "CRITICAL", "WARNING", "CONNECTION_ERROR")
+
+    def _recording_active(self) -> bool:
+        return self._recorder is not None and self._recorder.active
+
+    def control_state_text(self) -> str:
+        """What the system is doing right now, for the "Control State" column: the GUI mode
+        (SAFE / MANUAL / LOCKED / ABORT) plus the auto-fire step while a sequence is running."""
+        mode = str(self.mode)
+        return f"{mode} | {self._sequence_stage}" if self._sequence_stage else mode
+
     def _write_daq_row(self, teensy_ts="", event_type="", event_details=""):
-        """Write one data row to the xlsx worksheet.
+        """Queue one data row for the background writer (never touches the disk on this thread).
 
         Column layout:
             Local Time (24-hr + date) | Teensy Timestamp | [blank] |
@@ -1381,7 +1414,7 @@ class GUIController:
             <load cells...>           | [blank]          |
             Control State             | Event Type       | Event Details
         """
-        if not self._ws:
+        if not self._recording_active():
             return
 
         row = [
@@ -1396,19 +1429,22 @@ class GUIController:
                 row.append(round(val, 4) if isinstance(val, float) else val)
             row.append("")
 
-        current_state = getattr(self.ethernet_client, "system_state", "UNKNOWN")
-        row.extend([current_state, event_type, event_details])
+        row.extend([self.control_state_text(), event_type, event_details])
 
-        self._ws.append(row)
+        self._recorder.write(row)
 
     def get_next_filename(self) -> str:
         return self._generate_filename()
 
-    def start_recording(self) -> bool:
+    def start_recording(self, auto: bool = False) -> bool:
+        """Begin a recording. auto=True is a sequence starting one at its terminal count."""
+        if self._recording_active():
+            return True                      # already recording (e.g. the operator started it first)
         if not self.project:
-            QMessageBox.warning(self.parent, "No Project",
-                "Please select a project from the dropdown before recording."
-                "The project defines which sensors to log.")
+            if not auto:
+                QMessageBox.warning(self.parent, "No Project",
+                    "Please select a project from the dropdown before recording."
+                    "The project defines which sensors to log.")
             return False
 
         filename = self._generate_filename()
@@ -1417,14 +1453,9 @@ class GUIController:
         file_path = os.path.join(data_dir, filename)
 
         try:
-            wb = Workbook()
-            ws = wb.active
-            ws.title = "DAQ"
-
-            # ---- Header row ----
             header = [
                 "Local Time (YYYY-MM-DD HH:mm:ss)",
-                "Teensy Timestamp (µs from boot)",
+                "Teensy Timestamp (\u00b5s from boot)",
                 "",
             ]
             # Columns carry the P&ID names (NPT-1101), not the internal keys (P1)
@@ -1432,44 +1463,89 @@ class GUIController:
                 header += [self.sensor_display_name(k) for k in keys] + [""]
             header += ["Control State", "Event Type", "Event Details"]
 
-            ws.append(header)
-
-            # Style: bold + light-grey fill on header row
-            header_fill = PatternFill("solid", fgColor="D9D9D9")
-            header_font = Font(bold=True)
-            for cell in ws[1]:
-                cell.font = header_font
-                cell.fill = header_fill
-                cell.alignment = Alignment(horizontal="center")
-
-            self._wb = wb
-            self._ws = ws
+            recorder = DaqRecorder(file_path, header)
+            recorder.finished.connect(self._on_recording_saved)
+            self._recorder = recorder
             self._xlsx_path = file_path
+            self._auto_recording = bool(auto)
 
             # Clear batch tracker
             self.current_batch_sensors.clear()
 
-            self.log_event("RECORDING:START")
             self.recording = True
-
+            self.log_event("RECORDING:START", "automatic (terminal count)" if auto else "")
+            self.signals.recording_started.emit(file_path)
+            self.signals.recording_state_changed.emit(True)
             return True
 
         except Exception as e:
-            QMessageBox.critical(self.parent, "Error", f"Failed to create file: {str(e)}")
+            self._recorder = None
+            self.recording = False
+            if not auto:
+                QMessageBox.critical(self.parent, "Error", f"Failed to create file: {str(e)}")
+            else:
+                self.signals.system_status.emit(f"Could not start the automatic recording: {e}")
             return False
 
     def stop_recording(self):
-        if self._wb:
-            self.log_event("RECORDING:STOP")
-            try:
-                self._wb.save(self._xlsx_path)
-            except Exception as e:
-                QMessageBox.warning(self.parent, "Save Warning", f"Could not save file:\n{str(e)}")
-            self._wb = None
-            self._ws = None
-            self._xlsx_path = ""
-            self.recording = False
+        """Stop recording. Returns immediately: the file is converted to .xlsx on a background
+        thread and the Telemetry tab refreshes when it is ready."""
+        if self._auto_stop_timer is not None:
+            self._auto_stop_timer.stop()
+        if not self._recording_active():
+            return
+        self.log_event("RECORDING:STOP")
+        recorder = self._recorder
+        name = os.path.basename(self._xlsx_path)
+        self._recorder = None
+        self._xlsx_path = ""
+        self._auto_recording = False
+        self.recording = False
+        self._saving_count += 1
+        self.signals.system_status.emit(f"Saving {name} ...")
+        self.signals.recording_state_changed.emit(False)
+        recorder.stop()
+
+    def _on_recording_saved(self, path: str, ok: bool, message: str):
+        """Runs on the GUI thread once a recording's .xlsx is complete (or failed)."""
+        self._saving_count = max(0, self._saving_count - 1)
+        name = os.path.basename(path)
+        if ok:
+            self.signals.system_status.emit(f"Saved {name} ({message})")
             self.signals.recording_stopped.emit()
+        else:
+            self.signals.system_status.emit(f"Recording problem: {message}")
+            QMessageBox.warning(self.parent, "Save Warning", f"{name}:\n{message}")
+
+    def shutdown_recording(self, timeout_s: float = 180.0) -> bool:
+        """Finish and save everything before the app closes. Blocks (with the event loop running,
+        so the window stays alive) until the file is written. Returns True when all saved."""
+        if self._recording_active():
+            self.stop_recording()
+        deadline = time.monotonic() + timeout_s
+        while self._saving_count > 0 and time.monotonic() < deadline:
+            QApplication.processEvents()
+            time.sleep(0.02)
+        return self._saving_count == 0
+
+    # Automatic recording around a fire sequence ------------------------------------------------
+    AUTO_RECORD_TAIL_S = 10.0         # keep recording this long after a sequence ends / aborts
+
+    def _schedule_auto_stop(self, delay_s: float = None):
+        """After a sequence finishes, is cancelled or aborts: if the recording was started
+        automatically at the terminal count, stop (and save) it after a short tail."""
+        if not (self._auto_recording and self._recording_active()):
+            return
+        if self._auto_stop_timer is None:
+            self._auto_stop_timer = QTimer()
+            self._auto_stop_timer.setSingleShot(True)
+            self._auto_stop_timer.timeout.connect(self._auto_stop_recording)
+        self._auto_stop_timer.start(int((self.AUTO_RECORD_TAIL_S if delay_s is None else delay_s) * 1000))
+
+    def _auto_stop_recording(self):
+        if self._auto_recording and self._recording_active() and not self.sequence_running:
+            self.log_event("RECORDING:AUTO_STOP", "sequence finished")
+            self.stop_recording()
 
     def handle_new_data(self, data_str: str):
         """ Parse teensy timestamp (first token) (Req 4) """
@@ -1569,7 +1645,7 @@ class GUIController:
                     # Batch sensor updates
                     if sensor_name in self.current_batch_sensors:
                         # We've seen this sensor in the current batch -> flush the row
-                        if self._ws:
+                        if self._recording_active():
                             self._write_daq_row(teensy_ts=self.latest_teensy_ts)
                         self.current_batch_sensors.clear()
                     
@@ -1778,6 +1854,21 @@ class GUIController:
 
         self.log_event("SEQUENCE:START", f"{len(steps)} steps ({seq_name})")
 
+        # After the last step: clear the stage, log the end, and (if the terminal count started
+        # the recording) stop it after a short tail so the shutdown is captured.
+        if self._sequence_end_timer is None:
+            self._sequence_end_timer = QTimer()
+            self._sequence_end_timer.setSingleShot(True)
+            self._sequence_end_timer.timeout.connect(self._on_sequence_finished)
+        self._sequence_end_timer.start(int(steps[-1].time_offset * 1000) + 500)
+
+    def _on_sequence_finished(self):
+        if not self._sequence_stage:
+            return                                       # already cancelled / aborted
+        self._sequence_stage = ""
+        self.log_event("SEQUENCE:END", "completed")
+        self._schedule_auto_stop()
+
 
     def _execute_sequence_step(self, step):
         """Apply one sequence step: set every known valve to its desired state.
@@ -1787,6 +1878,14 @@ class GUIController:
         """
         if self.lockout:
             return
+
+        # The terminal count starts an automatic recording (unless one is already running)
+        if getattr(step, "is_terminal_count", False):
+            if self._auto_stop_timer is not None:
+                self._auto_stop_timer.stop()            # a previous run's "stop after the tail" must not hit this one
+            if not self._recording_active():
+                self.start_recording(auto=True)
+        self._sequence_stage = step.name                # the Control State column follows the sequence
 
         # Build a set of hw_ids that should be OPEN for this step
         open_hw_ids: set[str] = set()
@@ -1805,6 +1904,10 @@ class GUIController:
         self.ethernet_client.set_system_state(step.name)
         self.signals.system_status.emit(step.name)
         self.log_event("SEQUENCE:STEP", step.name)
+        def _named(hw):                      # "PA-BV2 (MOV)": the hardware name plus the P&ID label
+            label = self.valve_labels.get(hw, "")
+            return f"{hw} ({label})" if label and label != hw else hw
+        self.log_event("STEP_ACTIONS", "open: " + (", ".join(_named(h) for h in sorted(open_hw_ids)) if open_hw_ids else "none (all closed)"))
 
         if getattr(step, "is_terminal_count", False):
             tc_length = getattr(self.project.parameters, "terminal_count_s", 10.0)
@@ -1853,6 +1956,7 @@ class GUIController:
             self._cancel_sequence()
             self.close_all_valves()
             self.log_event("SEQUENCE:CANCELED", f"Canceled during terminal count ({step_name})")
+            self._schedule_auto_stop()
             dlg.close()
 
         timer.timeout.connect(tick)
@@ -1865,6 +1969,9 @@ class GUIController:
         for t in self._sequence_timers:
             t.stop()
         self._sequence_timers.clear()
+        if self._sequence_end_timer is not None:
+            self._sequence_end_timer.stop()
+        self._sequence_stage = ""
 
     def show_abort_countdown_dialog(self, initial_seconds: int, valve_name: str = "UNKNOWN", cmd_type: str = "COMMAND"):
         """Show a non-modal dialog displaying the auto-abort countdown"""

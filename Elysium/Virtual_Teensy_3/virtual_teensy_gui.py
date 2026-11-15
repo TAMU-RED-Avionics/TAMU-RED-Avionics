@@ -89,7 +89,7 @@ class VirtualTeensy(QMainWindow):
         valves_label.setStyleSheet("font-weight: bold; font-size: 14px;")
         right_layout.addWidget(valves_label)
         
-        valves_layout = QHBoxLayout()
+        valves_layout = QGridLayout()                      # wraps to several rows now that there are 16 valves
         right_layout.addLayout(valves_layout)
         
         self.valve_indicators = {}
@@ -97,7 +97,7 @@ class VirtualTeensy(QMainWindow):
         valve_ids = list(self.comms.RELAY_NAMES)
         valve_names = [self.comms.RELAY_NAMES[v] for v in valve_ids]
         
-        for name, valve_id in zip(valve_names, valve_ids):
+        for idx, (name, valve_id) in enumerate(zip(valve_names, valve_ids)):
             v_layout = QVBoxLayout()
             lbl = QLabel(name)
             lbl.setStyleSheet("font-weight: bold;")
@@ -114,7 +114,7 @@ class VirtualTeensy(QMainWindow):
             v_layout.addWidget(indicator)
             v_layout.addWidget(fail_check)
 
-            valves_layout.addLayout(v_layout)
+            valves_layout.addLayout(v_layout, idx // 5, idx % 5)   # 5 valves per row
             
             self.valve_indicators[name] = indicator
             self.valve_failure_checkboxes[name] = fail_check
