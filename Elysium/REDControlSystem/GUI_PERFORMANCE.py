@@ -85,7 +85,7 @@ class _ChannelCard(QFrame):
             "Expression - sensor names (P1, P8, TC1, LC1...), your constants below, "
             "sqrt/abs/min/max/pow/G0, and PropsSI(output, in1, val1, in2, val2, fluid) for "
             "CoolProp fluid properties. e.g. 500 * CV * sqrt((P1 - P2) * SG) or "
-            "LC1 * PropsSI('D','T',TC1+273.15,'P',P1*6894.76+101325,'N2O')")
+            "LC1 * PropsSI('D','T',(TC1-32)*5/9+273.15,'P',P1*6894.76+101325,'N2O')")
         outer.addWidget(self.expr_edit)
 
         const_row = QHBoxLayout()

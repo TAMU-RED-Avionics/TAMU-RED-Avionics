@@ -93,9 +93,9 @@ class ValveControlPanel(QWidget):
             lay.setContentsMargins(2, 2, 2, 2)
             lay.setSpacing(8)
             handle = DragHandle(hw_id, _VALVE_MIME)
-            name = RenameLabel(self.controller.valve_display_name(hw_id))
+            name = RenameLabel(self._row_text(hw_id))
             name.setStyleSheet("font-weight: bold;")
-            name.setMinimumWidth(110)
+            name.setMinimumWidth(150)
             name.rename_requested.connect(lambda h=hw_id: self._rename(h))
             state = QLabel("---")
             state.setMinimumWidth(70)
@@ -115,6 +115,12 @@ class ValveControlPanel(QWidget):
         self._list.addStretch(1)
         self._refresh_enabled()
 
+    def _row_text(self, hw_id: str) -> str:
+        """Display name, plus the firmware name in parentheses when it differs (NV-1104 (NCS1)).
+        The firmware name is the part's hw_id: the key the firmware and the controller use."""
+        display = self.controller.valve_display_name(hw_id)
+        return display if hw_id == display else f"{display} ({hw_id})"
+
     # --- renaming (session only) ---------------------------------------------------
     def _rename(self, hw_id: str):
         c = self.controller
@@ -124,7 +130,7 @@ class ValveControlPanel(QWidget):
 
     def _refresh_names(self):
         for hw_id, row in self._rows.items():
-            row[4].setText(self.controller.valve_display_name(hw_id))
+            row[4].setText(self._row_text(hw_id))
 
     # --- drag-and-drop reordering (session only) -----------------------------------
     def _drop_target(self, event):

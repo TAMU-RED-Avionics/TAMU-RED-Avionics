@@ -867,7 +867,7 @@ class GUIController:
         "G0": G0,
     }
     if _PropsSI is not None:
-        # CoolProp fluid property lookup, e.g. PropsSI('D','T',TC1+273.15,'P',P1*6894.76,'N2O')
+        # CoolProp fluid property lookup, e.g. PropsSI('D','T',(TC1-32)*5/9+273.15,'P',P1*6894.76,'N2O')
         # to get temperature/pressure-corrected density instead of a fixed SG constant.
         _CALC_SAFE_FUNCS["PropsSI"] = _PropsSI
 

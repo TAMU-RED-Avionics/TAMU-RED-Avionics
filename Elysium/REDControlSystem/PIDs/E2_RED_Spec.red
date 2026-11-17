@@ -886,7 +886,7 @@
       "type": "temperature",
       "label": "OTH-1501",
       "hardware": {
-        "adc": 111
+        "adc": 110
       },
       "extras": {
         "notes": "Dryer-Omega Ported Thermocouple ",
@@ -970,7 +970,7 @@
       },
       "extras": {
         "label_offset": [
-          29.9,
+          39.3,
           -28.2
         ],
         "hw_id": "PA-BV2"
@@ -1711,11 +1711,11 @@
     },
     "AV_1": {
       "x": 1260.0,
-      "y": 700.0
+      "y": 100.0
     },
     "AV_2": {
       "x": 1260.0,
-      "y": 100.0
+      "y": 700.0
     },
     "AV_3": {
       "x": 1500.0,
@@ -2900,7 +2900,8 @@
           "time_offset": 9.5,
           "open_valves": [
             "IGN_1",
-            "AV_1"
+            "AV_1",
+            "SV_1"
           ],
           "is_terminal_count": false
         },
@@ -2910,7 +2911,8 @@
           "open_valves": [
             "AV_3",
             "IGN_1",
-            "AV_1"
+            "AV_1",
+            "SV_1"
           ],
           "is_terminal_count": false
         },
@@ -2921,7 +2923,8 @@
             "AV_3",
             "IGN_2",
             "IGN_1",
-            "AV_1"
+            "AV_1",
+            "SV_1"
           ],
           "is_terminal_count": false
         },
@@ -2995,7 +2998,7 @@
       "label": "Ox Density (N2O)",
       "role": "custom",
       "unit": "kg/m^3",
-      "expression": "PropsSI('D','T',TC1+273.15,'P',P1*6894.76,'N2O')",
+      "expression": "PropsSI('D','T',(TC1-32)*5/9+273.15,'P',P1*6894.76,'N2O')",
       "constants": {},
       "enabled": true
     }

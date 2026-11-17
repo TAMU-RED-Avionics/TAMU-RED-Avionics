@@ -1947,7 +1947,7 @@
       "label": "Ox Density (N2O)",
       "role": "custom",
       "unit": "kg/m^3",
-      "expression": "PropsSI('D','T',TC1+273.15,'P',P1*6894.76,'N2O')",
+      "expression": "PropsSI('D','T',(TC1-32)*5/9+273.15,'P',P1*6894.76,'N2O')",
       "constants": {},
       "enabled": true
     }

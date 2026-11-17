@@ -329,7 +329,7 @@ class SensorPanel(QWidget):
         self._rebuild_rows(self._pt_layout, self.pt_rows, c.pt_keys, "psi")
         self._pt_empty_lbl.setVisible(not c.pt_keys)
 
-        self._rebuild_rows(self.tc_section.content_layout, self.tc_rows, c.tc_keys, "°C",
+        self._rebuild_rows(self.tc_section.content_layout, self.tc_rows, c.tc_keys, "°F",
                           keep_widgets=(self._tc_empty_lbl,))
         self._tc_empty_lbl.setVisible(not c.tc_keys)
 

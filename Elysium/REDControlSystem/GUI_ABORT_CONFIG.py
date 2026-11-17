@@ -43,7 +43,7 @@ _VALVE_TYPES  = tuple(t for t in COMMANDABLE_VALVE_TYPES if t != COMP_IGNITER)  
 
 _TYPE_UNIT = {
     COMP_PRESSURE:    "psi",
-    COMP_TEMPERATURE: "°C",
+    COMP_TEMPERATURE: "°F",
     COMP_LOAD_CELL:   "lbf",
 }
 

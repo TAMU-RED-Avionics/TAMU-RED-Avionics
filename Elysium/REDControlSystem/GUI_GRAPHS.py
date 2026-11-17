@@ -37,7 +37,7 @@ def sensor_category(sensor_name: str) -> str:
 def sensor_unit(sensor_name: str) -> str:
     return {
         "Pressure Transducers": "psi",
-        "Thermocouples":        "°C",
+        "Thermocouples":        "°F",
         "Load Cells":           "lbf",
     }.get(sensor_category(sensor_name), "")
 

@@ -75,6 +75,7 @@ class EthernetClient:
         # fails loudly rather than silently using stale hardcoded data.
         self.VALVE_MAP:  dict[str, int] = {}   # hw_id  -> relay index  (1-byte actuator ID)
         self.SENSOR_MAP: dict[int, str] = {}   # adc ch -> hw_id name
+        self.TEMP_SENSOR_IDS: set[int] = set()   # adc chs that are thermocouples (firmware sends degC; GUI shows degF)
         self.log_event_callback = log_event_callback      # (event_type, details="")
         self.receive_callback = receive_callback          # (data_str)
         self.connect_callback = connect_callback          # (success: bool)
@@ -183,10 +184,12 @@ class EthernetClient:
 
         new_valve_map:  dict[str, int] = {}
         new_sensor_map: dict[int, str] = {}
+        new_temp_ids:   set[int] = set()
 
         if project is None:
             self.VALVE_MAP  = new_valve_map
             self.SENSOR_MAP = new_sensor_map
+            self.TEMP_SENSOR_IDS = new_temp_ids
             return
 
         skipped_valves  = []
@@ -213,9 +216,12 @@ class EthernetClient:
                               f"'{new_sensor_map[ch]}' vs '{hw_id}'. Keeping first.")
                     else:
                         new_sensor_map[ch] = hw_id
+                        if comp.type == COMP_TEMPERATURE:
+                            new_temp_ids.add(ch)
 
         self.VALVE_MAP  = new_valve_map
         self.SENSOR_MAP = new_sensor_map
+        self.TEMP_SENSOR_IDS = new_temp_ids
 
         print(f"[EthernetClient] Maps loaded from project '{project.name}': "
               f"{len(new_valve_map)} valves, {len(new_sensor_map)} sensors.")
@@ -819,6 +825,11 @@ class EthernetClient:
                 sensor_id = packet.body[0]
                 # Unpack as big-endian float
                 raw_value = struct.unpack('>f', packet.body[1:5])[0]
+
+                # Firmware sends thermocouples in degC; convert to degF here so
+                # display, graphs, DAQ log and abort thresholds are all in degF.
+                if sensor_id in self.TEMP_SENSOR_IDS:
+                    raw_value = raw_value * 9.0 / 5.0 + 32.0
 
                 # No ACK for ADC packets: the firmware never waits for one,
                 # and ACKing every sensor sample flooded the Teensy's receive
