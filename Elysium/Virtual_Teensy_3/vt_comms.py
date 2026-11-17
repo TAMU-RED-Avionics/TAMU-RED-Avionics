@@ -80,10 +80,13 @@ class VTComms(QObject):
 
     # Relay ID -> name, matching E2_Teensy.ino's get_valve_name(). NCS4 is a manual
     # switch on the real hardware (no relay), so it has no ID here.
+    # The (label) after each name is the component the E2 P&ID binds to that ID, so a test shows
+    # which real valve a command is for (e.g. the MOV is PA-BV2). FV-1202 (0x14) is a plain
+    # on/off solenoid in the current firmware.
     RELAY_NAMES = {
-        0x0A: "NCS1", 0x0B: "NCS2", 0x0C: "NCS3", 0x04: "NCS5",
-        0x06: "PA-BV3", 0x10: "PA-BV1", 0x11: "PA-BV2",
-        0x12: "FP-1201", 0x13: "AP-1601",
+        0x0A: "NCS1 (NV-1104)", 0x0B: "NCS2 (OV-1303)", 0x0C: "NCS3 (NV-1105)", 0x04: "NCS5 (FV-1201)",
+        0x06: "PA-BV3 (NV-1600)", 0x10: "PA-BV1", 0x11: "PA-BV2 (MOV)",
+        0x12: "FP-1201", 0x13: "AP-1601", 0x14: "FV-1202",
         0x0D: "PNEUMA", 0x0E: "BRAY-AUX",
         0x20: "GV-1", 0x21: "GV-2",
         0x30: "IGN-1", 0x31: "IGN-2",

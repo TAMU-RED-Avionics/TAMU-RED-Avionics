@@ -43,6 +43,7 @@ class DAQWindow(QWidget):
         self.controller.signals.mode_changed.connect(self.mode_action)
         self.controller.signals.view_only_changed.connect(
             lambda _v: self.mode_action(self.controller.mode))
+        self.controller.signals.recording_state_changed.connect(self._on_recording_state)
 
         main_layout = QVBoxLayout()
         main_layout.setContentsMargins(0, 0, 0, 0)
@@ -126,18 +127,19 @@ class DAQWindow(QWidget):
         )
 
     def start_recording_daq(self):
-        if self.controller.start_recording():
-            # Show the actual filename that was just opened
-            self.filename_preview.setText(self.controller._xlsx_path.split("/")[-1].split("\\")[-1])
-            self.start_button.setEnabled(False)
-            self.stop_button.setEnabled(True)
+        self.controller.start_recording()      # the buttons follow recording_state_changed
 
     def stop_recording_daq(self):
         self.controller.stop_recording()
-        self.start_button.setEnabled(True)
-        self.stop_button.setEnabled(False)
-        # Refresh preview for the next would-be file
-        self.filename_preview.setText(self._get_preview())
+
+    def _on_recording_state(self, recording: bool):
+        """Also fires for a recording the controller starts / stops on its own (terminal count)."""
+        self.start_button.setEnabled(not recording)
+        self.stop_button.setEnabled(recording)
+        if recording:
+            self.filename_preview.setText(self.controller._xlsx_path.replace("\\", "/").split("/")[-1])
+        else:
+            self.filename_preview.setText(self._get_preview())
 
     def mode_action(self, mode: str):
         enabled = mode == GuiMode.MANUAL and not self.controller.view_only

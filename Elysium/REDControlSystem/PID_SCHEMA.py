@@ -3,7 +3,7 @@
 import json
 import os
 from dataclasses import dataclass, field, asdict
-from typing import Any, Optional, List
+from typing import Any, Optional, List, Dict
 
 COMP_VALVE          = "valve"           # RED-001 3.3: Manual Valve
 COMP_THROTTLE_VALVE = "throttle_valve"  # proportional / globe valve
@@ -478,14 +478,20 @@ class SequenceStep:
     # Marks this step as the terminal-count hold. show_fire_sequence_dialog()
     # requires at least one step with this flag before it will run.
     is_terminal_count: bool  = False
+    # How far each proportional actuator (servo, Bray valve) opens in this step, % of stroke, keyed by
+    # component ID. An actuator that is in open_valves but has no entry here opens to its spec's open_pct.
+    positions:   Dict[str, float] = field(default_factory=dict)
 
     def to_dict(self):
-        return {
+        d = {
             "name":              self.name,
             "time_offset":       self.time_offset,
             "open_valves":       self.open_valves,
             "is_terminal_count": self.is_terminal_count,
         }
+        if self.positions:
+            d["positions"] = dict(self.positions)
+        return d
 
     @staticmethod
     def from_dict(d: dict) -> "SequenceStep":
@@ -494,6 +500,7 @@ class SequenceStep:
             time_offset       = float(d.get("time_offset", d.get("time", 0.0))),
             open_valves       = d.get("open_valves", []),
             is_terminal_count = bool(d.get("is_terminal_count", False)),
+            positions         = {str(k): float(v) for k, v in (d.get("positions") or {}).items()},
         )
 
 

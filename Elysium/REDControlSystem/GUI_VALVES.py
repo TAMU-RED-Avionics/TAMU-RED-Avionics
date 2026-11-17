@@ -6,7 +6,7 @@ from PyQt5.QtCore import Qt, QPoint
 
 from GUI_CONTROLLER import GUIController
 from GUI_WIDGETS import DragHandle, RenameLabel, ask_new_name
-from PID_SCHEMA import COMMANDABLE_VALVE_TYPES, get_actuator_spec
+from PID_SCHEMA import COMMANDABLE_VALVE_TYPES, COMP_IGNITER, get_actuator_spec
 
 
 _VALVE_MIME = "application/x-red-valve-row"
@@ -18,7 +18,7 @@ def _natural_key(text: str):
 
 
 class ValveControlPanel(QWidget):
-    """Open / Close buttons for every relay-bound valve, pump and igniter in the project. Position-
+    """Open / Close buttons for every relay-bound valve and pump in the project. Position-
     commanded actuators (servos, the Bray valve) open to 100 % and close to 0 %. An igniter is just
     a relay pin, like a valve: On / Off (turning it on asks for confirmation first). Passive parts
     (PRVs, check valves) and manual valves, which have no binding, are left out.
@@ -81,6 +81,8 @@ class ValveControlPanel(QWidget):
                 hw_id = comp.extras.get("hw_id") or comp.label
                 if not hw_id or hw_id not in self.controller.valve_states:
                     continue
+                if comp.type == COMP_IGNITER or hw_id in self.controller.igniter_hw_ids:
+                    continue            # igniters live on the P&ID, not in this list
                 entries.append((comp.label or hw_id, hw_id))
         # Alphabetical/numerical by default; anything the operator already dragged keeps its place
         known = {h: i for i, h in enumerate(self._order)}

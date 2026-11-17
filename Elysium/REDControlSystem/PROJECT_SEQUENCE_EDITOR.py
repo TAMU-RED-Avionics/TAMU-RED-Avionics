@@ -204,6 +204,7 @@ class SequenceEditorWindow(QWidget):
         self.canvas.interactive = True
         
         self.canvas.component_clicked.connect(self._on_canvas_component_clicked)
+        self.canvas.actuator_position_requested.connect(self._on_actuator_position)
 
         splitter.addWidget(left_panel)
         splitter.addWidget(self.canvas)
@@ -217,6 +218,11 @@ class SequenceEditorWindow(QWidget):
         self.step_list_widget.clear()
         for idx, step in enumerate(self.steps):
             item_text = f"[{step.time_offset:5.1f}s] {step.name} ({len(step.open_valves)} Valves Open)"
+            for cid in step.open_valves:
+                comp = self._project.components.get(cid)
+                spec = get_actuator_spec(comp) if comp else None
+                if spec is not None:
+                    item_text += f"  {comp.label} {step.positions.get(cid, spec.open_pct):g}{spec.unit}"
             if getattr(step, "is_terminal_count", False):
                 item_text += "  [TERMINAL COUNT]"
             self.step_list_widget.addItem(item_text)
@@ -256,12 +262,43 @@ class SequenceEditorWindow(QWidget):
             return
 
         step = self.steps[self.current_step_idx]
+        spec = get_actuator_spec(comp)
+        if spec is not None:
+            # Servos / the Bray valve: the same slider popup as on the home screen, to pick how far it opens
+            pct = step.positions.get(cid, spec.open_pct) if cid in step.open_valves else spec.safe_pct
+            anchor = self.canvas._popup_anchor(cid)
+            self.canvas._actuator_popup.show_for(
+                cid, (comp.label or cid).strip(), spec,
+                "OPEN" if cid in step.open_valves else "CLOSED", pct, anchor)
+            return
         if cid in step.open_valves:
             step.open_valves.remove(cid)
         else:
             step.open_valves.append(cid)
 
         self._select_step(self.current_step_idx)
+
+    def _on_actuator_position(self, cid: str, pct: float):
+        """The popup picked a position for this step: anywhere off the safe position means the step
+        opens the actuator to that position; the safe position means the step leaves it closed."""
+        if not (0 <= self.current_step_idx < len(self.steps)):
+            return
+        comp = self._project.components.get(cid)
+        spec = get_actuator_spec(comp) if comp else None
+        if spec is None:
+            return
+        step = self.steps[self.current_step_idx]
+        if spec.is_off_safe(pct):
+            if cid not in step.open_valves:
+                step.open_valves.append(cid)
+            step.positions[cid] = float(pct)
+        else:
+            if cid in step.open_valves:
+                step.open_valves.remove(cid)
+            step.positions.pop(cid, None)
+        self._select_step(self.current_step_idx)
+        self.canvas._actuator_popup.update_actuator(
+            cid, "OPEN" if cid in step.open_valves else "CLOSED", pct)
 
     def _on_time_changed(self, value):
         if self.current_step_idx == -1:
