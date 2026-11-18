@@ -16,6 +16,7 @@ from GUI_TESTS import TestsPage
 from GUI_CONNECT import ConnectionWindow
 from GUI_DAQ import DAQWindow
 from GUI_GRAPHS import SensorGridWindow
+from GUI_UNITS import units
 from GUI_CONTROLLER import GUIController
 from PID_EDITOR import PIDEditorWindow
 from PID_VIEW   import PIDViewWindow
@@ -53,6 +54,7 @@ class CollapsibleSection(QWidget):
         header_layout.addWidget(self.toggle_btn)
         header_layout.addWidget(self.title_label)
         header_layout.addStretch()
+        self._header_layout = header_layout
 
         self.content = QWidget()
         self.content_layout = QVBoxLayout(self.content)
@@ -61,6 +63,10 @@ class CollapsibleSection(QWidget):
 
         outer.addWidget(header)
         outer.addWidget(self.content)
+
+    def add_header_widget(self, widget: QWidget):
+        """A small control at the right end of the section's title bar."""
+        self._header_layout.addWidget(widget)
 
     def _toggle(self):
         self._expanded = not self._expanded
@@ -134,9 +140,10 @@ class SensorRow(QWidget):
     """One sensor line in the right sidebar: name, live value, unit, tare."""
     clicked = pyqtSignal(str)
 
-    def __init__(self, name: str, unit: str, controller: GUIController, parent=None):
+    def __init__(self, name: str, unit: str, controller: GUIController, parent=None, is_temp: bool = False):
         super().__init__(parent)
         self.name = name
+        self.is_temp = is_temp
         self.controller = controller
 
         layout = QHBoxLayout(self)
@@ -187,8 +194,13 @@ class SensorRow(QWidget):
         self.clicked.emit(self.name)
         super().mousePressEvent(event)
 
+    def set_unit(self, unit: str):
+        self.unit_lbl.setText(unit)
+
     def set_value(self, val: float, status: str = ""):
         # NaN from the firmware = sensor loop open / unplugged (< 3.5 mA)
+        if self.is_temp and val == val:
+            val = units.temp(val)                    # stored in degC, shown in the chosen unit
         self.value_lbl.setText("NO SIGNAL" if val != val else f"{val:.2f}")
         # setStyleSheet forces a style re-polish; only touch it on change.
         if status != getattr(self, "_last_status", None):
@@ -274,6 +286,14 @@ class SensorPanel(QWidget):
         inner_layout.addSpacing(6)
 
         self.tc_section = CollapsibleSection("Thermocouples")
+        self._unit_btn = QPushButton()                      # display-only °C / °F switch
+        self._unit_btn.setFixedSize(34, 18)
+        self._unit_btn.setToolTip("Show thermocouples in °C or °F (display only: saved data, "
+                                  "thresholds and formulas stay in °C)")
+        self._unit_btn.clicked.connect(lambda: units.set_fahrenheit(not units.fahrenheit))
+        self.tc_section.add_header_widget(self._unit_btn)
+        units.changed.connect(self._on_temp_unit_changed)
+        self._unit_btn.setText(units.temp_unit())
         self._tc_empty_lbl = QLabel("No thermocouples in this project.")
         self._tc_empty_lbl.setObjectName("sensor_unit_label")
         self._tc_empty_lbl.setWordWrap(True)
@@ -319,6 +339,17 @@ class SensorPanel(QWidget):
 
         self.refresh_sensors()
 
+    def _on_temp_unit_changed(self):
+        self._unit_btn.setText(units.temp_unit())
+        for row in self.tc_rows.values():
+            row.set_unit(units.temp_unit())
+            row.value_lbl.setText("---")          # the next reading redraws it in the new unit
+        pending = getattr(self, "_pending", None)
+        if pending is not None:                   # redraw the current readings in the new unit
+            for name, v in self.controller.current_sensor_values.items():
+                if name in self.tc_rows:
+                    pending[name] = v
+
     def load_project(self, project):
         self.refresh_sensors()
 
@@ -329,8 +360,8 @@ class SensorPanel(QWidget):
         self._rebuild_rows(self._pt_layout, self.pt_rows, c.pt_keys, "psi")
         self._pt_empty_lbl.setVisible(not c.pt_keys)
 
-        self._rebuild_rows(self.tc_section.content_layout, self.tc_rows, c.tc_keys, "°F",
-                          keep_widgets=(self._tc_empty_lbl,))
+        self._rebuild_rows(self.tc_section.content_layout, self.tc_rows, c.tc_keys, units.temp_unit(),
+                          keep_widgets=(self._tc_empty_lbl,), is_temp=True)
         self._tc_empty_lbl.setVisible(not c.tc_keys)
 
         self._rebuild_rows(self.lc_section.content_layout, self.lc_rows, c.lc_keys, "lbf",
@@ -342,7 +373,7 @@ class SensorPanel(QWidget):
         self._update_lc_total()
 
     def _rebuild_rows(self, layout, rows_dict: dict, keys: list, unit: str,
-                     keep_widgets: tuple = ()):
+                     keep_widgets: tuple = (), is_temp: bool = False):
         """Clear out any previously-built SensorRow widgets from `layout`
         (leaving `keep_widgets` - e.g. the empty-state label / total row -
         untouched) and rebuild fresh rows for the current `keys` list."""
@@ -353,7 +384,7 @@ class SensorPanel(QWidget):
 
         insert_at = 0
         for name in keys:
-            row = SensorRow(name, unit, self.controller)
+            row = SensorRow(name, unit, self.controller, is_temp=is_temp)
             row.clicked.connect(self._on_sensor_row_clicked)
             rows_dict[name] = row
             layout.insertWidget(insert_at, row)

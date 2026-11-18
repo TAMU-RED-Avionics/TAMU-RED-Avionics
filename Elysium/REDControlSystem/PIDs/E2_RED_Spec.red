@@ -840,21 +840,6 @@
       "flip": false
     },
     {
-      "id": "SV_6",
-      "type": "solenoid",
-      "label": "NV-1600",
-      "hardware": {
-        "relay": 6
-      },
-      "extras": {
-        "notes": "160 Bar 12V NC US Solid Solenoid",
-        "hw_id": "PA-BV3"
-      },
-      "rotation": 270,
-      "hide_lbl": false,
-      "flip": false
-    },
-    {
       "id": "H_8",
       "type": "flex_hose",
       "label": "NH-1101",
@@ -886,7 +871,7 @@
       "type": "temperature",
       "label": "OTH-1501",
       "hardware": {
-        "adc": 111
+        "adc": 110
       },
       "extras": {
         "notes": "Dryer-Omega Ported Thermocouple ",
@@ -1676,10 +1661,6 @@
     "SV_5": {
       "x": 940.0,
       "y": 780.0
-    },
-    "SV_6": {
-      "x": 940.0,
-      "y": 880.0
     },
     "H_8": {
       "x": 390.0,
@@ -2892,7 +2873,9 @@
         {
           "name": "Terminal Count",
           "time_offset": 0.0,
-          "open_valves": [],
+          "open_valves": [
+            "SV_1"
+          ],
           "is_terminal_count": true
         },
         {
@@ -2900,7 +2883,8 @@
           "time_offset": 9.5,
           "open_valves": [
             "IGN_1",
-            "AV_1"
+            "AV_1",
+            "SV_1"
           ],
           "is_terminal_count": false
         },
@@ -2910,7 +2894,8 @@
           "open_valves": [
             "AV_3",
             "IGN_1",
-            "AV_1"
+            "AV_1",
+            "SV_1"
           ],
           "is_terminal_count": false,
           "positions": {
@@ -2924,13 +2909,23 @@
             "AV_3",
             "IGN_2",
             "IGN_1",
-            "AV_1"
+            "AV_1",
+            "SV_1"
           ],
           "is_terminal_count": false
         },
         {
           "name": "Shutdown",
-          "time_offset": 15.0,
+          "time_offset": 25.0,
+          "open_valves": [
+            "SV_1",
+            "AV_1"
+          ],
+          "is_terminal_count": false
+        },
+        {
+          "name": "Shutdown 2",
+          "time_offset": 25.3,
           "open_valves": [],
           "is_terminal_count": false
         }
@@ -2943,7 +2938,9 @@
         {
           "name": "Terminal Count",
           "time_offset": 0.0,
-          "open_valves": [],
+          "open_valves": [
+            "SV_1"
+          ],
           "is_terminal_count": true
         },
         {
@@ -2951,7 +2948,8 @@
           "time_offset": 9.5,
           "open_valves": [
             "IGN_1",
-            "AV_1"
+            "AV_1",
+            "SV_1"
           ],
           "is_terminal_count": false
         },
@@ -2961,7 +2959,8 @@
           "open_valves": [
             "IGN_1",
             "AV_3",
-            "AV_1"
+            "AV_1",
+            "SV_1"
           ],
           "is_terminal_count": false,
           "positions": {
@@ -2975,7 +2974,8 @@
             "AV_3",
             "IGN_1",
             "IGN_2",
-            "AV_1"
+            "AV_1",
+            "SV_1"
           ],
           "is_terminal_count": false,
           "positions": {
@@ -2985,6 +2985,15 @@
         {
           "name": "Shutdown",
           "time_offset": 15.0,
+          "open_valves": [
+            "SV_1",
+            "AV_1"
+          ],
+          "is_terminal_count": false
+        },
+        {
+          "name": "Shutdown 2",
+          "time_offset": 15.3,
           "open_valves": [],
           "is_terminal_count": false
         }

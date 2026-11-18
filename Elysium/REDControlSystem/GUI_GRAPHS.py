@@ -13,6 +13,7 @@ from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
 
 from GUI_CONTROLLER import GUIController
+from GUI_UNITS import units
 
 SERIES_COLORS_DARK = [
     "#3987e5", "#199e70", "#c98500", "#008300",
@@ -37,9 +38,17 @@ def sensor_category(sensor_name: str) -> str:
 def sensor_unit(sensor_name: str) -> str:
     return {
         "Pressure Transducers": "psi",
-        "Thermocouples":        "°F",
+        "Thermocouples":        "°C",
         "Load Cells":           "lbf",
     }.get(sensor_category(sensor_name), "")
+
+
+def display_unit(sensor_name: str) -> str:
+    return units.temp_unit() if sensor_category(sensor_name) == "Thermocouples" else sensor_unit(sensor_name)
+
+
+def display_value(sensor_name: str, value: float) -> float:
+    return units.temp(value) if sensor_category(sensor_name) == "Thermocouples" else value
 
 
 class SensorPickerPopup(QWidget):
@@ -206,6 +215,7 @@ class SensorGraph(QWidget):
         layout.addWidget(self.canvas, stretch=1)
 
         self._rebuild_axes()
+        units.changed.connect(self._on_units_changed)
 
     def _on_gear_clicked(self):
         self.settings_requested.emit(
@@ -229,7 +239,7 @@ class SensorGraph(QWidget):
     def _title_text(self) -> str:
         if not self.sensors:
             return "No sensors selected"
-        unit = sensor_unit(self.sensors[0])
+        unit = display_unit(self.sensors[0])
         names = ", ".join(self.sensors) if len(self.sensors) <= 4 \
             else f"{', '.join(self.sensors[:3])} +{len(self.sensors) - 3} more"
         return f"{names}  ({unit})" if unit else names
@@ -249,7 +259,7 @@ class SensorGraph(QWidget):
             self._lines[name] = line
 
         self.title_lbl.setText(self._title_text())
-        unit = sensor_unit(self.sensors[0]) if self.sensors else ""
+        unit = display_unit(self.sensors[0]) if self.sensors else ""
         self.ax.set_xlabel("Time (seconds ago)", fontsize=9, fontfamily="monospace", color=fg)
         self.ax.set_ylabel(f"Value ({unit})" if unit else "Value",
                            fontsize=9, fontfamily="monospace", color=fg)
@@ -330,6 +340,8 @@ class SensorGraph(QWidget):
             if line is None:
                 continue
             xs, ys = self._downsample(self.data[name], now)
+            if units.fahrenheit and sensor_category(name) == "Thermocouples":
+                ys = [units.temp(y) for y in ys]        # stored in degC, shown in degF
             line.set_data(xs, ys)
             if ys:
                 any_data = True
@@ -355,6 +367,12 @@ class SensorGraph(QWidget):
             if line is not None:
                 self.ax.draw_artist(line)
         self.canvas.blit(self.figure.bbox)
+
+    def _on_units_changed(self):
+        self._rebuild_axes()
+        self.ax.set_ylim(0, 1)          # force the axis to re-fit the converted data
+        self._bg = None
+        self.update_graph(force=True)
 
     def set_dark_mode(self, dark: bool):
         self.dark_mode = dark
@@ -413,6 +431,7 @@ class SensorGridWindow(QWidget):
 
         self.controller = controller
         self.controller.signals.sensor_updated.connect(self.update_sensor_value)
+        units.changed.connect(self._on_units_changed)
 
         self.grid = QGridLayout()
         self.grid.setContentsMargins(0, 0, 0, 0)
@@ -423,6 +442,7 @@ class SensorGridWindow(QWidget):
 
         self.sensor_frames: Dict[str, SensorFrame] = {}
         self.value_labels:  Dict[str, QLabel] = {}
+        self.unit_labels:   Dict[str, QLabel] = {}
         self.graphs: Dict[str, SensorPopupGraph] = {}
         self.sensor_history: Dict[str, deque] = {}
         self.dark_mode = False
@@ -435,6 +455,7 @@ class SensorGridWindow(QWidget):
         self.multi_graph_window: "MultiGraphWindow" = None
 
         self._pending_values: Dict[str, float] = {}
+        self._last_values: Dict[str, float] = {}
         self._label_status: Dict[str, str] = {}
         self._label_timer = QTimer(self)
         self._label_timer.timeout.connect(self._flush_labels)
@@ -457,6 +478,7 @@ class SensorGridWindow(QWidget):
             frame.deleteLater()
         self.sensor_frames.clear()
         self.value_labels.clear()
+        self.unit_labels.clear()
 
         stale = [name for name in self.graphs if name not in self.sensors]
         for name in stale:
@@ -492,7 +514,8 @@ class SensorGridWindow(QWidget):
         value_label.setAlignment(Qt.AlignCenter | Qt.AlignVCenter)
         frame_layout.addWidget(value_label)
 
-        unit_label = QLabel(sensor_unit(name))
+        unit_label = QLabel(display_unit(name))
+        self.unit_labels[name] = unit_label
         unit_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         frame_layout.addWidget(unit_label)
 
@@ -524,6 +547,12 @@ class SensorGridWindow(QWidget):
         self.multi_graph_window.raise_()
         self.multi_graph_window.activateWindow()
 
+    def _on_units_changed(self):
+        for name, lbl in self.unit_labels.items():
+            lbl.setText(display_unit(name))
+        for name, v in self._last_values.items():
+            self._pending_values[name] = v          # redraw the value labels in the new unit
+
     def update_sensor_value(self, sensor: str, value: float, timestamp: float):
         """Per-sample ingestion: append-only buffer work. All drawing (labels
         and graphs) happens on fixed-rate timers, never per packet."""
@@ -531,6 +560,7 @@ class SensorGridWindow(QWidget):
             return
 
         self._pending_values[sensor] = value
+        self._last_values[sensor] = value
         self.sensor_history[sensor].append((timestamp, value))
 
         if sensor in self.graphs:
@@ -557,7 +587,7 @@ class SensorGridWindow(QWidget):
                     "ORANGE": "color: #ff8c00; font-weight: bold;",
                     "BLUE":   "color: #0000ff; font-weight: bold;",
                 }.get(status, ""))
-            label.setText(f"{value:.2f}")
+            label.setText(f"{display_value(sensor, value):.2f}")
 
     def update_main_graph(self, sensor: str):
         self.main_graph.set_sensors([sensor], self.sensor_history)

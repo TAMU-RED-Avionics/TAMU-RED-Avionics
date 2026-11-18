@@ -31,6 +31,7 @@ from PID_SCHEMA import (
 )
 
 import PID_RENDERER as PR
+from GUI_UNITS import units
 from PID_RENDERER import (
     GRID_SPACING, PIPE_W, SNS_R,
     FLUID_QC, apply_canvas_theme, snap, world_rect, Renderer,
@@ -76,7 +77,7 @@ SENSOR_CALLOUT_BORDER = {
 }
 SENSOR_UNIT = {
     COMP_PRESSURE:      "psi",
-    COMP_TEMPERATURE:   "°F",
+    COMP_TEMPERATURE:   "°C",          # shown in °F when the display switch is on (see _callout_text)
     COMP_LOAD_CELL:     "lbf",
     COMP_DIFF_PRESSURE: "psid",
     COMP_FLOW_METER:    "gpm",
@@ -483,6 +484,8 @@ class PIDCanvas(QWidget):
         # components that carry an ActuatorSpec)
         self._actuator_popup = ActuatorPopup(self)
         self._actuator_popup.position_requested.connect(self.actuator_position_requested)
+
+        units.changed.connect(self._request_repaint)      # °C / °F display switch
 
         self.setMouseTracking(True)
         self.setFocusPolicy(Qt.StrongFocus)
@@ -1041,11 +1044,11 @@ class PIDCanvas(QWidget):
 
             if value is None:
                 val_str = "---"
-            elif comp.type == COMP_LOAD_CELL:
-                val_str = f"{value:.1f}"
+            elif comp.type == COMP_TEMPERATURE:
+                val_str = f"{units.temp(value):.1f}"          # stored in °C, shown in the chosen unit
             else:
                 val_str = f"{value:.1f}"
-            unit = SENSOR_UNIT.get(comp.type, "")
+            unit = units.temp_unit() if comp.type == COMP_TEMPERATURE else SENSOR_UNIT.get(comp.type, "")
             lbl  = self.label_overrides.get(cid) or comp.label or cid
 
             # Compact single-line pill:  P1  512.30 psi
