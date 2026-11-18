@@ -104,12 +104,13 @@ const float    PT_ATM_PSI      = 14.7f;
 // channel is sent as NaN, which the GUI shows as no signal.
 const float    PT_NO_SIGNAL_MA = 3.85f;
 
-// ADS channel -> PT index (0-based; 0 = P1), traced from the PCB netlist:
-//   J10 pins 1-4 = ch0-3  = PT6, PT0, PT7, PT1
-//   J15 pins 1-4 = ch4-7  = PT8, PT2, PT9, PT3
-//   J19 pins 1-4 = ch8-11 = PT10, PT4, PT11, PT5
-// Confirmed on the bench: P2 = ch3, P6 = ch11, P8 = ch2.
-const uint8_t PT_NUM_FOR_CH[12] = { 6, 0, 7, 1, 8, 2, 9, 3, 10, 4, 11, 5 };
+// ADS channel -> PT index (0-based; 0 = P1). Channel order per connector (PCB netlist):
+//   J10 pins 1-4 = ch0-3, J15 pins 1-4 = ch4-7, J19 pins 1-4 = ch8-11
+// PT assignment (P# = hw_id in REDControlSystem/PIDs/E2_RED_Spec.red):
+//   J15-1 = P1 NPT-1101   J15-2 = P2 OPT-1301   J15-3 = P3 OPT-1501   J15-4 = P4 FPT-1401
+//   J19-1 = P5 OPT-1502   J19-2 = P6 FPT-1402   J19-3 = P7 OMI_P      J19-4 = P8 MCC_P
+//   J10-1..4 = P9-P12 (spare)
+const uint8_t PT_NUM_FOR_CH[12] = { 8, 9, 10, 11, 0, 1, 2, 3, 4, 5, 6, 7 };
 
 const float PT_EMA_ALPHA = 0.2f;   // 0=infinitely smooth/slow, 1=no smoothing
 float pt_filtered[12] = { NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN, NAN };
@@ -175,18 +176,24 @@ static void ads_boot_report() {
 #define NAU7802_ADDR     0x2A
 #define TCA_LC_ADDR      0x70
 
-// ---- Load cells: NAU7802 x6 behind a TCA9548A mux, read EXACTLY like the loadcell_cal sketch ----
+// ---- Load cells: NAU7802s behind a TCA9548A mux, read like the loadcell_cal sketch ----
 // (the calibration constants below were measured with that sketch, so the chip is configured and read
-// the same way here): hardware Wire1 (SCL1 = pin 16, SDA1 = pin 17) at 100 kHz, mux 0x70 with LC1-6 on
-// channels 1-6, NAU7802 0x2A: reset -> power up -> LDO 3.0 V, gain x128 -> chopper clock off + PGA cap ->
-// 80 samples/s, input VIN1 (JLC pins 4/5) -> internal offset calibration (CALS) -> start converting.
+// the same way here): hardware Wire1 (SCL1 = pin 16, SDA1 = pin 17) at 100 kHz, mux 0x70, NAU7802 0x2A:
+// reset -> power up -> LDO 3.0 V, gain x128 -> chopper clock off + PGA cap -> rate -> internal offset
+// calibration (CALS) of each input in use -> start converting. Which chip / input each load cell is on
+// is in LC_MUX_CH[] / LC_VIN[] below. A chip with ONE load cell stays on its input at 80 samples/s
+// (unchanged behaviour). A chip with TWO load cells (VIN1 + VIN2) runs at 320 samples/s and is
+// alternated between its inputs by lc_shared_service() (non-blocking, see there).
 #define LC_PIN_SCL        16
 #define LC_PIN_SDA        17
-#define LC_FIRST_MUX_CH   1          // LC1 is on mux channel 1 (channel 0 is unused)
-#define LC_USE_CHANNEL2   false      // false = NAU7802 input VIN1, true = VIN2
 #define LC_GAIN_BITS      7          // 0..7 = x1..x128
 #define LC_LDO_BITS       5          // 0b101 = 3.0 V (excitation + ADC reference)
-#define LC_RATE_BITS      3          // 0=10, 1=20, 2=40, 3=80, 7=320 samples/s
+#define LC_RATE_BITS      3          // single-cell chips: 0=10, 1=20, 2=40, 3=80, 7=320 samples/s
+#define LC_SHARED_RATE_BITS 7        // two-cell chips: 320 samples/s (3.125 ms per conversion, nominal)
+// After a CHS (input) switch, wait this long before taking a sample: 5 nominal 320 SPS conversions
+// (+15 % for the internal RC clock), so the sample used started ~3 conversions after the switch and the
+// ones in between are thrown away. NOT verified on hardware - see the bench test notes.
+#define LC_SHARED_SETTLE_US 18000
 
 #define NAU7802_ADDR      0x2A
 #define TCA_LC_ADDR       0x70
@@ -212,9 +219,9 @@ void lc_i2c_begin() {
     started = true;
 }
 
-static bool lc_mux_select(uint8_t ch) {
+static bool lc_mux_select(uint8_t mux_ch) {   // TCA9548A channel 0..7 (JLCn = channel n)
     Wire1.beginTransmission(TCA_LC_ADDR);
-    Wire1.write((uint8_t)(1 << (ch + LC_FIRST_MUX_CH)));
+    Wire1.write((uint8_t)(1 << mux_ch));
     return Wire1.endTransmission() == 0;
 }
 
@@ -252,9 +259,16 @@ void lc_scan_trunk() {
     if (!found) DBG_PRINTLN("    NOTHING FOUND on LC trunk.");
 }
 
-// Full NAU7802 bring-up for load cell `ch` (0 = LC1). Blocking; called from setup() only.
-bool lc_init_cell(uint8_t ch) {
-    if (!lc_mux_select(ch)) return false;
+// NAU7802 CTRL2 value: conversion rate + input select (CHS, bit 7: 0 = VIN1, 1 = VIN2).
+static uint8_t lc_ctrl2(uint8_t rate_bits, uint8_t vin) {
+    return (uint8_t)((rate_bits << 4) | (vin == 2 ? 0x80 : 0x00));
+}
+
+// Full NAU7802 bring-up for the chip on mux channel `mux_ch`. Runs the internal offset calibration once
+// per input in vins[] (the chip keeps separate offset/gain registers for channel 1 and channel 2), and
+// leaves the chip converting on vins[0]. Blocking; called from setup() only.
+bool lc_init_chip(uint8_t mux_ch, uint8_t rate_bits, const uint8_t* vins, uint8_t nv) {
+    if (!lc_mux_select(mux_ch)) return false;
     if (!nau_write(NAU_R_PU_CTRL, NAU_PU_RR)) return false;                    // reset
     delay(2);
     nau_write(NAU_R_PU_CTRL, NAU_PU_PUD);                                      // digital on
@@ -271,23 +285,26 @@ bool lc_init_cell(uint8_t ch) {
     nau_write(NAU_R_ADC, 0x30);                                                 // chopper clock off (datasheet power-up sequence)
     int pga = nau_read(NAU_R_PGA_PWR);
     if (pga >= 0) nau_write(NAU_R_PGA_PWR, (uint8_t)(pga | 0x80));             // PGA cap on
-    uint8_t c2 = (uint8_t)((LC_RATE_BITS << 4) | (LC_USE_CHANNEL2 ? 0x80 : 0x00));
-    nau_write(NAU_R_CTRL2, c2);
-    nau_write(NAU_R_CTRL2, c2 | 0x04);                                          // CALS: internal offset calibration
-    t = millis();
-    for (;;) {
-        int c = nau_read(NAU_R_CTRL2);
-        if (c >= 0 && !(c & 0x04)) { if (c & 0x08) return false; break; }       // done; CAL_ERR = failed
-        if (millis() - t > 1000) return false;
-        delay(5);
+    for (int i = (int)nv - 1; i >= 0; i--) {                                   // last one calibrated = vins[0]
+        uint8_t c2 = lc_ctrl2(rate_bits, vins[i]);
+        nau_write(NAU_R_CTRL2, c2);
+        nau_write(NAU_R_CTRL2, c2 | 0x04);                                      // CALS: internal offset calibration
+        t = millis();
+        for (;;) {
+            int c = nau_read(NAU_R_CTRL2);
+            if (c >= 0 && !(c & 0x04)) { if (c & 0x08) return false; break; }   // done; CAL_ERR = failed
+            if (millis() - t > 1000) return false;
+            delay(5);
+        }
     }
     nau_write(NAU_R_PU_CTRL, NAU_PU_AVDDS | NAU_PU_CS | NAU_PU_PUD | NAU_PU_PUA);   // start converting
     return true;
 }
 
-// One raw 24-bit sample if the chip has a new conversion ready; false = nothing new (never blocks).
-bool lc_read_raw(uint8_t ch, int32_t& raw) {
-    if (!lc_mux_select(ch)) return false;
+// One raw 24-bit sample from the chip on mux channel `mux_ch` if it has a new conversion ready;
+// false = nothing new (never blocks). Leaves the mux on that channel.
+bool lc_read_raw(uint8_t mux_ch, int32_t& raw) {
+    if (!lc_mux_select(mux_ch)) return false;
     int pu = nau_read(NAU_R_PU_CTRL);
     if (pu < 0 || !(pu & NAU_PU_CR)) return false;
     uint8_t b[3];
@@ -301,9 +318,12 @@ bool lc_read_raw(uint8_t ch, int32_t& raw) {
 //const double LC_SLOPE[6]     = { 0.063616813928, 0.063616813928, 0.063616813928, 0.005974607916355, 0.006289308176101, 0.006546644844517 };
 //const double LC_INTERCEPT[6] = { -1039.7978, -1039.7978, -1039.7978, 16.185212845407022, -104.044025157232709, -2.114566284779051 };
 
-const double LC_SLOPE[6]     = { 0.057147694873078, 0.058057781983798, 2.599801220618e-04, 2.541333e-05, 0.005607686345671, 0.005663427662917 };
-const double LC_INTERCEPT[6] = { 9913.891760249649450, 1804.583760735878968, -4.507705094873, -0.3590, 178.640133783997953, 526.810882791494009 };
+//const double LC_SLOPE[6]     = { 0.005974607916355, 0.006289308176101, 0.006546644844517, 0.005974607916355, 0.006289308176101, 0.006546644844517 };
+//const double LC_INTERCEPT[6] = { 16.185212845407022, -104.044025157232709, -2.114566284779051, 16.185212845407022, -104.044025157232709, -2.114566284779051 };
 
+// Local bench calibration, kept over the upstream values above (merged from local work on top of csmeby 0609276).
+const double LC_SLOPE[6]     = { 0.057147694873078, 0.058057781983798, 2.599801220618e-04, 2.541333e-05, 0.005607686345671, 0.005663427662917 };     // <-- USER INPUT  (calibrate on hardware)
+const double LC_INTERCEPT[6] = { 9913.891760249649450, 1804.583760735878968, -4.507705094873, -0.3590, 178.640133783997953, 526.810882791494009 };     // <-- USER INPUTs
 /* calibration history log, not code:
 point 1: raw 16350.5 = 0.000
 point 2: raw 16404.1 = 4.200
@@ -324,7 +344,57 @@ LC_SLOPE[1] = 0.064916693037f;   LC_INTERCEPT[1] = -1061.8438f;
 
 float lc_weights[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
 bool  lc_ok[6]      = { false, false, false, false, false, false };   // LC_INSTALLED and answered at boot: only these are read / sent
-bool LC_INSTALLED[6] = { true, true, true, true, true, true };   // LC1-6 = NAU7802s U8,U10-U14 on mux channels 1-6; all six enabled (any that don't answer at boot are skipped via lc_ok)
+// <-- USER INPUT: which load cells are fitted. Default = all six of the new wiring (JLC1 x2, JLC2, JLC3 x2, JLC5).
+bool LC_INSTALLED[6] = { true, true, true, true, true, true };
+
+// Load cell -> hardware, traced from GIGAPCB.kicad_sch. JLCn -> NAU7802 -> TCA9548A channel n:
+//   JLC1 = U8 / ch1   JLC2 = U10 / ch2   JLC3 = U11 / ch3   JLC4 = U12 / ch4   JLC5 = U13 / ch5   JLC6 = U14 / ch6
+// Every JLC: pin 4 = VIN1+, 5 = VIN1-, 2 = VIN2+, 3 = VIN2-, 1 = GND, 6 = excitation.
+//                              LC1 LC2 LC3 LC4 LC5 LC6
+const uint8_t LC_MUX_CH[6] = {   1,  1,  2,  3,  3,  5 };   // = JLC number
+const uint8_t LC_VIN[6]    = {   1,  2,  1,  2,  1,  1 };   // 1 = JLC pins 4/5, 2 = JLC pins 2/3
+const char*   LC_CHIP_U[8] = { "?", "U8", "U10", "U11", "U12", "U13", "U14", "?" };   // by mux channel
+
+// One entry per NAU7802 in use (built in setup() from the tables above).
+struct LcChip {
+    uint8_t  mux_ch;
+    uint8_t  n;          // installed load cells on this chip: 1, or 2 (= shared, alternating VIN1/VIN2)
+    uint8_t  lc[2];      // load cell index (0 = LC1) per slot; slot 0 is the input the chip boots on
+    bool     ok;
+    uint8_t  cur;        // shared chips: slot currently selected (CHS)
+    uint32_t t_switch;   // shared chips: micros() of the last CHS write
+};
+LcChip  lc_chips[6];
+uint8_t lc_num_chips = 0;
+bool    lc_shared[6]  = { false, false, false, false, false, false };   // that load cell's chip is shared
+int64_t lc_acc_sum[6] = { 0, 0, 0, 0, 0, 0 };                          // shared cells: raw sum since last send
+uint16_t lc_acc_n[6]  = { 0, 0, 0, 0, 0, 0 };
+
+// Shared chips (two load cells): read the selected input once LC_SHARED_SETTLE_US has passed since the
+// last switch, add it to that cell's running sum, flip CHS to the other input, restart the timer.
+// Never waits: if the time isn't up or no conversion is ready, it returns and tries next pass.
+// Each input gets a sample every ~20-30 ms (two settle periods + loop latency), so ~3-5 samples per
+// 100 ms send, which are averaged in loop(). Called every loop() pass.
+extern uint32_t lc_us_accum;   // defined with the other timing accumulators further down
+void lc_shared_service() {
+    uint32_t t0 = micros();
+    bool did = false;
+    for (uint8_t k = 0; k < lc_num_chips; k++) {
+        LcChip& c = lc_chips[k];
+        if (!c.ok || c.n < 2) continue;
+        if (micros() - c.t_switch < LC_SHARED_SETTLE_US) continue;
+        did = true;
+        int32_t raw;
+        if (!lc_read_raw(c.mux_ch, raw)) continue;                              // mux is left on c.mux_ch
+        uint8_t lc = c.lc[c.cur];
+        lc_acc_sum[lc] += raw;
+        lc_acc_n[lc]++;
+        c.cur ^= 1;
+        nau_write(NAU_R_CTRL2, lc_ctrl2(LC_SHARED_RATE_BITS, LC_VIN[c.lc[c.cur]]));
+        c.t_switch = micros();
+    }
+    if (did) lc_us_accum += micros() - t0;
+}
 
 #define TCA_TC_ADDR      0x70
 #define MCP9600_MUXED_ADDR 0x67
@@ -337,7 +407,11 @@ Adafruit_MCP9600 tc_sensor[12];
 bool tc_ok[12] = { false };
 float tc_temps[12] = { 0.0f };
 
-bool TC_INSTALLED[12] = { true, true, true, true, true, true, true, true, true, true, true, true };   // always attempt all 12; a missing/unwired channel just reports "not found" and gets skipped at runtime
+// TEMP (Nov 2026): TCADC1-8 are dead because the TCA9548 mux (U2, 0x70) doesn't respond on I2C,
+// and TCADC9 (0x65) doesn't respond either. Only TCADC10-12 (direct, 0x66/0x64/0x60) work.
+// Disabled channels aren't sent at all, so the GUI doesn't show a fake flat 0.0 for them.
+// Set back to all-true once U2 / TCADC9 are fixed.
+bool TC_INSTALLED[12] = { false, false, false, false, false, false, false, false, false, true, true, true };
 
 void tca_tc_select(uint8_t channel) {
     TC_WIRE.beginTransmission(TCA_TC_ADDR);
@@ -846,17 +920,46 @@ void setup() {
     ads_boot_report();
 
     // ---- I2C for NAU7802 load cells (LC1-LC6, all muxed, hardware Wire1) ----
+    // Group the installed load cells by chip, bring each chip up once, then report per load cell.
     lc_i2c_begin();
+    lc_num_chips = 0;
     for (uint8_t ch = 0; ch < 6; ch++) {
         if (!LC_INSTALLED[ch]) {
             DBG_PRINT("LC"); DBG_PRINT(ch + 1); DBG_PRINTLN(" skipped (not installed)");
             continue;
         }
-        lc_ok[ch] = lc_init_cell(ch);
-        if (lc_ok[ch]) {
-            DBG_PRINT("LC"); DBG_PRINT(ch + 1); DBG_PRINTLN(" (NAU7802) ready");
-        } else {
-            DBG_PRINT("WARN: LC"); DBG_PRINT(ch + 1); DBG_PRINTLN(" NAU7802 not responding - skipped");
+        int k = -1;
+        for (uint8_t j = 0; j < lc_num_chips; j++) if (lc_chips[j].mux_ch == LC_MUX_CH[ch]) k = j;
+        if (k < 0) {
+            k = lc_num_chips++;
+            lc_chips[k].mux_ch = LC_MUX_CH[ch];
+            lc_chips[k].n = 0;
+        }
+        LcChip& c = lc_chips[k];
+        if (c.n >= 2 || (c.n == 1 && LC_VIN[c.lc[0]] == LC_VIN[ch])) {
+            DBG_PRINT("ERR: LC"); DBG_PRINT(ch + 1); DBG_PRINT(" uses the same JLC"); DBG_PRINT(c.mux_ch);
+            DBG_PRINTLN(" input as another load cell - check LC_MUX_CH / LC_VIN; skipped");
+            continue;
+        }
+        c.lc[c.n++] = ch;
+    }
+    for (uint8_t k = 0; k < lc_num_chips; k++) {
+        LcChip& c = lc_chips[k];
+        bool shared = (c.n == 2);
+        uint8_t vins[2] = { LC_VIN[c.lc[0]], shared ? LC_VIN[c.lc[1]] : (uint8_t)0 };
+        c.ok = lc_init_chip(c.mux_ch, shared ? LC_SHARED_RATE_BITS : LC_RATE_BITS, vins, c.n);
+        c.cur = 0;
+        c.t_switch = micros();
+        for (uint8_t s = 0; s < c.n; s++) {
+            uint8_t ch = c.lc[s];
+            lc_ok[ch] = c.ok;
+            lc_shared[ch] = shared;
+            DBG_PRINT(c.ok ? "" : "WARN: ");
+            DBG_PRINT("LC"); DBG_PRINT(ch + 1);
+            DBG_PRINT(" (JLC"); DBG_PRINT(c.mux_ch); DBG_PRINT(" / "); DBG_PRINT(LC_CHIP_U[c.mux_ch & 7]);
+            DBG_PRINT(" / mux ch"); DBG_PRINT(c.mux_ch); DBG_PRINT(" / VIN"); DBG_PRINT(LC_VIN[ch]);
+            DBG_PRINT(shared ? ", shared, 320 SPS)" : ", 80 SPS)");
+            DBG_PRINTLN(c.ok ? " ready" : " NAU7802 not responding - skipped");
         }
     }
 
@@ -946,6 +1049,7 @@ void loop() {
     }
 
     bray_power_poll();   // non-blocking finish of a pending Bray power-up; check every pass
+    lc_shared_service(); // non-blocking VIN1/VIN2 alternation on NAU7802s that carry two load cells
 
     // Read incoming packets. Drain up to RX_BURST datagrams per pass: one pass can
     // take ~10 ms (ADS7953 scan, TC I2C reads, ~30 UDP sends, delay(1)), and handling
@@ -1137,8 +1241,17 @@ void loop() {
             t0 = micros();
             for (uint8_t ch = 0; ch < 6; ch++) {
                 if (!lc_ok[ch]) continue;
+                if (lc_shared[ch]) {                    // averaged samples collected by lc_shared_service()
+                    if (lc_acc_n[ch] > 0) {
+                        double mean = (double)lc_acc_sum[ch] / (double)lc_acc_n[ch];
+                        lc_weights[ch] = (float)(LC_SLOPE[ch] * mean + LC_INTERCEPT[ch]);
+                        lc_acc_sum[ch] = 0;
+                        lc_acc_n[ch] = 0;
+                    }
+                    continue;
+                }
                 int32_t raw;
-                if (lc_read_raw(ch, raw)) {
+                if (lc_read_raw(LC_MUX_CH[ch], raw)) {
                     lc_weights[ch] = (float)(LC_SLOPE[ch] * (double)raw + LC_INTERCEPT[ch]);
                 }
             }

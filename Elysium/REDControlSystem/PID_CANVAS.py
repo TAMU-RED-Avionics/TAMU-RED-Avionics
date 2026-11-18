@@ -76,7 +76,7 @@ SENSOR_CALLOUT_BORDER = {
 }
 SENSOR_UNIT = {
     COMP_PRESSURE:      "psi",
-    COMP_TEMPERATURE:   "°C",
+    COMP_TEMPERATURE:   "°F",
     COMP_LOAD_CELL:     "lbf",
     COMP_DIFF_PRESSURE: "psid",
     COMP_FLOW_METER:    "gpm",

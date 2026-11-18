@@ -2,7 +2,7 @@
 
 from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel,
-    QFrame, QFileDialog, QMessageBox,
+    QFrame, QFileDialog, QMessageBox, QCheckBox,
 )
 from PyQt5.QtCore import Qt
 
@@ -72,6 +72,13 @@ class PIDViewWindow(QWidget):
         self._proj_label = QLabel("No project loaded")
         self._proj_label.setStyleSheet("color: #888;")
         tb_layout.addWidget(self._proj_label)
+
+        self._fw_names_cb = QCheckBox("Alias")
+        self._fw_names_cb.setToolTip("Label P&ID parts with their alias (the name you set by "
+                                     "double-clicking it in Valve Controls / the sensor list) "
+                                     "instead of the P&ID spec name")
+        self._fw_names_cb.toggled.connect(lambda _on: self._apply_name_overrides())
+        tb_layout.addWidget(self._fw_names_cb)
 
         root.addWidget(toolbar)
 
@@ -154,14 +161,18 @@ class PIDViewWindow(QWidget):
                 hw_id = self._comp_to_valve_hw.get(cid)
                 self.canvas.update_throttle(
                     cid, self.controller.actuator_positions.get(hw_id, spec.safe_pct))
+        self._apply_name_overrides()
 
     def _apply_name_overrides(self):
-        """Show the operator's session-only renames (sensors and valves) on the P&ID labels."""
+        """With "Alias" ticked, P&ID labels show the operator's session aliases (renames of
+        sensors and valves); parts without an alias keep their spec name. Unticked, every
+        label shows its spec name."""
         ov = {}
-        for key, text in self.controller.name_overrides.items():
-            cid = self._valve_hw_to_comp.get(key) or self._sensor_hw_to_comp.get(key)
-            if cid:
-                ov[cid] = text
+        if self._fw_names_cb.isChecked():
+            for key, text in self.controller.name_overrides.items():
+                cid = self._valve_hw_to_comp.get(key) or self._sensor_hw_to_comp.get(key)
+                if cid:
+                    ov[cid] = text
         self.canvas.set_label_overrides(ov)
 
     def _build_hw_maps(self):
