@@ -322,8 +322,8 @@ bool lc_read_raw(uint8_t mux_ch, int32_t& raw) {
 //const double LC_INTERCEPT[6] = { 16.185212845407022, -104.044025157232709, -2.114566284779051, 16.185212845407022, -104.044025157232709, -2.114566284779051 };
 
 // Local bench calibration, kept over the upstream values above (merged from local work on top of csmeby 0609276).
-const double LC_SLOPE[6]     = { 0.057147694873078, 0.058057781983798, 2.599801220618e-04, 2.541333e-05, 0.005607686345671, 0.005663427662917 };     // <-- USER INPUT  (calibrate on hardware)
-const double LC_INTERCEPT[6] = { 9913.891760249649450, 1804.583760735878968, -4.507705094873, -0.3590, 178.640133783997953, 526.810882791494009 };     // <-- USER INPUTs
+const double LC_SLOPE[6]     = { 0.000550675207718, 0.067810206366926, 0.025277549395484, 0.006635070788728, 0.000094089290896, 0.006862648390970 };     // <-- USER INPUT  (calibrate on hardware)
+const double LC_INTERCEPT[6] = { 3.057899428458018, -12976.122914337332986, -245.046371949874838, -195.854019541687677, -50.643148929450653, -116.994429769252121 };     // <-- USER INPUTs
 /* calibration history log, not code:
 point 1: raw 16350.5 = 0.000
 point 2: raw 16404.1 = 4.200
@@ -367,8 +367,68 @@ struct LcChip {
 LcChip  lc_chips[6];
 uint8_t lc_num_chips = 0;
 bool    lc_shared[6]  = { false, false, false, false, false, false };   // that load cell's chip is shared
-int64_t lc_acc_sum[6] = { 0, 0, 0, 0, 0, 0 };                          // shared cells: raw sum since last send
+// Shared cells: every raw sample taken since the last send (the window), so bad ones can be thrown out before averaging.
+#define LC_MAX_SAMPLES    16
+#define LC_OUTLIER_COUNTS 2000     // <-- USER INPUT: a sample this many raw counts from the window's median is rejected
+int32_t  lc_samples[6][LC_MAX_SAMPLES];
 uint16_t lc_acc_n[6]  = { 0, 0, 0, 0, 0, 0 };
+int32_t  lc_last_good[6]   = { 0, 0, 0, 0, 0, 0 };    // last accepted window mean
+bool     lc_have_last[6]   = { false, false, false, false, false, false };
+uint8_t  lc_reject_run[6]  = { 0, 0, 0, 0, 0, 0 };    // windows in a row where everything was rejected against lc_last_good
+uint32_t lc_rejected = 0;                              // samples thrown out since the last status line
+
+// A shared chip's VIN2 input sometimes returns a single sample thousands of counts off (bench: LC4 ~ -10,900,
+// LC2 ~ -18,200), which in a 3-5 sample average shows up as a spike in the load cell reading. This averages the
+// window's samples after dropping any that are more than LC_OUTLIER_COUNTS from the reference: the window's median
+// when it has >= 3 samples, otherwise the last accepted value (no reference yet = accept everything).
+// If every sample of a window disagrees with the last accepted value, the window is held back; a third such window
+// in a row is accepted, so a real load step is followed after ~0.3 s instead of ignored forever.
+// Returns false when there is nothing to update with (the previous weight is kept).
+static bool lc_window_mean(uint8_t ch, double& mean) {
+    uint16_t n = lc_acc_n[ch];
+    if (n == 0) return false;
+
+    bool have_ref = false;
+    int32_t ref = 0;
+    if (n >= 3) {
+        int32_t s[LC_MAX_SAMPLES];
+        for (uint16_t i = 0; i < n; i++) s[i] = lc_samples[ch][i];
+        for (uint16_t i = 1; i < n; i++) {                                      // insertion sort
+            int32_t v = s[i];
+            int16_t j = (int16_t)i - 1;
+            while (j >= 0 && s[j] > v) { s[j + 1] = s[j]; j--; }
+            s[j + 1] = v;
+        }
+        ref = s[n / 2];
+        have_ref = true;
+    } else if (lc_have_last[ch]) {
+        ref = lc_last_good[ch];
+        have_ref = true;
+    }
+
+    int64_t sum = 0;
+    uint16_t kept = 0;
+    for (uint16_t i = 0; i < n; i++) {
+        int32_t d = lc_samples[ch][i] - ref;
+        if (!have_ref || (d >= -LC_OUTLIER_COUNTS && d <= LC_OUTLIER_COUNTS)) {
+            sum += lc_samples[ch][i];
+            kept++;
+        }
+    }
+
+    if (kept == 0) {                                   // only possible against lc_last_good: a step, or a bad window
+        if (++lc_reject_run[ch] < 3) { lc_rejected += n; return false; }
+        for (uint16_t i = 0; i < n; i++) sum += lc_samples[ch][i];
+        kept = n;
+    } else {
+        lc_rejected += (uint32_t)(n - kept);
+    }
+    lc_reject_run[ch] = 0;
+    mean = (double)sum / (double)kept;
+    lc_last_good[ch] = (int32_t)mean;
+    lc_have_last[ch] = true;
+    return true;
+}
 
 // Shared chips (two load cells): read the selected input once LC_SHARED_SETTLE_US has passed since the
 // last switch, add it to that cell's running sum, flip CHS to the other input, restart the timer.
@@ -387,8 +447,7 @@ void lc_shared_service() {
         int32_t raw;
         if (!lc_read_raw(c.mux_ch, raw)) continue;                              // mux is left on c.mux_ch
         uint8_t lc = c.lc[c.cur];
-        lc_acc_sum[lc] += raw;
-        lc_acc_n[lc]++;
+        if (lc_acc_n[lc] < LC_MAX_SAMPLES) lc_samples[lc][lc_acc_n[lc]++] = raw;
         c.cur ^= 1;
         nau_write(NAU_R_CTRL2, lc_ctrl2(LC_SHARED_RATE_BITS, LC_VIN[c.lc[c.cur]]));
         c.t_switch = micros();
@@ -1034,6 +1093,7 @@ void loop() {
         for (int i = 0; i < 12; i++) { DBG_PRINT(pt_mA[i], 2); DBG_PRINT(i < 11 ? "," : ""); }
         DBG_PRINT(" TC_us="); DBG_PRINT(tc_us_accum);
         DBG_PRINT(" LC_us="); DBG_PRINT(lc_us_accum);
+        DBG_PRINT(" LC_rej="); DBG_PRINT(lc_rejected); lc_rejected = 0;
         bray_log_token();
         pt_us_accum = 0; tc_us_accum = 0; lc_us_accum = 0;
         DBG_PRINT("; link=");
@@ -1243,9 +1303,10 @@ void loop() {
                 if (!lc_ok[ch]) continue;
                 if (lc_shared[ch]) {                    // averaged samples collected by lc_shared_service()
                     if (lc_acc_n[ch] > 0) {
-                        double mean = (double)lc_acc_sum[ch] / (double)lc_acc_n[ch];
-                        lc_weights[ch] = (float)(LC_SLOPE[ch] * mean + LC_INTERCEPT[ch]);
-                        lc_acc_sum[ch] = 0;
+                        double mean;
+                        if (lc_window_mean(ch, mean)) {      // outliers thrown out; false = keep the previous weight
+                            lc_weights[ch] = (float)(LC_SLOPE[ch] * mean + LC_INTERCEPT[ch]);
+                        }
                         lc_acc_n[ch] = 0;
                     }
                     continue;

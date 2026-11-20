@@ -1,3 +1,4 @@
+import csv
 import os
 from datetime import datetime
 from typing import Optional
@@ -11,7 +12,7 @@ from PyQt5.QtWidgets import (
     QLineEdit, QMessageBox, QListWidget, QListWidgetItem,
     QDoubleSpinBox, QShortcut,
 )
-from PyQt5.QtCore import Qt, pyqtSignal, QThread, QAbstractTableModel, QModelIndex
+from PyQt5.QtCore import Qt, pyqtSignal, QThread, QAbstractTableModel, QModelIndex, QTimer
 from PyQt5.QtGui import QColor, QKeySequence, QFont, QFontMetrics
 
 import matplotlib
@@ -21,16 +22,32 @@ from matplotlib.figure import Figure
 from matplotlib.widgets import RectangleSelector
 
 from GUI_GRAPHS import SERIES_COLORS_DARK, SERIES_COLORS_LIGHT, sensor_category
+from GUI_RECORDER import CSV_SUFFIX, csv_path_for
 
 DATA_DIR = "Data"
 
-def _discover_files(root: str) -> list[tuple[str, str]]:
+def _discover_files(root: str, active_xlsx: str = "") -> list[tuple[str, str]]:
+    """The recordings in `root`: every finished .xlsx, plus any recording whose .xlsx is not built yet
+    (still being recorded, or being converted after Stop) as its .recording.csv. The raw CSV is on
+    disk the moment recording starts, so the data can be opened and analysed straight away instead of
+    waiting for the (on a long recording, minutes-long) conversion to finish."""
     if not os.path.isdir(root):
         return []
+    names = sorted(os.listdir(root))
+    have_xlsx = {n.lower() for n in names if n.lower().endswith(".xlsx")}
+    active_csv = os.path.abspath(csv_path_for(active_xlsx)) if active_xlsx else ""
     results: list[tuple[str, str]] = []
-    for fname in sorted(os.listdir(root)):
+    for fname in names:
+        path = os.path.abspath(os.path.join(root, fname))
         if fname.lower().endswith(".xlsx"):
-            results.append((fname, os.path.abspath(os.path.join(root, fname))))
+            if not fname.startswith("~$"):             # Excel's lock file while a workbook is open
+                results.append((fname, path))
+        elif fname.endswith(CSV_SUFFIX):
+            stem = fname[: -len(CSV_SUFFIX)]
+            if (stem + ".xlsx").lower() in have_xlsx:
+                continue                               # converted already; the CSV is about to be removed
+            state = "recording" if path == active_csv else "saving"
+            results.append((f"{stem} [{state}...]", path))
     return results
 
 
@@ -50,6 +67,32 @@ def _load_xlsx(path: str) -> tuple[list[str], list[list]]:
 
     wb.close()
     return headers, rows
+
+
+def _load_csv(path: str) -> tuple[list[str], list[list]]:
+    """Read a recording's raw .recording.csv (same headers / rows the .xlsx loader returns)."""
+    headers: list[str] = []
+    rows: list[list] = []
+    with open(path, newline="", encoding="utf-8") as fh:
+        for i, row in enumerate(csv.reader(fh)):
+            if i == 0:
+                headers = row
+            else:
+                rows.append(row)
+    # the recorder flushes about once a second, so a recording still being written can end on half a line
+    if rows and len(rows[-1]) < len(headers):
+        rows.pop()
+    return headers, rows
+
+
+def _load_recording(path: str) -> tuple[list[str], list[list]]:
+    if path.endswith(CSV_SUFFIX):
+        if not os.path.exists(path):                   # converted, and the CSV removed, since the list was built
+            xlsx = path[: -len(CSV_SUFFIX)] + ".xlsx"
+            if os.path.exists(xlsx):
+                return _load_xlsx(xlsx)
+        return _load_csv(path)
+    return _load_xlsx(path)
 
 
 def _vsep() -> QFrame:
@@ -113,14 +156,49 @@ class FileBrowser(QWidget):
         self.tree.setSelectionMode(QAbstractItemView.SingleSelection)
         layout.addWidget(self.tree)
 
+        # The list keeps itself current: it is rebuilt when the tab is shown, when a recording starts /
+        # stops / finishes saving (GUI_LAYOUT connects those), and whenever the Data folder changes.
+        self._active_provider = None
+        self._last_sig: tuple = ()
+        self._timer = QTimer(self)
+        self._timer.setInterval(2000)
+        self._timer.timeout.connect(self._poll)
+
         self.refresh()
 
+    def set_active_recording_provider(self, fn):
+        """fn() -> the .xlsx path of the recording in progress ('' when none)."""
+        self._active_provider = fn
+
+    def _active_xlsx(self) -> str:
+        try:
+            return (self._active_provider() or "") if self._active_provider else ""
+        except Exception:
+            return ""
+
+    def _poll(self):
+        if self.isVisible():
+            sig = tuple(d for d, _ in _discover_files(DATA_DIR, self._active_xlsx()))
+            if sig != self._last_sig:
+                self.refresh()
+
+    def showEvent(self, event):
+        super().showEvent(event)
+        self.refresh()
+        self._timer.start()
+
+    def hideEvent(self, event):
+        super().hideEvent(event)
+        self._timer.stop()
+
     def refresh(self):
+        selected = self.selected_path()
         self.tree.clear()
-        files = _discover_files(DATA_DIR)
+        files = _discover_files(DATA_DIR, self._active_xlsx())
+        self._last_sig = tuple(d for d, _ in files)
 
         if not files:
-            placeholder = QTreeWidgetItem(["(no .xlsx files in Data/)"])
+            placeholder = QTreeWidgetItem(["(no recordings in Data/)"])
             placeholder.setFlags(Qt.NoItemFlags)
             self.tree.addTopLevelItem(placeholder)
             return
@@ -152,14 +230,20 @@ class FileBrowser(QWidget):
                 item.setData(0, Qt.UserRole, path)
                 item.setToolTip(0, path)
                 parent.addChild(item)
+                if path == selected:
+                    self.tree.setCurrentItem(item)
 
         self.tree.expandAll()
+        self._filter(self.search.text())               # keep whatever is typed in the filter box
 
     def _filter(self, text: str):
         text = text.strip().lower()
         root = self.tree.invisibleRootItem()
         for i in range(root.childCount()):
             group = root.child(i)
+            if group.childCount() == 0:                # a file listed directly (only one group of files)
+                group.setHidden(bool(text) and text not in group.text(0).lower())
+                continue
             any_visible = False
             for j in range(group.childCount()):
                 child = group.child(j)
@@ -459,7 +543,7 @@ class _LoadWorker(QThread):
 
     def run(self):
         try:
-            headers, rows = _load_xlsx(self._path)
+            headers, rows = _load_recording(self._path)
             data = _extract_sensor_data(headers, rows)
             self.loaded.emit(self._path, headers, rows, data)
         except Exception as exc:

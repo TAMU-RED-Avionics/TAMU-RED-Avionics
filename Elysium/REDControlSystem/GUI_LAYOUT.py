@@ -1066,6 +1066,11 @@ class MainWindow(QMainWindow):
         self.new_pid_page = NewPIDPage(self.controller)
         self.telemetry_page = TelemetryPage(self)
         self.controller.signals.recording_stopped.connect(self.telemetry_page.browser.refresh)
+        # A recording is listed (as its raw .csv, which opens immediately) the moment it starts and again
+        # when Stop is pressed, instead of only once the .xlsx conversion has finished.
+        _browser = self.telemetry_page.browser
+        _browser.set_active_recording_provider(lambda: self.controller._xlsx_path)
+        self.controller.signals.recording_state_changed.connect(lambda *_: _browser.refresh())
         self.live_data_page = LiveDataPage(self.controller)
         self.health_page = HealthPage(self.controller)
         self.tests_page = TestsPage(self.controller)

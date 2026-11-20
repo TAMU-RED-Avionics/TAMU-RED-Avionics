@@ -36,6 +36,8 @@ def sensor_category(sensor_name: str) -> str:
 
 
 def sensor_unit(sensor_name: str) -> str:
+    """The unit values are stored and computed in (thresholds, conditions, formulas): thermocouples
+    are always degC. Live displays use display_unit() so the operator can show degF."""
     return {
         "Pressure Transducers": "psi",
         "Thermocouples":        "°C",
