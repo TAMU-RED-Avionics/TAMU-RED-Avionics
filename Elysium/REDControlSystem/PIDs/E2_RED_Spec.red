@@ -2925,7 +2925,7 @@
         },
         {
           "name": "Shutdown 2",
-          "time_offset": 25.3,
+          "time_offset": 25.5,
           "open_valves": [],
           "is_terminal_count": false
         }
@@ -2993,7 +2993,7 @@
         },
         {
           "name": "Shutdown 2",
-          "time_offset": 15.3,
+          "time_offset": 15.5,
           "open_valves": [],
           "is_terminal_count": false
         }
@@ -3017,6 +3017,15 @@
       "role": "custom",
       "unit": "kg/m^3",
       "expression": "PropsSI('D','T',TC1+273.15,'P',P1*6894.76,'N2O')",
+      "constants": {},
+      "enabled": true
+    },
+    {
+      "id": "calc_8d85a827",
+      "label": "Tank Weight",
+      "role": "custom",
+      "unit": "lb",
+      "expression": "abs(LC4) + abs(LC5) + abs(LC6)",
       "constants": {},
       "enabled": true
     }
