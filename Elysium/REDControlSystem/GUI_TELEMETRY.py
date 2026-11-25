@@ -732,6 +732,34 @@ def _extract_sensor_data(headers: list[str], rows: list[list]) -> dict:
         else:
             t_seconds.append(None)
 
+    # The Teensy's own clock (microseconds since boot) is far finer than the laptop's whole-second local
+    # time, so use it as the time axis whenever the recording has it. If the Teensy rebooted mid-file the
+    # clock restarts; the time axis carries on from the local time at that point.
+    ts_col = next((i for i, h in enumerate(headers) if "teensy timestamp" in str(h).lower()), None)
+    if ts_col is not None:
+        us = []
+        for row in rows:
+            try:
+                us.append(float(row[ts_col]) if ts_col < len(row) else 0.0)
+            except (TypeError, ValueError):
+                us.append(0.0)
+        if sum(1 for v in us if v > 0) >= 0.5 * max(len(us), 1):
+            fine, seg_start, offset, prev = [], None, 0.0, None
+            for v, t_local in zip(us, t_seconds):
+                if v <= 0:
+                    fine.append(None if prev is None else prev)
+                    continue
+                if seg_start is None:
+                    seg_start = v
+                elif prev is not None and v < us_prev - 1_000_000:         # clock restarted: Teensy rebooted
+                    seg_start = v
+                    offset = t_local if t_local is not None else prev
+                us_prev = v
+                prev = offset + (v - seg_start) / 1e6
+                fine.append(prev)
+            if any(f is not None for f in fine):
+                t_seconds = fine
+
     # Collect logged events (rows with a non-empty Event Type)
     events: list[tuple[float, str, str]] = []
     if ev_type_col is not None:

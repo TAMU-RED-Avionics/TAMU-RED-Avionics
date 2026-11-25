@@ -61,6 +61,11 @@ def convert_csv_to_xlsx(csv_path: str, xlsx_path: str) -> int:
             for i, v in enumerate(row):
                 if v == "":
                     out.append(None)
+                elif i == 1:                                    # Teensy timestamp (us from boot): a real number
+                    try:
+                        out.append(int(v))
+                    except ValueError:
+                        out.append(v)
                 elif _SENSOR_FIRST_COL <= i < text_start:
                     try:
                         out.append(float(v))

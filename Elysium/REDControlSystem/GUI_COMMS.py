@@ -109,6 +109,7 @@ class EthernetClient:
         self._last_thread_error_log: float = 0.0
 
         self.timeout: float = 3                             # seconds
+        self.COMMS_LOSS_SESSION_END_MS: int = 1000          # silence after a comms abort before the session is ended
         self.heartbeat_tx_cadence: int = 10                 # ms
         self.heartbeat_rx_miss_interval: int = 150           # ms (15x missed heartbeats at 10ms cadence; occasionally missing at 151ms)
 
@@ -690,8 +691,13 @@ class EthernetClient:
                     data = sock.recv(1024)
                 except SocketTimeout:
                     # Short poll (LISTEN_POLL_S) so this thread notices a disconnect
-                    # promptly. Total silence for self.timeout is still a dead link.
-                    if QDateTime.currentMSecsSinceEpoch() - self.heartbeat_last_rx > self.timeout * 1000:
+                    # promptly. Total silence for self.timeout is still a dead link - but once the
+                    # missed-heartbeat abort has fired the link is already treated as lost (and the
+                    # Teensy is parked waiting for a new START), so end the session after
+                    # COMMS_LOSS_SESSION_END_MS instead and let the reconnect attempts begin sooner.
+                    silence_limit_ms = (self.COMMS_LOSS_SESSION_END_MS if self.heartbeat_miss_abort_active
+                                        else self.timeout * 1000)
+                    if QDateTime.currentMSecsSinceEpoch() - self.heartbeat_last_rx > silence_limit_ms:
                         self._end_session(session, "timed out")
                         break
                     continue
@@ -814,11 +820,13 @@ class EthernetClient:
                         f"0,ACTUATOR_FAIL:{self._valve_name_for_id(orig_pkt.body[0])}")
 
         elif packet.packet_type == EGCPPacket.PKT_ADC:
-            # ADC reading: 1 byte sensor ID + 4 bytes IEEE 754 float (calibrated value)
+            # ADC reading: 1 byte sensor ID + 4 bytes IEEE 754 float (calibrated value), then - on newer
+            # firmware - 8 bytes: the Teensy's own clock in microseconds since boot (big-endian)
             if len(packet.body) >= 5:
                 sensor_id = packet.body[0]
                 # Unpack as big-endian float
                 raw_value = struct.unpack('>f', packet.body[1:5])[0]
+                teensy_us = struct.unpack('>Q', packet.body[5:13])[0] if len(packet.body) >= 13 else 0
 
                 # No ACK for ADC packets: the firmware never waits for one,
                 # and ACKing every sensor sample flooded the Teensy's receive
@@ -827,7 +835,7 @@ class EthernetClient:
                 # Convert to string format for backward compatibility
                 if self.receive_callback:
                     sensor_name = self.SENSOR_MAP.get(sensor_id, f"SENSOR_{sensor_id}")
-                    data_str = f"0,{sensor_name}:{raw_value:.2f}"
+                    data_str = f"{teensy_us},{sensor_name}:{raw_value:.2f}"     # first field = Teensy timestamp (us)
                     self.receive_callback(data_str)
 
         elif packet.packet_type == EGCPPacket.PKT_POS:

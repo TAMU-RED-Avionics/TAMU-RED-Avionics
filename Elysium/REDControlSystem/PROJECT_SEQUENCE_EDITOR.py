@@ -12,18 +12,27 @@ from PID_SCHEMA import (
     get_actuator_spec,
 )
 
-# Component types that a sequence step can command open/closed (or, for the
-# igniter, fire/safe). Reuses the same COMMANDABLE_VALVE_TYPES list the valve
-# table / Abort Config use, instead of a hand-maintained subset - a separate
-# list here previously omitted COMP_ACTUATED_VALVE, which silently hid any
-# plain on/off actuated valve (e.g. MOV/PA-BV2) from this editor.
-# Proportional actuators (any component with an ActuatorSpec) are also commandable:
-# "open" in a step means the actuator's open_pct, "closed" its safe_pct.
 _STEP_ACTUATOR_TYPES = list(COMMANDABLE_VALVE_TYPES)
 
 
 def _is_step_actuator(comp) -> bool:
     return comp.type in _STEP_ACTUATOR_TYPES or get_actuator_spec(comp) is not None
+
+def fmt_t(t: float) -> str:
+    """A step time as the operator reads it: T-0.5, T+0.0, T+15.0."""
+    return f"T{'-' if t < 0 else '+'}{abs(t):.1f}"
+
+
+class _TimeSpinBox(QDoubleSpinBox):
+    """Seconds relative to T-0, always shown with its sign: +0.5 is after T-0, -0.5 before it."""
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setDecimals(2)
+        self.setSuffix(" s")
+
+    def textFromValue(self, value: float) -> str:
+        return (f"{value:+.2f}").rstrip("0").rstrip(".")
+
 
 class SequenceEditorWindow(QWidget):
     def __init__(self, controller, project, canvas_save_callback=None):
@@ -146,14 +155,21 @@ class SequenceEditorWindow(QWidget):
         left_layout.addLayout(seq_mgmt_row)
 
         tc_len_layout = QHBoxLayout()
-        tc_len_layout.addWidget(QLabel("Terminal Count Length (s):"))
+        tc_len_layout.addWidget(QLabel("<b>Terminal Count:</b>"))
         self.tc_length_spin = QDoubleSpinBox()
-        self.tc_length_spin.setRange(1.0, 600.0)
+        self.tc_length_spin.setRange(0.0, 600.0)
+        self.tc_length_spin.setDecimals(1)
+        self.tc_length_spin.setSuffix(" seconds")
         self.tc_length_spin.setValue(
             getattr(self._project.parameters, "terminal_count_s", 10.0))
         self.tc_length_spin.valueChanged.connect(self._on_tc_length_changed)
         tc_len_layout.addWidget(self.tc_length_spin)
         left_layout.addLayout(tc_len_layout)
+
+        hint = QLabel("Step times are relative to T-0.")
+        hint.setWordWrap(True)
+        hint.setStyleSheet("color: #8a8a8a; font-size: 9pt;")
+        left_layout.addWidget(hint)
 
         self.step_list_widget = QListWidget()
         self.step_list_widget.currentRowChanged.connect(self._select_step)
@@ -161,20 +177,14 @@ class SequenceEditorWindow(QWidget):
         left_layout.addWidget(self.step_list_widget)
 
         time_layout = QHBoxLayout()
-        time_layout.addWidget(QLabel("Trigger Time (s):"))
-        self.time_spinbox = QDoubleSpinBox()
-        self.time_spinbox.setRange(0.0, 3600.0)
-        self.time_spinbox.setSingleStep(1.0)
+        time_layout.addWidget(QLabel("Time vs T-0:"))
+        self.time_spinbox = _TimeSpinBox()
+        self.time_spinbox.setRange(-self.tc_length_spin.value(), 3600.0)
+        self.time_spinbox.setSingleStep(0.5)
+        self.time_spinbox.setToolTip("Seconds after T-0. Type a minus for before T-0, e.g. -0.5")
         self.time_spinbox.valueChanged.connect(self._on_time_changed)
         time_layout.addWidget(self.time_spinbox)
         left_layout.addLayout(time_layout)
-
-        self.terminal_cb = QCheckBox("This is the Terminal Count state")
-        self.terminal_cb.setToolTip(
-            "Required before Auto-Fire Sequence can run. Only one step may "
-            "be marked as the terminal-count hold.")
-        self.terminal_cb.toggled.connect(self._on_terminal_toggled)
-        left_layout.addWidget(self.terminal_cb)
 
         nav_layout = QHBoxLayout()
         self.btn_prev = QPushButton("◀ Prev State")
@@ -217,14 +227,14 @@ class SequenceEditorWindow(QWidget):
         self.step_list_widget.blockSignals(True)
         self.step_list_widget.clear()
         for idx, step in enumerate(self.steps):
-            item_text = f"[{step.time_offset:5.1f}s] {step.name} ({len(step.open_valves)} Valves Open)"
+            item_text = f"[{fmt_t(step.time_offset):>7}] {step.name} ({len(step.open_valves)} Valves Open)"
             for cid in step.open_valves:
                 comp = self._project.components.get(cid)
                 spec = get_actuator_spec(comp) if comp else None
                 if spec is not None:
                     item_text += f"  {comp.label} {step.positions.get(cid, spec.open_pct):g}{spec.unit}"
-            if getattr(step, "is_terminal_count", False):
-                item_text += "  [TERMINAL COUNT]"
+            if step.time_offset < -self.tc_length_spin.value() - 1e-9:
+                item_text += "  ⚠ before the terminal count starts"
             self.step_list_widget.addItem(item_text)
         if self.current_step_idx >= 0 and self.current_step_idx < len(self.steps):
             self.step_list_widget.setCurrentRow(self.current_step_idx)
@@ -239,10 +249,6 @@ class SequenceEditorWindow(QWidget):
         self.time_spinbox.blockSignals(True)
         self.time_spinbox.setValue(step.time_offset)
         self.time_spinbox.blockSignals(False)
-
-        self.terminal_cb.blockSignals(True)
-        self.terminal_cb.setChecked(getattr(step, "is_terminal_count", False))
-        self.terminal_cb.blockSignals(False)
 
         mock_valve_states = {}
         for cid in self._project.components.keys():
@@ -309,16 +315,10 @@ class SequenceEditorWindow(QWidget):
         self.current_step_idx = self.steps.index(step)
         self._refresh_step_list_ui()
 
-    def _on_terminal_toggled(self, checked: bool):
-        if self.current_step_idx == -1:
-            return
-        # Only one step may be the terminal-count hold.
-        for i, step in enumerate(self.steps):
-            step.is_terminal_count = checked if i == self.current_step_idx else False
-        self._refresh_step_list_ui()
-
     def _on_tc_length_changed(self, value: float):
         self._project.parameters.terminal_count_s = value
+        self.time_spinbox.setMinimum(-value)            # a step can't be earlier than the start of the run
+        self._refresh_step_list_ui()
 
     def _navigate(self, delta):
         target = self.current_step_idx + delta

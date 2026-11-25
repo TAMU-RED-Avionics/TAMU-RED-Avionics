@@ -2,11 +2,12 @@ from PyQt5.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout,
     QPushButton, QLabel, QLineEdit, QCheckBox,
     QScrollArea, QFrame, QSizePolicy, QMessageBox,
-    QDoubleSpinBox, QComboBox, QToolButton, QInputDialog,
+    QDoubleSpinBox, QComboBox, QToolButton, QInputDialog, QCompleter,
 )
-from PyQt5.QtCore import Qt, pyqtSignal
+from PyQt5.QtCore import Qt, pyqtSignal, QStringListModel
 
 from GUI_WIDGETS import UpwardComboBox
+from GUI_EXPR import ExprEngine, FUNCS, SEQ_VARS
 from GUI_CONTROLLER import GUIController, GuiMode
 from PID_SCHEMA import (
     AbortRule, AbortState, DEFAULT_ABORT_ID, COMMANDABLE_VALVE_TYPES, COMP_IGNITER,
@@ -231,8 +232,8 @@ class _SensorThresholdWidget(QWidget):
             msg_edit = QLineEdit(th_data.get(f"{band}_message", ""))
             msg_edit.setPlaceholderText(
                 f"Default wording. Customize with {{{comp_label or comp_id}}} "
-                "for its value, plus {value} {threshold} {soak_ms} {hw_id} - "
-                'e.g. "{hw_id} over {threshold} for {soak_ms}ms"')
+                "for its value, plus {value} {threshold} {soak_ms} {label} - "
+                'e.g. "{label} over {threshold} for {soak_ms}ms"')
 
             self._fields[band] = {
                 "val":         val_widget,
@@ -459,10 +460,54 @@ class _SensorThresholdsSection(QWidget):
         for w in self._widgets.values():
             w.flush()
 
+class _NameCompleter(QCompleter):
+    """Auto-fill for the word being typed at the end of an expression: type "OP" and get OPT-1301,
+    OPT-1501 ... Names can contain dashes and spaces, so the word is the longest ending of the text
+    that is the start of some official name. Picking one replaces just that ending."""
+
+    def __init__(self, names: list, parent=None):
+        super().__init__(parent)
+        self._names = list(names)
+        self.setModel(QStringListModel(self._names, self))
+        self.setCaseSensitivity(Qt.CaseInsensitive)
+        self.setCompletionMode(QCompleter.PopupCompletion)
+        self._base = ""
+
+    def splitPath(self, path: str):
+        low = path.lower()
+        for i in range(len(path)):
+            if i and (path[i - 1].isalnum() or path[i - 1] == "_"):
+                continue                                  # only start a name at a word boundary
+            frag = low[i:]
+            if frag.strip() and any(n.lower().startswith(frag) for n in self._names):
+                self._base = path[:i]
+                return [path[i:]]
+        self._base = path
+        return [""]
+
+    def pathFromIndex(self, index):
+        return self._base + str(index.data())
+
+
+class _ExprLineEdit(QLineEdit):
+    def __init__(self, text: str, names: list, parent=None):
+        super().__init__(text, parent)
+        self._completer = _NameCompleter(names, self)
+        self.setCompleter(self._completer)
+
+    def insert_name(self, name: str):
+        t, pos = self.text(), self.cursorPosition()
+        pre = "" if (not t[:pos] or t[:pos].endswith((" ", "("))) else " "
+        self.setText(t[:pos] + pre + name + t[pos:])
+        self.setCursorPosition(pos + len(pre) + len(name))
+        self.setFocus()
+
+
 class _LogicRuleRow(QWidget):
-    def __init__(self, rule: AbortRule, on_delete, state_choices: list, parent=None):
+    def __init__(self, rule: AbortRule, on_delete, state_choices: list, engine: ExprEngine = None, parent=None):
         super().__init__(parent)
         self._rule = rule
+        self._engine = engine or ExprEngine()
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(4, 4, 4, 4)
@@ -512,19 +557,42 @@ class _LogicRuleRow(QWidget):
 
         expr_row = QHBoxLayout()
         expr_row.addWidget(QLabel("Expression:"))
-        self._expr_edit = QLineEdit(rule.expression)
-        self._expr_edit.setPlaceholderText('e.g.  P8 > P7   or   P5 - P3 >= 5')
+        self._expr_edit = _ExprLineEdit(rule.expression, self._engine.official_names())
+        self._expr_edit.setPlaceholderText(
+            'Official names, e.g.  MCC_P > OMI_P   or   abs(LC1) + abs(LC2) < 200   (start typing a name to auto-fill)')
         self._expr_edit.textChanged.connect(lambda t: setattr(self._rule, "expression", t))
+        self._expr_edit.textChanged.connect(self._update_check)
         expr_row.addWidget(self._expr_edit)
+
+        self._insert_combo = QComboBox()
+        self._insert_combo.setFixedWidth(120)
+        self._insert_combo.setToolTip("Insert a sensor / calculated channel / function at the cursor")
+        self._insert_combo.addItem("Insert…")
+        for title, names in (("Sensors", self._engine.sensor_names()),
+                             ("Calculated", self._engine.calc_names()),
+                             ("Functions", [f + "(" for f in FUNCS]),
+                             ("Sequence timing", list(SEQ_VARS))):
+            if not names:
+                continue
+            self._insert_combo.insertSeparator(self._insert_combo.count())
+            for n in names:
+                self._insert_combo.addItem(n)
+        self._insert_combo.activated[str].connect(self._on_insert)
+        expr_row.addWidget(self._insert_combo)
         outer.addLayout(expr_row)
+
+        self._check_lbl = QLabel("")
+        self._check_lbl.setWordWrap(True)
+        outer.addWidget(self._check_lbl)
+        self._update_check()
 
         msg_row = QHBoxLayout()
         msg_row.addWidget(QLabel("Message:"))
         self._message_edit = QLineEdit(rule.message_template)
         self._message_edit.setPlaceholderText(
-            'Blank = auto (e.g. "P5 (600.00) > P3 (595.00) for 150ms"). '
-            'Customize with {SENSOR} for its value, {soak_ms} for the soak - '
-            'e.g. "P5 ({P5}) > P3 ({P3}) for {soak_ms}ms"')
+            'Blank = auto (e.g. "OPT-1502 (600.00) > OPT-1501 (595.00) for 150ms"). '
+            'Customize with {NAME} for a sensor\'s value, {soak_ms} for the soak - '
+            'e.g. "OPT-1502 ({OPT-1502}) > OPT-1501 ({OPT-1501}) for {soak_ms}ms"')
         self._message_edit.textChanged.connect(
             lambda t: setattr(self._rule, "message_template", t))
         msg_row.addWidget(self._message_edit)
@@ -555,6 +623,24 @@ class _LogicRuleRow(QWidget):
         extra_row.addStretch()
         outer.addLayout(extra_row)
 
+    def _on_insert(self, text: str):
+        if self._insert_combo.currentIndex() > 0 and text:
+            self._expr_edit.insert_name(text)
+        self._insert_combo.setCurrentIndex(0)
+
+    def _update_check(self, *_):
+        text = self._expr_edit.text().strip()
+        if not text:
+            self._check_lbl.setText("")
+            return
+        err = self._engine.validate(text)
+        if err:
+            self._check_lbl.setText(f"✗ {err}")
+            self._check_lbl.setStyleSheet("color: #cc2222;")
+        else:
+            self._check_lbl.setText("✓ expression OK")
+            self._check_lbl.setStyleSheet("color: #2a8a3a;")
+
     def set_state_choices(self, choices: list):
         self._state_combo.set_choices(choices)
         self._rule.abort_state = self._state_combo.state_id()
@@ -569,6 +655,7 @@ class _LogicRulesSection(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self._project = None
+        self._engine = ExprEngine()
         self._rows: list = []
 
         outer = QVBoxLayout(self)
@@ -579,10 +666,14 @@ class _LogicRulesSection(QWidget):
         outer.addWidget(_hsep())
 
         desc = QLabel(
-            "These rules evaluate arbitrary cross-sensor conditions each cycle. "
-            "Use sensor names (P1…P8, TC1…, LC1…) in expressions. "
-            "Example:  P8 > P7   .  "
-            "All rules here replace the previously hardcoded abort conditions."
+            "These rules evaluate cross-sensor conditions every cycle. Write them with the official "
+            "P&ID names (MCC_P, OPT-1501, OTH-1501, LC1…) - start typing a name to auto-fill, or use "
+            "Insert…. Calculated channels (Thrust, Tank Weight) work too, and so do abs( ), min( ), "
+            "max( ), round( ), sqrt( ), pow( ), floor( ), ceil( ) and and / or / not.  "
+            "Examples:  MCC_P > OMI_P   ·   abs(LC1) + abs(LC2) < 200   ·   Thrust < 200.  "
+            "To arm a rule only during a run use SEQ_T (seconds relative to T-0: negative during the "
+            "terminal count, positive after) and SEQ_END (time of the last step), e.g.  "
+            "SEQ_RUNNING and SEQ_T >= 2 and SEQ_T < SEQ_END - 0.5 and Thrust < 200."
         )
         desc.setWordWrap(True)
         desc.setObjectName("sensor_unit_label")
@@ -608,12 +699,16 @@ class _LogicRulesSection(QWidget):
 
     def load_project(self, project):
         self._project = project
+        self._engine = ExprEngine(project)
         self._clear()
         if project is None:
             return
 
         for rule in project.rules:
             if rule.condition_type == "expression":
+                # Always show (and save) the official names: P8 -> MCC_P, also inside {tokens}
+                rule.expression = self._engine.to_official(rule.expression)
+                rule.message_template = self._engine.template_to_official(rule.message_template)
                 self._add_row(rule)
 
         if not self._rows:
@@ -629,7 +724,8 @@ class _LogicRulesSection(QWidget):
             row.set_state_choices(choices)
 
     def _add_row(self, rule: AbortRule):
-        row = _LogicRuleRow(rule, on_delete=self._delete_row, state_choices=self._state_choices())
+        row = _LogicRuleRow(rule, on_delete=self._delete_row, state_choices=self._state_choices(),
+                            engine=self._engine)
         self._rows.append(row)
         self._rows_layout.addWidget(row)
 

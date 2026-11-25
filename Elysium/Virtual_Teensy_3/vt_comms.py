@@ -6,6 +6,8 @@ import time
 import struct
 from PyQt5.QtCore import QObject, pyqtSignal
 
+_BOOT = time.monotonic()      # the simulated board's "boot": its clock for the sensor-packet timestamp
+
 class EGCPPacket:
     """Elysium Ground Communications Protocol packet handler (Python version)"""
     
@@ -374,16 +376,19 @@ class VTComms(QObject):
             except (TypeError, ValueError):
                 continue
         
-        # Send in groups of 3 (5 bytes per sensor = 15 bytes per packet)
+        # One sensor per packet, like the real Teensy: 1-byte sensor ID + 4-byte IEEE 754 float +
+        # 8-byte big-endian microseconds since boot (13 bytes)
         for i in range(0, len(active_sensors)):
             body = b''
-            for sensor_name, sensor_value in active_sensors[i:i+3]:
+            for sensor_name, sensor_value in active_sensors[i:i+1]:
                 sensor_id = EGCPPacket.SENSOR_MAP.get(sensor_name, 0x00)
-                # Pack as: 1-byte sensor ID + 4-byte IEEE 754 float
                 try:
-                    body += bytes([sensor_id]) + struct.pack('>f', float(sensor_value))
+                    body += (bytes([sensor_id]) + struct.pack('>f', float(sensor_value))
+                             + struct.pack('>Q', int((time.monotonic() - _BOOT) * 1e6)))
                 except (ValueError, TypeError):
                     continue
+            if not body:
+                continue
             
             pkt = EGCPPacket(self.packet_id_counter, EGCPPacket.PKT_ADC, body)
             self.packet_id_counter = (self.packet_id_counter + 1) & 0xFFFFFF

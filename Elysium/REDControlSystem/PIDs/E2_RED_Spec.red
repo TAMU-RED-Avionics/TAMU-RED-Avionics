@@ -2766,9 +2766,9 @@
       "action": "abort",
       "enabled": false,
       "sensor_id": "",
-      "expression": "P8 > 700",
+      "expression": "MCC_P > 800",
       "description": "High MCC_P (chamber pressure, P8)",
-      "message_template": "MCC_P ({P8}) > 700",
+      "message_template": "MCC_P ({MCC_P}) > 800",
       "target_valve": "",
       "close_valve_below": null,
       "soak_ms": 0
@@ -2780,9 +2780,9 @@
       "action": "abort",
       "enabled": false,
       "sensor_id": "",
-      "expression": "P8 > P7",
+      "expression": "MCC_P > OMI_P",
       "description": "Reverse flow: MCC_P (P8) > OMI_P (P7)",
-      "message_template": "MCC_P ({P8}) > OMI_P ({P7})",
+      "message_template": "MCC_P ({MCC_P}) > OMI_P ({OMI_P})",
       "target_valve": "",
       "close_valve_below": null,
       "soak_ms": 0
@@ -2794,9 +2794,9 @@
       "action": "abort",
       "enabled": false,
       "sensor_id": "",
-      "expression": "P5 - P3 >= 5",
+      "expression": "OPT-1502 - OPT-1501 >= 5",
       "description": "High upstream pressure: OPT-1502 (P5) > OPT-1501 (P3)",
-      "message_template": "OPT-1502 ({P5}) > OPT-1501 ({P3}) by 5 PSI for > {soak_ms}ms",
+      "message_template": "OPT-1502 ({OPT-1502}) > OPT-1501 ({OPT-1501}) by 5 PSI for > {soak_ms}ms",
       "target_valve": "",
       "close_valve_below": null,
       "soak_ms": 150
@@ -2808,9 +2808,9 @@
       "action": "abort",
       "enabled": false,
       "sensor_id": "",
-      "expression": "P6 - P4 >= 5",
+      "expression": "FPT-1402 - FPT-1401 >= 5",
       "description": "High upstream pressure: FPT-1402 (P6) > FPT-1401 (P4)",
-      "message_template": "FPT-1402 ({P6}) > FPT-1401 ({P4}) by 5 PSI for > {soak_ms}ms",
+      "message_template": "FPT-1402 ({FPT-1402}) > FPT-1401 ({FPT-1401}) by 5 PSI for > {soak_ms}ms",
       "target_valve": "",
       "close_valve_below": null,
       "soak_ms": 150
@@ -2822,7 +2822,7 @@
       "action": "open_valve",
       "enabled": false,
       "sensor_id": "",
-      "expression": "P2 > 1375",
+      "expression": "OPT-1301 > 1375",
       "description": "High OPT-1301 (P2); opens NV-1105 (NCS3)",
       "message_template": "",
       "target_valve": "NCS3",
@@ -2836,12 +2836,26 @@
       "action": "warn",
       "enabled": false,
       "sensor_id": "",
-      "expression": "P2 > 1375",
+      "expression": "OPT-1301 > 1375",
       "description": "Warning: OPT-1301 (P2) > 1375. Opening NV-1105 (NCS3)...",
       "message_template": "",
       "target_valve": "",
       "close_valve_below": null,
       "soak_ms": 0
+    },
+    {
+      "id": "logic_rule_7",
+      "abort_state": "",
+      "condition_type": "expression",
+      "action": "abort",
+      "enabled": false,
+      "sensor_id": "",
+      "expression": "SEQ_RUNNING and SEQ_T >= 2 and SEQ_T < SEQ_END - 0.5 and Thrust < 200",
+      "description": "Failed Ignition: Thrust < 200 lbf after 2s",
+      "message_template": "Thrust ({Thrust}) < 200 lbf, 2 s after T-0",
+      "target_valve": "",
+      "close_valve_below": null,
+      "soak_ms": 250
     }
   ],
   "abort_states": [
@@ -2869,118 +2883,47 @@
     {
       "id": "seq_default",
       "name": "15 Second Fire",
+      "timing": "t0",
       "steps": [
         {
           "name": "Terminal Count",
-          "time_offset": 0.0,
+          "time_offset": -10.0,
           "open_valves": [
             "SV_1"
-          ],
-          "is_terminal_count": true
+          ]
         },
         {
           "name": "Ignition 1",
-          "time_offset": 9.5,
+          "time_offset": -0.5,
           "open_valves": [
             "IGN_1",
             "AV_1",
             "SV_1"
-          ],
-          "is_terminal_count": false
+          ]
         },
         {
           "name": "Main Valves",
-          "time_offset": 10.0,
+          "time_offset": 0.0,
           "open_valves": [
             "AV_3",
             "IGN_1",
             "AV_1",
             "SV_1"
           ],
-          "is_terminal_count": false,
           "positions": {
             "AV_3": 100.0
           }
         },
         {
           "name": "Ignition 2",
-          "time_offset": 10.4,
+          "time_offset": 0.4,
           "open_valves": [
             "AV_3",
             "IGN_2",
             "IGN_1",
             "AV_1",
             "SV_1"
-          ],
-          "is_terminal_count": false
-        },
-        {
-          "name": "Shutdown",
-          "time_offset": 25.0,
-          "open_valves": [
-            "SV_1",
-            "AV_1"
-          ],
-          "is_terminal_count": false
-        },
-        {
-          "name": "Shutdown 2",
-          "time_offset": 25.5,
-          "open_valves": [],
-          "is_terminal_count": false
-        }
-      ]
-    },
-    {
-      "id": "seq_d74eca00",
-      "name": "5 Second Fire",
-      "steps": [
-        {
-          "name": "Terminal Count",
-          "time_offset": 0.0,
-          "open_valves": [
-            "SV_1"
-          ],
-          "is_terminal_count": true
-        },
-        {
-          "name": "Ignition 1",
-          "time_offset": 9.5,
-          "open_valves": [
-            "IGN_1",
-            "AV_1",
-            "SV_1"
-          ],
-          "is_terminal_count": false
-        },
-        {
-          "name": "Main Valves",
-          "time_offset": 10.0,
-          "open_valves": [
-            "IGN_1",
-            "AV_3",
-            "AV_1",
-            "SV_1"
-          ],
-          "is_terminal_count": false,
-          "positions": {
-            "AV_3": 100.0
-          }
-        },
-        {
-          "name": "Ignition 2",
-          "time_offset": 10.4,
-          "open_valves": [
-            "AV_3",
-            "IGN_1",
-            "IGN_2",
-            "AV_1",
-            "SV_1"
-          ],
-          "is_terminal_count": false,
-          "positions": {
-            "AV_3": 100.0
-          }
+          ]
         },
         {
           "name": "Shutdown",
@@ -2988,19 +2931,80 @@
           "open_valves": [
             "SV_1",
             "AV_1"
-          ],
-          "is_terminal_count": false
+          ]
         },
         {
           "name": "Shutdown 2",
           "time_offset": 15.5,
-          "open_valves": [],
-          "is_terminal_count": false
+          "open_valves": []
+        }
+      ]
+    },
+    {
+      "id": "seq_d74eca00",
+      "name": "5 Second Fire",
+      "timing": "t0",
+      "steps": [
+        {
+          "name": "Terminal Count",
+          "time_offset": -10.0,
+          "open_valves": [
+            "SV_1"
+          ]
+        },
+        {
+          "name": "Ignition 1",
+          "time_offset": -0.5,
+          "open_valves": [
+            "IGN_1",
+            "AV_1",
+            "SV_1"
+          ]
+        },
+        {
+          "name": "Main Valves",
+          "time_offset": 0.0,
+          "open_valves": [
+            "IGN_1",
+            "AV_3",
+            "AV_1",
+            "SV_1"
+          ],
+          "positions": {
+            "AV_3": 100.0
+          }
+        },
+        {
+          "name": "Ignition 2",
+          "time_offset": 0.4,
+          "open_valves": [
+            "AV_3",
+            "IGN_1",
+            "IGN_2",
+            "AV_1",
+            "SV_1"
+          ],
+          "positions": {
+            "AV_3": 100.0
+          }
+        },
+        {
+          "name": "Shutdown",
+          "time_offset": 5.0,
+          "open_valves": [
+            "SV_1",
+            "AV_1"
+          ]
+        },
+        {
+          "name": "Shutdown 2",
+          "time_offset": 6.0,
+          "open_valves": []
         }
       ]
     }
   ],
-  "active_sequence_id": "seq_default",
+  "active_sequence_id": "seq_d74eca00",
   "calc_channels": [
     {
       "id": "calc_57e94c77",

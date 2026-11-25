@@ -1,29 +1,3 @@
-"""
-GUI_ACTUATION
-
-Automated actuation: an operator-run, ordered list of valve actions for things too fast
-or too precise to do by hand - e.g. a controlled vent: open NV-1105, then close it when
-NPT-1101 drops below a value or 0.5 s has passed, whichever comes first.
-
-    ActuationRunner  - runs one ActuationPlan (see PID_SCHEMA). No UI.
-    ActuationPanel   - the collapsible editor / run panel floated over the bottom-right
-                       of the Home page P&ID canvas.
-
-Steps run in order. Each step waits for its conditions ("any" = whichever happens
-first, or "all"), then sends all of its actions back-to-back. A step without
-conditions fires as soon as the previous one has, so consecutive unconditional steps
-(or several actions in one step) actuate together. Time conditions count from the
-moment the previous step fired (step 1: from Start). A sensor condition already true
-when its step is reached fires straight away.
-
-Safety: a plan only starts in MANUAL with the Teensy connected, and every command is
-re-checked against the lockout as it is sent. Any abort, mode change, disconnect,
-viewer switch or project reload stops the run (an abort then drives the valves to its
-abort state as usual). STOP halts the run and leaves the valves where they are.
-Igniters are never offered. Everything runs on the GUI thread: sensor conditions are
-checked on every sample as it arrives and time conditions on a precise timer, so timing
-is good to roughly 10-20 ms plus the link - millisecond work belongs in the firmware.
-"""
 import math
 import time
 import uuid

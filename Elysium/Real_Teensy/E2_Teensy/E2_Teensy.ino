@@ -26,7 +26,12 @@ VARIABLES & USER INPUT
 
 const long unsigned SENSOR_UPDATE_INTERVAL     = 10000;         // sensor update interval (microsec)
 const long unsigned LC_UPDATE_INTERVAL         = 100000;        // load cell update interval (microsec)
-const long unsigned CONNECTION_TIMEOUT         = 5000000;       // shutdown timeout for complete comms failure (microsec)
+// Teensy-side comms watchdog: if nothing at all is received from the GUI for this long, close
+// everything (trigger_shutdown). The GUI heartbeats every 10 ms and aborts on its own side after
+// 150 ms without telemetry, so 200 ms (~20 missed heartbeats) lets the GUI trip first and keeps
+// this as the backstop for when the GUI's abort can't reach the board. Was 5 s, which left
+// MOV / IGN_1 / NV-1104 open for up to 5 s after the Nov 22 2026 link loss.
+const long unsigned CONNECTION_TIMEOUT         = 200000;        // shutdown timeout for complete comms failure (microsec)
 const long unsigned HUMAN_CONNECTION_TIMEOUT   = 3600000000;    // shutdown timeout for human comms failure (microsec)
                                         // NOTE: ^ THIS IS CURRENTLY 1 HOUR. THIS SHOULD NEVER TRIGGER, HOWEVER IT IS JUST TO BE SAFE (AND LEFTOVER FROM E1)
 
@@ -537,11 +542,30 @@ void send_ack(uint32_t acked_id) {
     send_packet(pkt);
 }
 
+// 64-bit microseconds since boot. micros() is 32-bit and wraps every ~71.6 min; this extends it.
+// Must be called at least once per wrap - it runs on every sensor packet and every pass of the
+// main loop and the abort loop, so that always holds while the board is powered.
+uint64_t teensy_us() {
+    static uint32_t last = 0;
+    static uint64_t high = 0;
+    uint32_t now = micros();
+    if (now < last) high += (1ULL << 32);
+    last = now;
+    return high | now;
+}
+
+// PKT_ADC body: [sensor id:1][value: float32 BE:4][teensy_us: uint64 BE:8] = 13 bytes.
+// The timestamp is the "Teensy Timestamp (us from boot)" column in the GUI's DAQ log, and it is when
+// the board sent the reading, so it shows exactly when the data stops - independent of the laptop's
+// clock. A GUI that only reads the first 5 bytes still works. If it ever jumps backwards, the Teensy
+// rebooted.
 void send_adc_packet(uint8_t sensor_id, float value) {
-    uint8_t body[5];
+    uint8_t body[13];
     body[0] = sensor_id;
     pack_float_be(value, &body[1]);
-    EGCPPacket pkt(next_tx_id(), EGCPPacket::PKT_ADC, body, 5);
+    uint64_t ts = teensy_us();
+    for (int i = 0; i < 8; i++) body[5 + i] = (uint8_t)(ts >> (56 - 8 * i));
+    EGCPPacket pkt(next_tx_id(), EGCPPacket::PKT_ADC, body, 13);
     send_packet(pkt);
 }
 
@@ -859,7 +883,55 @@ void send_nck(uint32_t nacked_id) {
     send_packet(pkt);
 }
 
+// ---- Igniters: always a 50 ms pulse ----
+// IGN_AUTO_OFF 1 = the 50 ms cut-off is active. Set it to 0 to disable it (igniters then behave like
+// valves: on from a VSO until a VSC / abort) - only ever for a deliberate test.
+#define IGN_AUTO_OFF 1
+#if IGN_AUTO_OFF
+// An igniter is switched on by a VSO like a valve, but it must NEVER stay energized: every time it is
+// turned on, a hardware timer shuts it off IGN_PULSE_US later, whatever igniter it is, whatever the GUI
+// or a sequence is doing, and however busy (or stuck) the main loop is. It runs in an interrupt, so it
+// is non-blocking and not tied to the ~10 ms loop pass. A VSC (or any abort / shutdown) turns it off
+// immediately and cancels the timer. A VSO for an igniter that is already on does not extend the pulse
+// (a retransmitted command can't make it longer). If no timer is available the igniter is NOT energized.
+const uint32_t IGN_PULSE_US = 50000;   // <-- USER INPUT: how long an igniter stays on (microseconds)
+IntervalTimer   ign_timer[2];          // [0] = IGN-1, [1] = IGN-2
+volatile bool   ign_on[2] = { false, false };
+
+static inline int ign_pin(int i)       { return i == 0 ? IGN1_PIN : IGN2_PIN; }
+static inline int ign_index(uint8_t vid) { return vid == 0x30 ? 0 : (vid == 0x31 ? 1 : -1); }   // valve ID -> igniter
+
+static void ign_off(int i) {           // runs in the timer interrupt (and from ign_cancel)
+    ign_timer[i].end();
+    if (ign_pin(i) >= 0) digitalWrite(ign_pin(i), LOW);
+    ign_on[i] = false;
+}
+static void ign_off_isr0() { ign_off(0); }
+static void ign_off_isr1() { ign_off(1); }
+
+// Turn igniter i on for IGN_PULSE_US. Returns false if it could not be started safely.
+static bool ign_fire(int i) {
+    if (ign_pin(i) < 0) return false;
+    if (ign_on[i]) return true;                                   // already firing: keep the original 50 ms
+    // Start the shut-off timer FIRST: if it can't be armed, never energize the igniter.
+    if (!ign_timer[i].begin(i == 0 ? ign_off_isr0 : ign_off_isr1, IGN_PULSE_US)) return false;
+    ign_on[i] = true;
+    digitalWrite(ign_pin(i), HIGH);
+    return true;
+}
+
+static void ign_cancel(int i) {
+    noInterrupts();
+    ign_off(i);
+    interrupts();
+}
+#endif   // IGN_AUTO_OFF
+
 void safe_all_valves() {
+#if IGN_AUTO_OFF
+    ign_cancel(0);
+    ign_cancel(1);
+#endif
     const int pins[] = {NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PNEUMA_PIN, BRAY_AUX_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, FP_1201_PIN, AP_1601_PIN, FV_1202_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
     for (int pin : pins) {
         if (pin >= 0) digitalWrite(pin, LOW);
@@ -868,6 +940,95 @@ void safe_all_valves() {
     // is left open on abort/comms loss.
     safe_all_actuators();
     bray_power(false);   // Bray (main fuel): 4 mA / closed first, then the card's relay off
+}
+
+// ---- Ethernet link recovery ----
+// On Nov 22 2026 an igniter transient knocked the Teensy's Ethernet PHY (DP83825I) offline while the
+// CPU kept running: link LED dark, nothing got through until the Teensy was power-cycled.
+// NativeEthernet never restarts the PHY on its own, and Ethernet.begin() can't be used to recover:
+// it spins in while(!link_status){} and hangs the CPU forever if the link is down. So this resets
+// the PHY directly and re-applies the two registers the Teensy core writes at boot (LEDCR, RCSR).
+// A PHY reset only drops the link for the couple of seconds auto-negotiation takes.
+// Runs from the abort loop only: a dead link trips CONNECTION_TIMEOUT in 200 ms, so by the time
+// this runs, every valve is already closed.
+const unsigned long ETH_RECOVER_AFTER_MS      = 1000;  // nothing received for this long -> reset the PHY
+const unsigned long ETH_RECOVER_RETRY_MS      = 5000;  // retry interval (auto-negotiation needs ~2-3 s)
+const uint32_t      ETH_HARD_RESET_EVERY      = 2;     // every 2nd attempt pulses the PHY's reset pin instead of an MDIO soft reset
+const uint32_t      ETH_REBOOT_AFTER_ATTEMPTS = 6;     // still no link after this many -> reboot the Teensy (what fixed it in the field)
+                                                       // only if the PHY reports link DOWN; 0 = never reboot
+void safe_all_valves();   // defined below
+uint32_t      eth_recover_attempts = 0;
+unsigned long eth_last_recover_ms  = 0;
+
+// MDIO access. NativeEthernet's FNET mutexes are no-ops and its poll interrupt also reads the PHY
+// (link status), so block interrupts for the ~25 us of each MDIO frame to keep them from colliding.
+static bool phy_read(uint32_t reg, uint16_t& val) {
+    fnet_uint16_t v = 0;
+    noInterrupts();
+    fnet_return_t r = fnet_eth_phy_read(fnet_netif_get_default(), reg, &v);
+    interrupts();
+    val = v;
+    return r == FNET_OK;
+}
+static bool phy_write(uint32_t reg, uint16_t val) {
+    noInterrupts();
+    fnet_return_t r = fnet_eth_phy_write(fnet_netif_get_default(), reg, val);
+    interrupts();
+    return r == FNET_OK;
+}
+
+void eth_phy_reset(bool hard) {
+    uint16_t bmcr = 0, bmsr = 0, rcsr = 0, ledcr = 0;
+    bool mdio_ok = phy_read(0x00, bmcr) & phy_read(0x01, bmsr) & phy_read(0x17, rcsr) & phy_read(0x18, ledcr);
+    // Before-reset snapshot: RCSR != 0081 or LEDCR != 0280 means the PHY reset itself to defaults
+    // (e.g. a brownout/transient), which leaves it on the wrong RMII clock and the link LED inverted.
+    DBG_PRINT("[ETH] PHY "); DBG_PRINT(hard ? "HARD" : "soft"); DBG_PRINT(" reset #"); DBG_PRINT(eth_recover_attempts);
+    DBG_PRINT(" | before: MDIO="); DBG_PRINT(mdio_ok ? "ok" : "FAIL");
+    DBG_PRINT(" BMCR=0x"); DBG_PRINT(bmcr, HEX); DBG_PRINT(" BMSR=0x"); DBG_PRINT(bmsr, HEX);
+    DBG_PRINT(" RCSR=0x"); DBG_PRINT(rcsr, HEX); DBG_PRINT(" LEDCR=0x"); DBG_PRINTLN(ledcr, HEX);
+
+    if (hard) {
+        // PHY reset line: GPIO_B0_14 = GPIO7 bit 14 (same pin the Teensy core pulses at boot).
+        GPIO7_DR_CLEAR = (1 << 14);
+        delayMicroseconds(100);
+        GPIO7_DR_SET = (1 << 14);
+        delay(10);
+    } else {
+        phy_write(0x00, 0x8000);                             // BMCR software reset
+        unsigned long t0 = millis();
+        while (millis() - t0 < 20) {                         // self-clears when done
+            uint16_t v;
+            if (phy_read(0x00, v) && !(v & 0x8000)) break;
+        }
+    }
+    phy_write(0x18, 0x0280);                                 // LEDCR: LED shows link status, active high
+    phy_write(0x17, 0x0081);                                 // RCSR: 50 MHz RMII reference clock input
+    uint16_t cr = 0;
+    phy_read(0x00, cr);
+    phy_write(0x00, (cr | 0x1000 | 0x0200) & ~(0x0400 | 0x0800));   // auto-neg on + restart; not isolated / powered down
+}
+
+// Called on every pass of the abort loop. last_rx_ms = when the abort loop last received anything.
+void eth_recovery_poll(unsigned long last_rx_ms) {
+    unsigned long now = millis();
+    if (now - last_rx_ms < ETH_RECOVER_AFTER_MS) { eth_recover_attempts = 0; return; }
+    // Link UP but still nothing received after the full set of attempts = the PHY is fine and the
+    // problem is on the laptop side (e.g. GUI closed), so back off instead of bouncing the link.
+    bool exhausted = ETH_REBOOT_AFTER_ATTEMPTS > 0 && eth_recover_attempts >= ETH_REBOOT_AFTER_ATTEMPTS;
+    unsigned long retry_ms = exhausted ? 30000UL : ETH_RECOVER_RETRY_MS;
+    if (eth_recover_attempts > 0 && now - eth_last_recover_ms < retry_ms) return;
+
+    if (exhausted && Ethernet.linkStatus() != LinkON) {
+        DBG_PRINTLN("[ETH] PHY resets didn't bring the link back -> rebooting (all valves already closed)");
+        safe_all_valves();
+        delay(50);
+        SCB_AIRCR = 0x05FA0004;                              // system reset
+        while (1) {}
+    }
+
+    eth_recover_attempts++;
+    eth_last_recover_ms = now;
+    eth_phy_reset(eth_recover_attempts % ETH_HARD_RESET_EVERY == 0);
 }
 
 void trigger_shutdown(const char* reason) {
@@ -886,8 +1047,12 @@ void trigger_shutdown(const char* reason) {
     while (udp.parsePacket() > 0) { while (udp.available()) udp.read(); }
 
     bool aborted = true;
+    unsigned long abort_last_rx_ms = millis();
+    eth_recover_attempts = 0;
     while (aborted) {
+        teensy_us();   // keep the 64-bit timestamp counter from missing a micros() wrap while parked here
         Ethernet.maintain();
+        eth_recovery_poll(abort_last_rx_ms);   // bring a dead link back without a power cycle
 
         if ((micros() - ABORT_TIME_TRACKING) > ABORTED_TIME_INTERVAL) {
             ABORT_TIME_TRACKING = micros();
@@ -896,6 +1061,7 @@ void trigger_shutdown(const char* reason) {
 
         int pkt_sz = udp.parsePacket();
         if (pkt_sz > 0) {
+            abort_last_rx_ms = millis();
             int n = 0;
             while (udp.available() > 0 && n < (int)sizeof(egcp_rx_buf) - egcp_rx_pos) {
                 egcp_rx_buf[egcp_rx_pos + n++] = udp.read();
@@ -938,6 +1104,15 @@ void trigger_shutdown(const char* reason) {
 }
 
 void setup() {
+    // Valves / relays / igniters to a known OFF state before anything else. Ethernet.begin() below
+    // blocks forever if there's no link, and until these are set the relay gate pins are floating.
+    // (They're set again further down; that's harmless.)
+    {
+        const int boot_safe_pins[] = {BRAY_PWR_PIN, NCS1_PIN, NCS2_PIN, NCS3_PIN, NCS5_PIN, PNEUMA_PIN, BRAY_AUX_PIN, PA_BV3_PIN, PA_BV1_PIN, PA_BV2_PIN, FP_1201_PIN, AP_1601_PIN, FV_1202_PIN, GV1_PIN, GV2_PIN, IGN1_PIN, IGN2_PIN, GIMBAL_PIN};
+        for (int pin : boot_safe_pins) {
+            if (pin >= 0) { digitalWrite(pin, LOW); pinMode(pin, OUTPUT); }
+        }
+    }
 #if defined(ARDUINO)
     Serial.begin(BAUD);
     delay(50);
@@ -1077,6 +1252,7 @@ uint32_t pt_us_accum = 0, tc_us_accum = 0, lc_us_accum = 0;
 
 void loop() {
     loop_iter_count++;
+    teensy_us();   // keep the 64-bit timestamp counter from missing a micros() wrap
 
 
     unsigned long now_ms = millis();
@@ -1173,7 +1349,16 @@ void loop() {
                         uint8_t vid = rx.body[0];
                         int     pin = get_pin_from_valve_id(vid);
                         if (pin >= 0) {
+#if IGN_AUTO_OFF
+                            int ii = ign_index(vid);
+                            if (ii >= 0) {
+                                if (!ign_fire(ii)) DBG_PRINTLN("WARN: igniter NOT fired (shut-off timer unavailable)");
+                            } else {
+                                digitalWrite(pin, HIGH);
+                            }
+#else
                             digitalWrite(pin, HIGH);
+#endif
                             DBG_PRINT("VSO "); DBG_PRINT(get_valve_name(vid));
                             DBG_PRINT(" pin="); DBG_PRINTLN(pin);
                             LAST_HUMAN_UPDATE = micros();
@@ -1190,6 +1375,10 @@ void loop() {
                         uint8_t vid = rx.body[0];
                         int     pin = get_pin_from_valve_id(vid);
                         if (pin >= 0) {
+#if IGN_AUTO_OFF
+                            int ii = ign_index(vid);
+                            if (ii >= 0) ign_cancel(ii);          // igniter off now + cancel its timer
+#endif
                             digitalWrite(pin, LOW);
                             DBG_PRINT("VSC "); DBG_PRINT(get_valve_name(vid));
                             DBG_PRINT(" pin="); DBG_PRINTLN(pin);

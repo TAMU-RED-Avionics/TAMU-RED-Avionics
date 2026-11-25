@@ -473,10 +473,12 @@ class AbortRule:
 @dataclass
 class SequenceStep:
     name:        str         = "State"
-    time_offset: float       = 0.0                          # seconds from sequence auto-start
+    # Seconds relative to T-0, the moment the terminal count ends: positive = after T-0, negative =
+    # before it (-0.5 = half a second before the end of the terminal count).
+    time_offset: float       = 0.0
     open_valves: List[str]   = field(default_factory=list)  # component IDs that are OPEN in this step
-    # Marks this step as the terminal-count hold. show_fire_sequence_dialog()
-    # requires at least one step with this flag before it will run.
+    # Legacy: sequences used to need a step flagged as the terminal-count hold. The terminal count is
+    # now a length (SystemParameters.terminal_count_s); old files are converted when they load.
     is_terminal_count: bool  = False
     # How far each proportional actuator (servo, Bray valve) opens in this step, % of stroke, keyed by
     # component ID. An actuator that is in open_valves but has no entry here opens to its spec's open_pct.
@@ -487,7 +489,6 @@ class SequenceStep:
             "name":              self.name,
             "time_offset":       self.time_offset,
             "open_valves":       self.open_valves,
-            "is_terminal_count": self.is_terminal_count,
         }
         if self.positions:
             d["positions"] = dict(self.positions)
@@ -560,11 +561,15 @@ class NamedSequence:
     id:    str
     name:  str              = "Default"
     steps: List[SequenceStep] = field(default_factory=list)
+    # True for a sequence read from an older file, whose step times counted from the start of the run
+    # (with a Terminal Count step at 0). convert_legacy_timing() turns it into T-0-relative times.
+    legacy_timing: bool = False
 
     def to_dict(self) -> dict:
         return {
             "id":    self.id,
             "name":  self.name,
+            "timing": "t0",
             "steps": [s.to_dict() for s in self.steps],
         }
 
@@ -574,7 +579,26 @@ class NamedSequence:
             id    = d["id"],
             name  = d.get("name", "Default"),
             steps = [SequenceStep.from_dict(s) for s in d.get("steps", [])],
+            legacy_timing = d.get("timing") != "t0",
         )
+
+    def convert_legacy_timing(self, terminal_count_s: float):
+        """Old files counted time from the start of the run, with T-0 at terminal_count_s. Now times are
+        relative to T-0: every step moves back by the terminal-count length. The flagged Terminal Count
+        step is no longer needed - it is dropped if it did nothing, and kept as an ordinary step (at
+        T-<length>) if it opened or positioned anything, so no action is lost."""
+        if not self.legacy_timing:
+            return
+        kept = []
+        for st in self.steps:
+            was_tc = st.is_terminal_count
+            st.is_terminal_count = False
+            if was_tc and not st.open_valves and not st.positions:
+                continue
+            st.time_offset = round(st.time_offset - terminal_count_s, 6)
+            kept.append(st)
+        self.steps = kept
+        self.legacy_timing = False
 
 
 @dataclass
@@ -894,7 +918,11 @@ class PIDProject:
             proj.sequences.append(NamedSequence.from_dict(seqd))
         if not proj.sequences:
             proj.sequences.append(NamedSequence(
-                id="seq_default", name="Default", steps=list(proj.sequence)))
+                id="seq_default", name="Default", legacy_timing=True,
+                steps=[SequenceStep.from_dict(s.to_dict() | {"is_terminal_count": s.is_terminal_count})
+                       for s in proj.sequence]))
+        for seq in proj.sequences:
+            seq.convert_legacy_timing(proj.parameters.terminal_count_s)
 
         if "abort_states" in d:
             proj.abort_states = [AbortState.from_dict(sd) for sd in d["abort_states"]]

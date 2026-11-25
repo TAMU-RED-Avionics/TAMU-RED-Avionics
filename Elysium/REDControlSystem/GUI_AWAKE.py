@@ -1,9 +1,3 @@
-"""Keep the screen (and the machine) awake while the GUI is open, like a video player does.
-
-start() asks the OS not to dim/turn off the display or go to sleep; stop() (also run when the app
-quits, and by the OS if the process dies) gives that back. Nothing here touches a setting
-permanently. A corporate/lock-screen policy that forces a lock after N minutes can still win.
-"""
 import ctypes
 import os
 import shutil

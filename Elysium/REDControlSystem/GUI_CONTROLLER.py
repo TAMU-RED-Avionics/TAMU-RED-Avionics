@@ -12,13 +12,19 @@ from GUI_COMMS import EthernetClient
 from GUI_RECORDER import DaqRecorder, csv_path_for, recover_orphans
 from PID_SCHEMA import DEFAULT_ABORT_ID
 from GUI_SHARE import ShareServer, ViewerClient, DEFAULT_SHARE_PORT
+from GUI_EXPR import ExprEngine, ExprError, MissingValue
 
 try:
     from CoolProp.CoolProp import PropsSI as _PropsSI
 except ImportError:
     _PropsSI = None
 
-_TEMPLATE_TOKEN_RE = re.compile(r"\{([A-Za-z0-9_]+)\}")
+def _fmt_t(t: float) -> str:
+    """A time relative to T-0 as the operator reads it: T-0.5, T+0.0, T+15.0."""
+    return f"T{'-' if t < 0 else '+'}{abs(t):.1f}"
+
+
+_TEMPLATE_TOKEN_RE = re.compile(r"\{([A-Za-z0-9_][A-Za-z0-9_\- ]*)\}")      # {P8}, {MCC_P}, {OPT-1501}, {Tank Weight}
 
 
 def render_message_template(template: str, context: dict) -> str:
@@ -208,6 +214,15 @@ class GUIController:
         self._rule_valve_open: dict = {}       # rule_id -> bool, tracks auto-opened valves
         self._sensor_rules: list = []          # compiled from component thresholds
         self._logic_rules: list = []           # AbortRule expression type
+        self.expr_engine = ExprEngine()        # official sensor names / abs() / sequence timing in rules
+        # Automatic reconnect after a comms loss (see _start_auto_reconnect)
+        self._reconnect_active = False
+        self._reconnect_t0 = 0.0
+        self._reconnect_attempts = 0
+        self._live_this_link = False           # MANUAL/LOCKED was entered on the current link
+        self._expr_sig = ()                    # calc-channel names the engine was built from
+        self._seq_t0 = None                    # time.monotonic() when the running sequence started
+        self._seq_end = -1.0                   # time offset of its last step
         self._active_warnings: dict[str, str] = {}
 
         # Valve Command Reliability
@@ -295,18 +310,77 @@ class GUIController:
             return
         if self.ethernet_client.intentional_disconnect:
             self.ethernet_client.intentional_disconnect = False
+            self._stop_auto_reconnect()
             self._cancel_sequence()
             self._set_safe_applied(False)
             self._set_mode(GuiMode.SAFE, "operator disconnect")
             self.signals.system_status.emit("Disconnected (safe)")
             return
+        if self._reconnect_active:
+            self._schedule_reconnect_attempt()      # one of our own reconnect attempts just failed
+            return
+        if self._live_this_link:
+            # The link was lost during live operation: start trying to get it back right away. This
+            # only restores the connection - it never delays the abort below, and a reconnect always
+            # lands in SAFE with the Safe State applied, so it can't open or resume anything.
+            self._start_auto_reconnect(reason)
         if self.mode in (GuiMode.SAFE, GuiMode.ABORT):
             return
         self.signals.abort_triggered.emit("DISCONNECTED", reason, "")
 
+    # AUTOMATIC RECONNECT ------------------------------------------------------------------------
+    # After the link is lost during live operation the GUI keeps sending the START handshake (the
+    # connect attempt sends one every 250 ms, back to back) until the Teensy answers, instead of
+    # waiting for someone to press Connect. A one-second burst would not help: if the Teensy's
+    # network chip is down, nothing gets through until it has been reset and has renegotiated (a few
+    # seconds), so this keeps trying at a gentle rate for up to AUTO_RECONNECT_MAX_S. It stops if the
+    # operator disconnects or connects by hand. The Teensy side needs nothing: it already sits waiting
+    # for START after its watchdog trips, and resets its own Ethernet chip.
+    AUTO_RECONNECT_MAX_S = 60.0
+    AUTO_RECONNECT_GAP_MS = 100
+
+    def _start_auto_reconnect(self, reason: str):
+        ip, port = self.ethernet_client.remote_ip, self.ethernet_client.remote_port
+        if self.view_only or self._reconnect_active or not ip or not port:
+            return
+        self._reconnect_active = True
+        self._reconnect_t0 = time.monotonic()
+        self._reconnect_attempts = 0
+        self.log_event("RECONNECT:START", f"link lost ({reason}); retrying {ip}:{port}")
+        self.signals.system_status.emit("Link lost - reconnecting automatically...")
+        QTimer.singleShot(0, self._reconnect_attempt)
+
+    def _stop_auto_reconnect(self, reason: str = ""):
+        if self._reconnect_active and reason:
+            self.log_event("RECONNECT:STOP", reason)
+        self._reconnect_active = False
+        self._live_this_link = False        # a later failed manual connect must not restart the retries
+
+    def _reconnect_attempt(self):
+        if not self._reconnect_active or self.view_only:
+            return
+        if self.ethernet_client.connected or self.ethernet_client.connecting:
+            return
+        elapsed = time.monotonic() - self._reconnect_t0
+        if elapsed > self.AUTO_RECONNECT_MAX_S:
+            self._reconnect_active = False
+            self._live_this_link = False
+            self.log_event("RECONNECT:GAVE_UP", f"no answer after {elapsed:.0f} s ({self._reconnect_attempts} attempts)")
+            self.signals.system_status.emit("Could not reconnect automatically - press Connect")
+            return
+        self._reconnect_attempts += 1
+        self.ethernet_client.connect(self.ethernet_client.remote_ip, self.ethernet_client.remote_port)
+
+    def _schedule_reconnect_attempt(self):
+        if self._reconnect_attempts % 5 == 0:
+            self.signals.system_status.emit(
+                f"Link lost - reconnecting automatically... ({time.monotonic() - self._reconnect_t0:.0f} s)")
+        QTimer.singleShot(self.AUTO_RECONNECT_GAP_MS, self._reconnect_attempt)
+
     def _on_connected(self):
         """Every (re)connect lands in SAFE and the Safe State preset is applied
         straight away (valves to their safe positions, actuators to safe_pct)."""
+        self._live_this_link = False        # a fresh link: nothing live on it yet
         if self.view_only:
             return              # the viewer link's hello message carries the controller's mode
         self.enter_safe_state("connected")
@@ -322,6 +396,7 @@ class GUIController:
         if view_only == self.view_only:
             return
         if view_only:
+            self._stop_auto_reconnect("switched to view-only")
             self.stop_sharing()
         else:
             self.viewer.disconnect_from_controller()
@@ -510,6 +585,8 @@ class GUIController:
             return
         previous = self.mode
         self.mode = mode
+        if mode in (GuiMode.MANUAL, GuiMode.LOCKED):
+            self._live_this_link = True
         self.log_event("MODE_CHANGE", f"{previous}->{mode}" + (f" ({reason})" if reason else ""))
         self.signals.mode_changed.emit(mode)
 
@@ -615,16 +692,23 @@ class GUIController:
     def request_safe_disconnect(self):
         """Operator disconnect: notify the MCU (SFE) and tear the link down
         without the abort path firing."""
+        self._stop_auto_reconnect("operator disconnect")
         self.log_event("OPERATOR_DISCONNECT", "Safe disconnect requested")
         self.ethernet_client.graceful_disconnect()
 
     def handle_connect(self, success: bool):
         if success:
+            was_auto = self._reconnect_active
+            attempts, elapsed = self._reconnect_attempts, time.monotonic() - self._reconnect_t0
+            self._reconnect_active = False
             self.ethernet_client.set_system_state("CONNECTED")
             # Clear any stale status text left over from a prior disconnect
             # (e.g. "Disconnected (safe)") so it doesn't linger after reconnect.
             self.signals.system_status.emit("")
             self.signals.connected.emit()
+            if was_auto:
+                self.log_event("RECONNECT:OK", f"link restored after {elapsed:.1f} s ({attempts} attempts)")
+                self.signals.system_status.emit("Link restored automatically - SAFE. Check the system before continuing.")
         else:
             detailed_reason = self.ethernet_client.last_connection_error or "Connection failed"
             concise_reason = self._summarize_connection_error(detailed_reason)
@@ -777,6 +861,7 @@ class GUIController:
         self._rule_violation_start.clear()
         self._rule_valve_open.clear()
         self._active_warnings.clear()
+        self.expr_engine = ExprEngine(project)
 
         if project is None:
             return
@@ -811,6 +896,7 @@ class GUIController:
                 self._sensor_rules.append({
                     "id":           rule_id,
                     "hw_id":        hw_id,
+                    "label":        comp.label or hw_id,       # the official P&ID name, shown in alerts
                     "band":         band,
                     "threshold":    threshold,
                     "action":       action,
@@ -827,8 +913,25 @@ class GUIController:
         for rule in project.rules:
             if rule.condition_type == "expression" and rule.enabled and rule.expression.strip():
                 self._logic_rules.append(rule)
-
+        self._expr_sig = self._calc_signature()
+        self._revalidate_logic_rules()
         self._emit_warnings()
+
+    def _calc_signature(self):
+        chans = getattr(self.project, "calc_channels", None) or [] if self.project else []
+        return tuple((c.id, c.label) for c in chans)
+
+    def _revalidate_logic_rules(self):
+        """A rule that can't be understood must not just sit there never firing: say so loudly."""
+        for wid in [w for w in self._active_warnings if w.endswith("__invalid")]:
+            del self._active_warnings[wid]
+        for rule in self._logic_rules:
+            err = self.expr_engine.validate(rule.expression)
+            if err:
+                name = rule.description.strip() or rule.id
+                self._active_warnings[rule.id + "__invalid"] = (
+                    f"RULE NOT ACTIVE - '{name}': {err}. Fix it in Abort Config.")
+                self.log_event("RULE_INVALID", f"{rule.id}: {err}")
 
     def _emit_warnings(self):
         messages = sorted(self._active_warnings.values())
@@ -948,6 +1051,13 @@ class GUIController:
 
         current_time = QDateTime.currentMSecsSinceEpoch()
 
+        if self.project is not None and self._calc_signature() != self._expr_sig:
+            # A calculated channel (Thrust, ...) was added / renamed: rules may refer to it by name
+            self.expr_engine = ExprEngine(self.project)
+            self._expr_sig = self._calc_signature()
+            self._revalidate_logic_rules()
+            self._emit_warnings()
+
         self._check_system_pressure_limits(locked_out)
 
         for sr in self._sensor_rules:
@@ -1043,6 +1153,7 @@ class GUIController:
 
         for hw_id in self.pt_keys:
             key = hw_id.upper()
+            nm = self.sensor_labels.get(hw_id, key)         # official P&ID name (MCC_P), not P8
             value = self.current_sensor_values.get(key)
             if value is None:
                 continue
@@ -1053,7 +1164,7 @@ class GUIController:
                     ctx = self._sensor_message_context(value=value, threshold=abort_limit,
                                                        limit=abort_limit, mawp=mawp)
                     template = (params.system_mawp_message.strip() if params.system_mawp_message
-                               else f"{key} ({{{key}}}) exceeds 95% of system MAWP "
+                               else f"{nm} ({{{nm}}}) exceeds 95% of system MAWP "
                                     "({mawp} psi -> limit {limit} psi)")
                     detail = render_message_template(template, ctx)
                     self._close_prewarn_dialog()
@@ -1063,7 +1174,7 @@ class GUIController:
             if meop is not None and value >= meop:
                 ctx = self._sensor_message_context(value=value, threshold=meop, limit=meop)
                 template = (params.system_meop_message.strip() if params.system_meop_message
-                           else f"{key} ({{{key}}}) is above system MEOP (limit {{limit}} psi)")
+                           else f"{nm} ({{{nm}}}) is above system MEOP (limit {{limit}} psi)")
                 self._set_warning(f"system_meop__{key}", render_message_template(template, ctx))
             else:
                 self._clear_warning(f"system_meop__{key}")
@@ -1085,6 +1196,7 @@ class GUIController:
 
     def _show_prewarn_dialog(self, key, value, level, limit, mawp, state_id):
         state = self.project.get_abort_state(state_id)
+        key = self.sensor_labels.get(key, key)              # official P&ID name in the dialog
         dlg = QDialog(self.parent)
         dlg.setWindowTitle("SYSTEM APPROACHING MAWP")
         dlg.setModal(False)
@@ -1138,8 +1250,16 @@ class GUIController:
         whatever special keywords (value/threshold/soak_ms/...) the caller
         supplies for this specific rule."""
         ctx = dict(self.current_sensor_values)
+        ctx.update(self.expr_engine.message_context(
+            self.current_sensor_values, {k: v for k, v in self.calc_values.items() if isinstance(k, str)}))
         ctx.update(extra)
         return ctx
+
+    def _seq_vars(self) -> dict:
+        """Sequence timing for rule expressions (SEQ_T / SEQ_END / SEQ_RUNNING)."""
+        if self._seq_t0 is None:
+            return {"SEQ_T": float("nan"), "SEQ_END": float("nan"), "SEQ_RUNNING": False}
+        return {"SEQ_T": time.monotonic() - self._seq_t0, "SEQ_END": self._seq_end, "SEQ_RUNNING": True}
 
     def _fire_sensor_rule(self, sr: dict, hw_id: str, value: float, locked_out: bool = False):
         action  = sr["action"]
@@ -1149,10 +1269,10 @@ class GUIController:
 
         ctx = self._sensor_message_context(
             value=value, threshold=sr["threshold"], soak_ms=sr["soak_ms"],
-            hw_id=hw_id, band=band_disp,
+            hw_id=hw_id, band=band_disp, label=sr.get("label", hw_id),
         )
         template = sr["message"].strip() if sr.get("message") else (
-            "{hw_id} {band} threshold exceeded: {value} (limit {threshold})")
+            "{label} {band} threshold exceeded: {value} (limit {threshold})")
         message = render_message_template(template, ctx)
 
         if action == "abort":
@@ -1161,7 +1281,7 @@ class GUIController:
             # Show "P1 HIGH" (derived from the sensor's own hw_id/band), never
             # the internal rule_id ("PT_1__mawp") - nothing here is hardcoded,
             # it's built from this sensor's own configuration.
-            self.signals.abort_triggered.emit(f"{hw_id} {band_disp}", message, sr.get("abort_state", ""))
+            self.signals.abort_triggered.emit(f"{sr.get('label', hw_id)} {band_disp}", message, sr.get("abort_state", ""))
 
         elif action == "warn":
             # Keep a persistent UI warning without escalating to abort.
@@ -1181,13 +1301,21 @@ class GUIController:
                                f"Rule {rule_id}: opened {target} ({hw_id}={value:.2f})")
 
     def _check_logic_rule(self, rule, current_time: int, locked_out: bool = False):
-        try:
-            result = bool(eval(rule.expression, {"__builtins__": {}},
-                               self.current_sensor_values))
-        except Exception:
-            return
-
         rule_id = rule.id
+        try:
+            result = bool(self.expr_engine.evaluate(
+                rule.expression, self.current_sensor_values,
+                {k: v for k, v in self.calc_values.items() if isinstance(k, str)}, self._seq_vars()))
+            self._clear_warning(rule_id + "__error")
+        except MissingValue:
+            result = False              # a sensor it needs has no reading yet: nothing to judge
+        except ExprError:
+            return                      # already reported at load time (RULE NOT ACTIVE)
+        except (ArithmeticError, ValueError) as e:
+            result = False              # e.g. divide by zero on a bad reading
+            self._set_warning(rule_id + "__error",
+                              f"Rule '{rule.description.strip() or rule_id}' can't be evaluated right now: {e}")
+
         if not result:
             self._rule_violation_start.pop(rule_id, None)
             self._clear_warning(rule_id)
@@ -1237,10 +1365,7 @@ class GUIController:
         """Best-effort default template for a logic rule with no custom
         message: wraps each referenced sensor name with its live value, e.g.
         'P5 > P3' -> 'P5 ({P5}) > P3 ({P3})'."""
-        def _repl(m: "re.Match") -> str:
-            name = m.group(0)
-            return f"{name} ({{{name}}})" if name in self.current_sensor_values else name
-        return re.sub(r"[A-Za-z_][A-Za-z0-9_]*", _repl, expression)
+        return self.expr_engine.annotate(expression)
 
     def _render_logic_rule_message(self, rule) -> str:
         """Custom {TOKEN} message_template if the user configured one in Abort
@@ -1655,6 +1780,15 @@ class GUIController:
                     pass
         
         if teensy_ts:
+            try:
+                new_us = int(teensy_ts)
+                old_us = int(self.latest_teensy_ts) if self.latest_teensy_ts else 0
+                if new_us > 0 and old_us - new_us > 1_000_000:
+                    # The Teensy's clock only runs backwards if it rebooted (power dip, reset, watchdog)
+                    self.log_event("TEENSY_REBOOT",
+                                   f"Teensy clock restarted: {old_us / 1e6:.3f} s -> {new_us / 1e6:.3f} s since boot")
+            except ValueError:
+                pass
             self.latest_teensy_ts = teensy_ts
 
     def tare_sensor(self, sensor_name: str, target: float) -> bool:
@@ -1811,10 +1945,13 @@ class GUIController:
             QMessageBox.warning(self.parent, "Empty Sequence", "The selected sequence has no steps.")
             return
 
+        tc_s = max(0.0, float(getattr(self.project.parameters, "terminal_count_s", 10.0)))
+        last_t = max(s.time_offset for s in steps)
         info_label = QLabel(
             f"Execute auto-fire sequence: {seq_name}?\n\n"
             f"Steps: {len(steps)}\n"
-            f"Total duration: {steps[-1].time_offset:.1f} s"
+            f"Terminal count: {tc_s:g} s\n"
+            f"Last step: {_fmt_t(last_t)}  (total run {tc_s + last_t:.1f} s)"
         )
         c_layout.addWidget(info_label)
 
@@ -1825,34 +1962,25 @@ class GUIController:
         if confirm_dialog.exec_() != QDialog.Accepted:
             return
 
-        if not any(getattr(s, "is_terminal_count", False) for s in steps):
-            QMessageBox.warning(
-                self.parent, "No Terminal Count State",
-                "The sequence must include a state marked as 'Terminal Count' "
-                "before it can be auto-fired.\n\n"
-                "Open the Sequencing tab, select the hold state, and check "
-                "'This is the Terminal Count state'."
-            )
-            return
-
         # ── Schedule each sequence step as a QTimer shot ────────────────────
-        # No artificial pre-delay here: the terminal-count hold IS one of the
-        # steps below, scheduled at its own time_offset like any other step.
-        # A live "TERMINAL COUNT" overlay (see _execute_sequence_step) shows
-        # its countdown in real time instead of blocking beforehand - so the
-        # operator sees exactly one countdown, not a generic wait stacked on
-        # top of the step's own hold.
+        # The run starts at T-<terminal count>: the terminal-count countdown begins immediately and
+        # T-0 is <terminal count> seconds later. A step's time_offset is relative to T-0 (negative =
+        # before it), so it fires at  terminal_count + time_offset  after the start. A step earlier
+        # than the start of the run (offset < -terminal count) fires immediately.
         self._cancel_sequence()
 
         for step in steps:
-            delay_ms = int(step.time_offset * 1000)
+            delay_ms = max(0, int(round((tc_s + step.time_offset) * 1000)))
             t = QTimer()
             t.setSingleShot(True)
             t.timeout.connect(lambda s=step: self._execute_sequence_step(s))
             t.start(delay_ms)
             self._sequence_timers.append(t)
 
-        self.log_event("SEQUENCE:START", f"{len(steps)} steps ({seq_name})")
+        self.log_event("SEQUENCE:START", f"{len(steps)} steps ({seq_name}), terminal count {tc_s:g} s")
+        self._seq_t0 = time.monotonic() + tc_s          # SEQ_T in abort rules is time relative to T-0
+        self._seq_end = float(last_t)
+        self._begin_terminal_count(tc_s)
 
         # After the last step: clear the stage, log the end, and (if the terminal count started
         # the recording) stop it after a short tail so the shutdown is captured.
@@ -1860,12 +1988,27 @@ class GUIController:
             self._sequence_end_timer = QTimer()
             self._sequence_end_timer.setSingleShot(True)
             self._sequence_end_timer.timeout.connect(self._on_sequence_finished)
-        self._sequence_end_timer.start(int(steps[-1].time_offset * 1000) + 500)
+        self._sequence_end_timer.start(max(0, int(round((tc_s + last_t) * 1000))) + 500)
+
+    def _begin_terminal_count(self, tc_s: float):
+        """The run has started: begin the automatic recording (unless one is already running), show
+        the Control State, and put up the terminal-count countdown."""
+        if self._auto_stop_timer is not None:
+            self._auto_stop_timer.stop()                # a previous run's "stop after the tail" must not hit this one
+        if not self._recording_active():
+            self.start_recording(auto=True)
+        self._sequence_stage = "Terminal Count"
+        self.ethernet_client.set_system_state("Terminal Count")
+        self.signals.system_status.emit("Terminal Count")
+        self.log_event("SEQUENCE:STEP", "Terminal Count")
+        if tc_s > 0:
+            self._show_terminal_count_overlay("Terminal Count", tc_s)
 
     def _on_sequence_finished(self):
         if not self._sequence_stage:
             return                                       # already cancelled / aborted
         self._sequence_stage = ""
+        self._seq_t0 = None
         self.log_event("SEQUENCE:END", "completed")
         self._schedule_auto_stop()
 
@@ -1879,12 +2022,6 @@ class GUIController:
         if self.lockout:
             return
 
-        # The terminal count starts an automatic recording (unless one is already running)
-        if getattr(step, "is_terminal_count", False):
-            if self._auto_stop_timer is not None:
-                self._auto_stop_timer.stop()            # a previous run's "stop after the tail" must not hit this one
-            if not self._recording_active():
-                self.start_recording(auto=True)
         self._sequence_stage = step.name                # the Control State column follows the sequence
 
         # Build a set of hw_ids that should be OPEN for this step
@@ -1902,16 +2039,12 @@ class GUIController:
 
         self.ethernet_client.set_system_state(step.name)
         self.signals.system_status.emit(step.name)
-        self.log_event("SEQUENCE:STEP", step.name)
+        self.log_event("SEQUENCE:STEP", f"{step.name} ({_fmt_t(step.time_offset)})")
         def _named(hw):                      # "PA-BV2 (MOV)": the hardware name plus the P&ID label
             label = self.valve_labels.get(hw, "")
             txt = f"{hw} ({label})" if label and label != hw else hw
             return f"{txt} @ {step_pcts[hw]:g}%" if hw in step_pcts else txt
         self.log_event("STEP_ACTIONS", "open: " + (", ".join(_named(h) for h in sorted(open_hw_ids)) if open_hw_ids else "none (all closed)"))
-
-        if getattr(step, "is_terminal_count", False):
-            tc_length = getattr(self.project.parameters, "terminal_count_s", 10.0)
-            self._show_terminal_count_overlay(step.name, tc_length)
 
     def _step_position_for(self, step, hw_id: str):
         """Position (%) this step asks of proportional actuator `hw_id`, or None if the step leaves it
@@ -2002,6 +2135,7 @@ class GUIController:
         if self._sequence_end_timer is not None:
             self._sequence_end_timer.stop()
         self._sequence_stage = ""
+        self._seq_t0 = None
 
     def show_abort_countdown_dialog(self, initial_seconds: int, valve_name: str = "UNKNOWN", cmd_type: str = "COMMAND"):
         """Show a non-modal dialog displaying the auto-abort countdown"""
