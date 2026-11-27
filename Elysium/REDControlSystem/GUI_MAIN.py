@@ -10,8 +10,10 @@ import subprocess
 if sys.version_info < (3, 10):
     sys.exit(f"RED Control System needs Python 3.10 or newer, but this is Python "
              f"{sys.version.split()[0]} ({sys.executable}).\n"
-             "Run setup_conda.bat in this folder (double-click it, or ./setup_conda.bat in "
-             "Git Bash) to create the red-gui environment and launch the GUI from it.")
+             "Upgrade Python to 3.10 or newer (or activate an environment that has it), then install the "
+             "requirements:\n"
+             "    pip install -r requirements.txt\n"
+             "and start the GUI again.")
 
 
 # PyQt5 aborts the whole process (SIGABRT) when a Python exception escapes a slot and

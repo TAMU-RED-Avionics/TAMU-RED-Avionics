@@ -4,6 +4,7 @@ VARIABLES & USER INPUT
 
 #include <Arduino.h>
 #include <SPI.h>
+#include <SD.h>
 #include <Wire.h>
 #include <NativeEthernet.h>
 #include <NativeEthernetUdp.h>
@@ -326,9 +327,12 @@ bool lc_read_raw(uint8_t mux_ch, int32_t& raw) {
 //const double LC_SLOPE[6]     = { 0.005974607916355, 0.006289308176101, 0.006546644844517, 0.005974607916355, 0.006289308176101, 0.006546644844517 };
 //const double LC_INTERCEPT[6] = { 16.185212845407022, -104.044025157232709, -2.114566284779051, 16.185212845407022, -104.044025157232709, -2.114566284779051 };
 
-// Local bench calibration, kept over the upstream values above (merged from local work on top of csmeby 0609276).
-const double LC_SLOPE[6]     = { 0.000550675207718, 0.067810206366926, 0.025277549395484, 0.006635070788728, 0.000094089290896, 0.006862648390970 };     // <-- USER INPUT  (calibrate on hardware)
-const double LC_INTERCEPT[6] = { 3.057899428458018, -12976.122914337332986, -245.046371949874838, -195.854019541687677, -50.643148929450653, -116.994429769252121 };     // <-- USER INPUTs
+// Load cells are sent as RAW counts (PKT_RAW). The slope / intercept that turn a count into pounds are no longer
+// in the firmware: they are saved per load cell in the P&ID (cal_gain = slope, cal_offset = intercept) and applied
+// by the GUI - calibrate in the Health tab > Load Cell Calibration. Last values this firmware used (Nov 2026),
+// now stored in E2_RED_Spec.red:
+//   LC_SLOPE[6]     = { 0.000550675207718, 0.067810206366926, 0.025277549395484, 0.006635070788728, 0.000094089290896, 0.006862648390970 };
+//   LC_INTERCEPT[6] = { 3.057899428458018, -12976.122914337332986, -245.046371949874838, -195.854019541687677, -50.643148929450653, -116.994429769252121 };
 /* calibration history log, not code:
 point 1: raw 16350.5 = 0.000
 point 2: raw 16404.1 = 4.200
@@ -347,7 +351,8 @@ fit of 5 points, worst error = 1.5166
 LC_SLOPE[1] = 0.064916693037f;   LC_INTERCEPT[1] = -1061.8438f;
 */
 
-float lc_weights[6] = { 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f };
+int32_t lc_raw[6]    = { 0, 0, 0, 0, 0, 0 };            // latest raw count per load cell (what is sent as PKT_RAW)
+bool    lc_raw_new[6] = { false, false, false, false, false, false };   // a fresh count not yet sent
 bool  lc_ok[6]      = { false, false, false, false, false, false };   // LC_INSTALLED and answered at boot: only these are read / sent
 // <-- USER INPUT: which load cells are fitted. Default = all six of the new wiring (JLC1 x2, JLC2, JLC3 x2, JLC5).
 bool LC_INSTALLED[6] = { true, true, true, true, true, true };
@@ -521,6 +526,7 @@ void pack_float_be(float value, uint8_t* out) {
     out[0] = raw[3]; out[1] = raw[2]; out[2] = raw[1]; out[3] = raw[0];
 }
 
+extern uint32_t diag_tx;
 void send_packet(const EGCPPacket& pkt) {
     uint8_t buf[20];
     uint8_t sz = pkt.encode(buf, sizeof(buf));
@@ -530,6 +536,7 @@ void send_packet(const EGCPPacket& pkt) {
     udp.beginPacket(dst_ip, dst_port);
     udp.write(buf, sz);
     udp.endPacket();
+    diag_tx++;
 }
 
 void send_ack(uint32_t acked_id) {
@@ -566,6 +573,18 @@ void send_adc_packet(uint8_t sensor_id, float value) {
     uint64_t ts = teensy_us();
     for (int i = 0; i < 8; i++) body[5 + i] = (uint8_t)(ts >> (56 - 8 * i));
     EGCPPacket pkt(next_tx_id(), EGCPPacket::PKT_ADC, body, 13);
+    send_packet(pkt);
+}
+
+// PKT_RAW body: [sensor id:1][raw int32 BE:4][info:1 = (JLC<<4)|(VIN<<1)|shared]. Load cells are sent ONLY like
+// this, every time a cell's count is recomputed (10 Hz). The sensor ID is the P&ID's load cell channel (25..30).
+void send_lc_raw(uint8_t ch) {
+    uint8_t body[6];
+    body[0] = 0x19 + ch;
+    uint32_t r = (uint32_t)lc_raw[ch];
+    body[1] = (uint8_t)(r >> 24); body[2] = (uint8_t)(r >> 16); body[3] = (uint8_t)(r >> 8); body[4] = (uint8_t)r;
+    body[5] = (uint8_t)((LC_MUX_CH[ch] << 4) | (LC_VIN[ch] << 1) | (lc_shared[ch] ? 1 : 0));
+    EGCPPacket pkt(next_tx_id(), EGCPPacket::PKT_RAW, body, 6);
     send_packet(pkt);
 }
 
@@ -942,6 +961,374 @@ void safe_all_valves() {
     bray_power(false);   // Bray (main fuel): 4 mA / closed first, then the card's relay off
 }
 
+// ---- Diagnostics: what the Teensy itself saw ----
+// "Connection lost" says nothing about WHY. This keeps what the board knows about itself, and writes it to the SD
+// card with the flight recorder (RECnnnn.TXT next to RECnnnn.BIN; DIAGnnnn.TXT when nothing was recording) every
+// time the Teensy shuts down, plus a BOOTLOG.TXT line at every boot:
+//   * why the chip last RESET (SRC_SRSR: power-on / watchdog / software / lockup ...) and any CrashReport - a
+//     brownout or crash reboot shows up here, a "stayed up, link died" event shows none;
+//   * the Ethernet chip's registers: does it answer, is the link up, and are the two settings the firmware writes at
+//     boot still what it wrote (RCSR 0x0081 / LEDCR 0x0280 - if not, the chip reset itself, e.g. a supply dip or ESD);
+//   * a timestamped event log (commands, link up/down, bad packets, shutdown, recovery attempts) in the Teensy's own
+//     clock, and a few counters (packets, bad packets, how long since the GUI was last heard, chip temperature).
+// Everything is read or composed at shutdown time, after every output is closed, never during a run - except one
+// pair of Ethernet-chip status reads (~50 us) per 10 ms sensor pass, which also fill the recorder's link columns.
+static bool phy_read(uint32_t reg, uint16_t& val);          // defined with the Ethernet recovery code below
+extern bool sd_ok;                                           // the SD card is up (defined with the flight recorder)
+extern uint32_t eth_recover_attempts;
+
+enum : uint8_t { EV_BOOT = 1, EV_STA, EV_VSO, EV_VSC, EV_POS, EV_REC_START, EV_REC_STOP, EV_SFE_RX, EV_SHUTDOWN,
+                 EV_LINK_DOWN, EV_LINK_UP, EV_ETH_RECOVER, EV_RX_BAD, EV_MDIO_FAIL, EV_MDIO_OK, EV_SD_FAIL };
+static const char* const DIAG_EV_NAMES[] = { "?", "BOOT", "STA received (GUI connected)", "VALVE OPEN cmd", "VALVE CLOSE cmd",
+    "POSITION cmd", "REC start", "REC stop", "SFE received (GUI abort)", "SHUTDOWN", "ETHERNET LINK DOWN",
+    "ETHERNET LINK UP", "ETH recovery attempt", "undecodable packet", "ETHERNET CHIP STOPPED ANSWERING (MDIO)",
+    "ethernet chip answering again", "SD CARD WRITE FAILED" };
+#define DIAG_NUM_EVENTS 128
+struct DiagEvent { uint64_t us; uint8_t code; uint8_t arg; uint16_t val; };
+static DiagEvent diag_ev[DIAG_NUM_EVENTS];
+static uint32_t  diag_ev_n = 0;                                  // events ever logged (ring slot = n % DIAG_NUM_EVENTS)
+static void diag_event(uint8_t code, uint8_t arg = 0, uint16_t val = 0) {
+    DiagEvent& e = diag_ev[diag_ev_n % DIAG_NUM_EVENTS];
+    e.us = teensy_us(); e.code = code; e.arg = arg; e.val = val;
+    diag_ev_n++;
+}
+
+uint32_t diag_rx_ok = 0, diag_rx_bad = 0, diag_tx = 0;           // packets from the GUI decoded / not, packets sent
+uint8_t  diag_last_rx_type = 0;
+uint64_t diag_last_rx_us = 0;
+static uint32_t diag_srsr = 0;                                   // SRC_SRSR at boot: why the chip last reset
+static uint16_t diag_bmsr = 0, diag_physts = 0;                  // Ethernet chip status, refreshed every sensor pass
+static bool     diag_mdio_ok = true, diag_link_prev = true;
+
+// Once per 10 ms sensor pass: read the Ethernet chip's status (BMSR bit 2 = link up, latched low so a drop between
+// reads is still seen) and log link / MDIO changes with the Teensy's clock.
+static void diag_poll() {
+    uint16_t b = 0, p = 0;
+    bool ok = phy_read(0x01, b);
+    ok = phy_read(0x10, p) && ok;
+    if (ok != diag_mdio_ok) { diag_mdio_ok = ok; diag_event(ok ? EV_MDIO_OK : EV_MDIO_FAIL); }
+    if (!ok) { diag_bmsr = 0; diag_physts = 0; return; }
+    diag_bmsr = b; diag_physts = p;
+    bool link = (b & 0x0004) != 0;
+    if (link != diag_link_prev) { diag_link_prev = link; diag_event(link ? EV_LINK_UP : EV_LINK_DOWN, 0, b); }
+}
+
+static const char* diag_reset_names(uint32_t srsr, char* out, size_t cap) {      // bits per the i.MX RT1060 reference manual
+    static const char* const names[] = { "POWER-ON reset", "software reset or CPU lockup", "CSU reset", "external user reset",
+        "WATCHDOG timeout", "JTAG reset", "JTAG software reset", "WDOG3 reset", "temperature-sensor reset" };
+    out[0] = 0;
+    for (int i = 0; i < 9; i++)
+        if (srsr & (1u << i)) { if (out[0]) strncat(out, " + ", cap - strlen(out) - 1); strncat(out, names[i], cap - strlen(out) - 1); }
+    if (!out[0]) strncpy(out, "none recorded (the Teensy core may have cleared it - see CrashReport)", cap - 1);
+    return out;
+}
+
+class DiagBuf : public Print {                       // collects a CrashReport into a string
+public:
+    char* p; size_t cap, n = 0;
+    DiagBuf(char* buf, size_t c) : p(buf), cap(c) { if (cap) p[0] = 0; }
+    size_t write(uint8_t c) override { if (n + 1 < cap) { p[n++] = (char)c; p[n] = 0; } return 1; }
+};
+
+// The whole report as text. No SD access here (so it is easy to test); diag_dump() writes it out.
+static size_t diag_build_text(char* buf, size_t cap, const char* title, const char* reason) {
+    size_t n = 0;
+#define DP(...) do { if (n < cap) { int w_ = snprintf(buf + n, cap - n, __VA_ARGS__); if (w_ > 0) n += (size_t)w_; if (n >= cap) n = cap - 1; } } while (0)
+    uint64_t now = teensy_us();
+    char tmp[160];
+    DP("ELYSIUM TEENSY DIAGNOSTICS - %s\n", title);
+    DP("Why the Teensy shut down : %s\n", reason ? reason : "?");
+    DP("Teensy clock             : %.3f s since boot\n", (double)now / 1e6);
+    if (diag_last_rx_us) DP("Last packet from the GUI  : %.1f ms before the shutdown (type %u)\n",
+                            (double)(now - diag_last_rx_us) / 1000.0, (unsigned)diag_last_rx_type);
+    else DP("Last packet from the GUI  : none since boot\n");
+    DP("Packets                  : %lu received OK, %lu undecodable, %lu sent\n",
+       (unsigned long)diag_rx_ok, (unsigned long)diag_rx_bad, (unsigned long)diag_tx);
+    DP("Reset cause at boot      : SRSR=0x%08lX  %s\n", (unsigned long)diag_srsr, diag_reset_names(diag_srsr, tmp, sizeof(tmp)));
+    DP("Chip temperature         : %.1f C\n", (double)tempmonGetTemp());
+    DP("Sensor read errors       : ADS7953 bad echoes since the last 1 s log=%lu, load cell outliers rejected=%lu\n",
+       (unsigned long)pt_addr_mismatch, (unsigned long)lc_rejected);
+    DP("Load cells answering     : ");
+    for (int i = 0; i < 6; i++) DP("LC%d=%s ", i + 1, lc_ok[i] ? "yes" : "NO");
+    DP("\nEthernet recovery attempts : %lu (since the link was last good)\n", (unsigned long)eth_recover_attempts);
+
+    DP("\nETHERNET CHIP (DP83825I) registers, read now (hex, register 0x00..0x1F):\n");
+    uint16_t r[32];
+    int fails = 0;
+    for (int i = 0; i < 32; i++) { r[i] = 0; if (!phy_read((uint32_t)i, r[i])) fails++; }
+    for (int i = 0; i < 32; i++) { if (i % 8 == 0) DP("  %02X:", i); DP(" %04X", (unsigned)r[i]); if (i % 8 == 7) DP("\n"); }
+    if (fails >= 30) {
+        DP("  -> The chip did NOT answer on its management bus. Either it has no power / is held in reset, or the\n"
+           "     bus is stuck. This is not a software problem.\n");
+    } else {
+        DP("  Link up (BMSR bit 2)     : %s    BMSR=0x%04X  BMCR=0x%04X  PHYSTS=0x%04X\n",
+           (r[1] & 4) ? "YES" : "NO", (unsigned)r[1], (unsigned)r[0], (unsigned)r[0x10]);
+        DP("  Auto-negotiation done    : %s    partner ability (ANLPAR)=0x%04X\n", (r[1] & 0x20) ? "yes" : "no", (unsigned)r[5]);
+        bool rc_ok = (r[0x17] == 0x0081), led_ok = (r[0x18] == 0x0280);
+        DP("  RCSR=0x%04X (the firmware writes 0x0081) %s\n", (unsigned)r[0x17], rc_ok ? "ok" : "<-- DIFFERENT");
+        DP("  LEDCR=0x%04X (the firmware writes 0x0280) %s\n", (unsigned)r[0x18], led_ok ? "ok" : "<-- DIFFERENT");
+        if (!rc_ok || !led_ok)
+            DP("  -> The chip's settings are NOT what the firmware wrote at boot: it RESET ITSELF to defaults (a supply\n"
+               "     dip, ESD or noise on its supply), which leaves it on the wrong clock mode with no working link.\n");
+    }
+
+    DP("\nEVENT LOG, oldest first (time is relative to the moment of this report; the Teensy's own clock):\n");
+    uint32_t total = diag_ev_n < DIAG_NUM_EVENTS ? diag_ev_n : DIAG_NUM_EVENTS;
+    uint32_t first = diag_ev_n < DIAG_NUM_EVENTS ? 0 : diag_ev_n % DIAG_NUM_EVENTS;
+    if (diag_ev_n > DIAG_NUM_EVENTS) DP("  (%lu older events dropped)\n", (unsigned long)(diag_ev_n - DIAG_NUM_EVENTS));
+    for (uint32_t k = 0; k < total; k++) {
+        const DiagEvent& e = diag_ev[(first + k) % DIAG_NUM_EVENTS];
+        const char* nm = e.code < (sizeof(DIAG_EV_NAMES) / sizeof(DIAG_EV_NAMES[0])) ? DIAG_EV_NAMES[e.code] : "?";
+        DP("  %+10.3f s  %s", (double)((int64_t)e.us - (int64_t)now) / 1e6, nm);
+        if (e.code == EV_VSO || e.code == EV_VSC) DP("  %s", get_valve_name(e.arg));
+        else if (e.code == EV_POS) DP("  actuator 0x%02X -> %.2f %%", (unsigned)e.arg, e.val / 100.0);
+        else if (e.code == EV_BOOT) DP("  (SRSR low bits 0x%04X)", (unsigned)e.val);
+        else if (e.code == EV_LINK_DOWN || e.code == EV_LINK_UP) DP("  BMSR=0x%04X", (unsigned)e.val);
+        else if (e.code == EV_ETH_RECOVER) DP("  attempt %u", (unsigned)e.arg);
+        DP("\n");
+    }
+#undef DP
+    return n;
+}
+
+// Boot: remember why the chip reset, and append that (plus any CrashReport) to BOOTLOG.TXT on the SD card.
+static void diag_boot_log() {
+    char text[900], tmp[160];
+    DiagBuf out(text, sizeof(text));
+    size_t n = (size_t)snprintf(text, sizeof(text), "---- boot: SRSR=0x%08lX  %s | chip %.1f C | millis %lu\n",
+                                (unsigned long)diag_srsr, diag_reset_names(diag_srsr, tmp, sizeof(tmp)),
+                                (double)tempmonGetTemp(), (unsigned long)millis());
+    if (CrashReport) {
+        out.n = n < sizeof(text) ? n : sizeof(text) - 1;
+        out.write('\n');
+        CrashReport.printTo(out);                    // fault / watchdog / brownout details from the previous run
+        CrashReport.clear();
+        n = out.n;
+    }
+    if (n >= sizeof(text)) n = sizeof(text) - 1;
+    DBG_PRINT(text);
+    if (!sd_ok) return;
+    File f = SD.open("BOOTLOG.TXT", FILE_WRITE);     // appends
+    if (f) {
+        size_t w = f.write((const uint8_t*)text, n) + f.write((const uint8_t*)"\n", 1);
+        f.close();
+        if (w != n + 1) { DBG_PRINTLN("BOOTLOG: SD WRITE FAILED"); sd_ok = false; }
+    } else { DBG_PRINTLN("BOOTLOG: could not open the file on the SD card"); sd_ok = false; }
+}
+
+// ---- Flight recorder ("black box") ----
+// What the Teensy itself saw is exactly what the GUI loses when the link drops: its recording only has
+// what arrived. So while the GUI is running an automatic (sequence) recording, this keeps the last
+// REC_CAPACITY sensor passes (one per 10 ms = ~36 s: terminal count + burn + the shutdown tail) in RAM.
+//   * GUI sends PKT_REC start  -> the buffer is cleared and starts filling (nothing touches the SD card).
+//   * GUI sends PKT_REC stop   -> the buffer is thrown away: the GUI recorded the same data.
+//   * Teensy shuts down (comms loss, abort from the GUI, ...) while recording -> the buffer is written to
+//     the SD card as RECnnnn.BIN, after every valve has been closed. Convert it on the PC with
+//     teensy_rec_to_xlsx.py (REDControlSystem folder).
+// The SD card is NEVER written while a run is in progress: a card can stall for 10-100+ ms on a write,
+// which would delay the control loop (and the 200 ms comms watchdog). The only SD access outside the
+// shutdown path is the one-time SD.begin() in setup().
+// The buffer lives in DMAMEM (RAM2) so it does not use up the fast RAM1 the rest of the firmware needs.
+#define REC_NUM_OUT 16
+// Outputs whose on/off state is recorded, bit k of out_mask = REC_OUT_IDS[k] (same IDs as the GUI's relay IDs)
+static const uint8_t REC_OUT_IDS[REC_NUM_OUT] = { 0x0A, 0x0B, 0x0C, 0x04, 0x06, 0x0D, 0x0E, 0x10,
+                                                  0x11, 0x12, 0x13, 0x14, 0x20, 0x21, 0x30, 0x31 };
+const uint32_t REC_CAPACITY = 3600;     // <-- USER INPUT: samples kept (84 bytes each, ~300 KB of RAM2)
+
+struct __attribute__((packed)) RecSample {
+    uint64_t us;            // teensy_us() when the sample was taken
+    uint16_t pt_uA[12];     // raw 4-20 mA loop current per ADS channel, microamps (a collapsed loop shows here)
+    int16_t  tc16[12];      // thermocouple per channel, 1/16 degC; 0x7FFF = not installed / no reading
+    float    lc[6];         // load cells: RAW counts (NaN = no reading); the converter applies the P&ID calibration
+    uint16_t out_mask;      // energized outputs, bit k = REC_OUT_IDS[k] (igniters, MOV, ...)
+    uint16_t bray_x100;     // Bray valve commanded position, 0.01 %
+    uint16_t phy_bmsr;      // Ethernet chip BMSR (bit 2 = link up), read every sample; 0 = chip not answering
+    uint16_t phy_sts;       // Ethernet chip PHYSTS
+};
+static_assert(sizeof(RecSample) == 88, "RecSample layout changed - update teensy_rec_to_xlsx.py and vt_comms.py");
+
+struct __attribute__((packed)) RecHeader {
+    char     magic[8];              // "ELYREC1"
+    uint16_t version;               // 3 (2 = 84-byte samples, no link columns; 1 = load cells in pounds)
+    uint16_t sample_size;           // sizeof(RecSample)
+    uint32_t sample_count;
+    uint64_t rec_start_us;          // when the GUI's start arrived
+    uint64_t dump_us;               // when the shutdown wrote this file
+    char     reason[24];            // why: CONNECTION_TIMEOUT, RX_SFE, ...
+    uint8_t  pt_num_for_ch[12];     // ADS channel -> PT number (0 = P1)
+    float    pt_fs_psi[12];         // psi at 20 mA, per ADS channel
+    float    pt_psi_at_4ma;
+    float    pt_atm_psi;
+    uint8_t  out_ids[REC_NUM_OUT];  // REC_OUT_IDS
+};
+static_assert(sizeof(RecHeader) <= 512, "RecHeader must fit its 512-byte block");
+
+DMAMEM static RecSample rec_ring[REC_CAPACITY];
+bool     rec_active   = false;
+uint32_t rec_head     = 0;              // next slot to write
+uint32_t rec_count    = 0;              // valid samples (<= REC_CAPACITY)
+uint64_t rec_start_us = 0;
+bool     sd_ok        = false;
+static int rec_last_file = 0;                   // number of the RECnnnn.BIN just written (0 = none)
+
+static unsigned long sd_last_try_ms = 0;
+
+// Is there a usable card? Probing a missing card can take a while, so after one failed attempt it is not tried
+// again for 5 s (one shutdown calls this twice - for the recording and for the report). Never called during a run.
+static bool sd_try_begin() {
+    if (sd_ok) return true;
+    if (sd_last_try_ms && millis() - sd_last_try_ms < 5000) return false;
+    sd_last_try_ms = millis();
+    sd_ok = SD.begin(BUILTIN_SDCARD);
+    return sd_ok;
+}
+
+void rec_sd_init() {                    // setup() only: SD.begin() can take a few hundred ms
+    sd_last_try_ms = millis();
+    sd_ok = SD.begin(BUILTIN_SDCARD);
+    DBG_PRINTLN(sd_ok ? "SD card ready (flight recorder dumps here)"
+                      : "WARN: NO SD CARD - the flight recorder and diagnostics reports will NOT be saved");
+}
+
+// Tell the GUI whether there is a card (PKT_REC, Teensy -> GUI: 1 = ready, 0 = none) so it can warn the operator
+// BEFORE a test. Sent after every STA handshake and every recorder start / stop.
+static void send_sd_status() {
+    uint8_t b = sd_ok ? 1 : 0;
+    EGCPPacket pkt(next_tx_id(), EGCPPacket::PKT_REC, &b, 1);
+    send_packet(pkt);
+}
+
+static void rec_start() {
+    diag_event(EV_REC_START);
+    if (rec_active) return;
+    if (!sd_ok) {                                   // never probe the card mid-run: just don't record
+        DBG_PRINTLN("REC: NOT started - there is no SD card");
+        return;
+    }                         // a retransmitted start must not wipe what is recorded
+    rec_head = 0; rec_count = 0;
+    rec_start_us = teensy_us();
+    rec_active = true;
+    DBG_PRINTLN("REC: started (RAM only - written to SD only if the Teensy shuts down)");
+}
+
+static void rec_stop() {
+    diag_event(EV_REC_STOP);
+    if (rec_active) DBG_PRINTLN("REC: stopped - buffer discarded");
+    rec_active = false; rec_head = 0; rec_count = 0;
+}
+
+// One sample per 10 ms sensor pass, called from loop(). RAM writes only - a few microseconds.
+static void rec_sample() {
+    if (!rec_active) return;
+    RecSample& s = rec_ring[rec_head];
+    s.us = teensy_us();
+    for (int i = 0; i < 12; i++) {
+        float mA = pt_mA[i];
+        float uA = (isnan(mA) || mA < 0.0f) ? 0.0f : mA * 1000.0f + 0.5f;
+        s.pt_uA[i] = uA > 65535.0f ? 65535 : (uint16_t)uA;
+    }
+    for (int i = 0; i < 12; i++) {
+        float t = tc_temps[i] * 16.0f;
+        s.tc16[i] = (!TC_INSTALLED[i] || !tc_ok[i] || isnan(t) || t > 32000.0f || t < -32000.0f) ? (int16_t)0x7FFF : (int16_t)t;
+    }
+    for (int ch = 0; ch < 6; ch++) s.lc[ch] = lc_ok[ch] ? (float)lc_raw[ch] : NAN;     // raw counts (exact in a float)
+    uint16_t m = 0;
+    for (int k = 0; k < REC_NUM_OUT; k++) {
+        int pin = get_pin_from_valve_id(REC_OUT_IDS[k]);
+        if (pin >= 0 && digitalRead(pin)) m |= (uint16_t)(1u << k);
+    }
+    s.out_mask = m;
+    s.bray_x100 = NUM_ACTUATORS > 0 ? (uint16_t)(act_pct[0] * 100.0f + 0.5f) : 0;
+    s.phy_bmsr = diag_bmsr;
+    s.phy_sts = diag_physts;
+    rec_head = (rec_head + 1) % REC_CAPACITY;
+    if (rec_count < REC_CAPACITY) rec_count++;
+}
+
+// Write the buffer to the SD card. Only called from trigger_shutdown(), after everything is closed.
+static void rec_dump(const char* reason) {
+    if (!rec_active || rec_count == 0) { rec_active = false; return; }
+    rec_active = false;                             // dump once; the GUI's later "stop" is then a no-op
+    uint32_t t0 = millis();
+    if (!sd_try_begin()) { DBG_PRINTLN("REC: no SD card - recording lost, nothing written"); return; }
+
+    char name[16];
+    int fileno = 1;
+    for (; fileno <= 9999; fileno++) {
+        snprintf(name, sizeof(name), "REC%04d.BIN", fileno);
+        if (!SD.exists(name)) break;
+    }
+    File f = SD.open(name, FILE_WRITE);
+    if (!f) { DBG_PRINTLN("REC: could not create the file - recording lost"); return; }
+    rec_last_file = fileno;                         // diag_dump() puts its report next to this file
+
+    uint8_t block[512];
+    memset(block, 0, sizeof(block));
+    RecHeader h;
+    memset(&h, 0, sizeof(h));
+    memcpy(h.magic, "ELYREC1", 8);
+    h.version = 3;                                  // 3 = + Ethernet link columns (2 = raw load cells, 84-byte samples; 1 = pounds)
+    h.sample_size = sizeof(RecSample);
+    h.sample_count = rec_count;
+    h.rec_start_us = rec_start_us;
+    h.dump_us = teensy_us();
+    strncpy(h.reason, reason ? reason : "", sizeof(h.reason) - 1);
+    for (int i = 0; i < 12; i++) {
+        h.pt_num_for_ch[i] = PT_NUM_FOR_CH[i];
+        h.pt_fs_psi[i] = PT_PSI_AT_20MA[PT_NUM_FOR_CH[i]];
+    }
+    h.pt_psi_at_4ma = PT_PSI_AT_4MA;
+    h.pt_atm_psi = PT_ATM_PSI;
+    memcpy(h.out_ids, REC_OUT_IDS, REC_NUM_OUT);
+    memcpy(block, &h, sizeof(h));
+    size_t want = sizeof(block), got = f.write(block, sizeof(block));
+
+    // Oldest sample first: when the ring has wrapped that is the slot rec_head points at.
+    uint32_t first = (rec_count == REC_CAPACITY) ? rec_head : 0;
+    uint32_t n1 = (first == 0) ? rec_count : (REC_CAPACITY - first);
+    want += n1 * sizeof(RecSample);
+    got  += f.write((const uint8_t*)&rec_ring[first], n1 * sizeof(RecSample));
+    if (first != 0) {
+        want += first * sizeof(RecSample);
+        got  += f.write((const uint8_t*)&rec_ring[0], first * sizeof(RecSample));
+    }
+    f.close();
+    if (got != want) {                              // card full, removed or failing: say so, and re-probe next time
+        DBG_PRINTLN("REC: SD WRITE FAILED (card full or removed) - the recording is incomplete");
+        sd_ok = false;
+        diag_event(EV_SD_FAIL);
+        return;
+    }
+
+    DBG_PRINT("REC: saved "); DBG_PRINT(rec_count); DBG_PRINT(" samples to "); DBG_PRINT(name);
+    DBG_PRINT(" ("); DBG_PRINT(reason ? reason : ""); DBG_PRINT(") in "); DBG_PRINT(millis() - t0); DBG_PRINTLN(" ms");
+}
+
+// The diagnostics report -> SD card: RECnnnn.TXT beside the recording, or DIAGnnnn.TXT when nothing was recording.
+// Called from trigger_shutdown() after every output is closed (and before any Ethernet recovery changes the chip).
+DMAMEM static char diag_text[12000];
+static void diag_dump(const char* reason) {
+    if (!sd_try_begin()) { rec_last_file = 0; DBG_PRINTLN("DIAG: no SD card - report not written"); return; }
+    char name[16];
+    if (rec_last_file > 0) {
+        snprintf(name, sizeof(name), "REC%04d.TXT", rec_last_file);
+    } else {
+        int n = 1;
+        for (; n <= 9999; n++) {
+            snprintf(name, sizeof(name), "DIAG%04d.TXT", n);
+            if (!SD.exists(name)) break;
+        }
+    }
+    rec_last_file = 0;
+    size_t len = diag_build_text(diag_text, sizeof(diag_text), name, reason);
+    File f = SD.open(name, FILE_WRITE);
+    if (!f) return;
+    size_t wrote = f.write((const uint8_t*)diag_text, len);
+    f.close();
+    if (wrote != len) { DBG_PRINTLN("DIAG: SD WRITE FAILED (card full or removed)"); sd_ok = false; diag_event(EV_SD_FAIL); return; }
+    DBG_PRINT("DIAG: saved "); DBG_PRINTLN(name);
+}
+
 // ---- Ethernet link recovery ----
 // On Nov 22 2026 an igniter transient knocked the Teensy's Ethernet PHY (DP83825I) offline while the
 // CPU kept running: link LED dark, nothing got through until the Teensy was power-cycled.
@@ -1028,10 +1415,12 @@ void eth_recovery_poll(unsigned long last_rx_ms) {
 
     eth_recover_attempts++;
     eth_last_recover_ms = now;
+    diag_event(EV_ETH_RECOVER, (uint8_t)eth_recover_attempts);
     eth_phy_reset(eth_recover_attempts % ETH_HARD_RESET_EVERY == 0);
 }
 
 void trigger_shutdown(const char* reason) {
+    diag_event(EV_SHUTDOWN);
     DBG_PRINT("[TEENSY] Trigger Shutdown: ");
     DBG_PRINTLN(reason ? reason : "UNKNOWN");
 
@@ -1039,6 +1428,9 @@ void trigger_shutdown(const char* reason) {
 
     EGCPPacket sfe(next_tx_id(), EGCPPacket::PKT_SFE);
     send_packet(sfe);
+
+    rec_dump(reason);   // flight recorder: if the GUI was recording, save what this board saw to the SD card
+    diag_dump(reason);  // and always write the diagnostics report (reset cause, Ethernet chip registers, event log)
 
     // Clear the local parse buffer entirely before entering the loop
     egcp_rx_pos = 0; 
@@ -1075,7 +1467,9 @@ void trigger_shutdown(const char* reason) {
 
                 EGCPPacket rx;
                 if (EGCPPacket::decode(egcp_rx_buf, total_sz, rx)) {
+                    diag_rx_ok++; diag_last_rx_type = rx.packet_type; diag_last_rx_us = teensy_us();
                     if (rx.packet_type == EGCPPacket::PKT_STA) {
+                        diag_event(EV_STA);
                         DBG_PRINTLN("[TEENSY] STA received | Exiting abort state");
                         aborted = false;
                         
@@ -1086,6 +1480,7 @@ void trigger_shutdown(const char* reason) {
                         
                         if (NCS2_PIN >= 0) digitalWrite(NCS2_PIN, LOW);
                         send_ack(rx.packet_id);
+                        send_sd_status();
                         send_all_actuator_positions();
                         break;
                     }
@@ -1113,6 +1508,8 @@ void setup() {
             if (pin >= 0) { digitalWrite(pin, LOW); pinMode(pin, OUTPUT); }
         }
     }
+    diag_srsr = SRC_SRSR;                           // why the chip last reset (before anything can clear it)
+    diag_event(EV_BOOT, 0, (uint16_t)diag_srsr);
 #if defined(ARDUINO)
     Serial.begin(BAUD);
     delay(50);
@@ -1145,6 +1542,9 @@ void setup() {
         udp.begin(UDP_PORT);
         DBG_PRINT("UDP listening on port "); DBG_PRINTLN(UDP_PORT);
     }
+
+    rec_sd_init();   // flight recorder: SD card (boot only - never touched during a run)
+    diag_boot_log(); // BOOTLOG.TXT: why this boot happened (reset cause, crash report)
 
     // ---- SPI for ADS7953 (PTs) - same init as the proven standalone sketch ----
     pinMode(ADS_CS_PIN, OUTPUT);
@@ -1315,6 +1715,7 @@ void loop() {
 
             EGCPPacket rx;
             if (EGCPPacket::decode(egcp_rx_buf, total_sz, rx)) {
+                diag_rx_ok++; diag_last_rx_type = rx.packet_type; diag_last_rx_us = teensy_us();
                 // HRT/ACK arrive at ~100Hz; printing every one of them was slow
                 // enough over USB serial to delay udp.parsePacket() and cause
                 // real heartbeat misses. Only log the packet types we're
@@ -1328,9 +1729,11 @@ void loop() {
                 // STA: Connection Handshake
                 if (rx.packet_type == EGCPPacket::PKT_STA) {
                     DBG_PRINTLN("STA received -> ACK");
+                    diag_event(EV_STA);
                     LAST_COMMUNICATION_TIME = micros();
                     LAST_HUMAN_UPDATE = micros();
                     send_ack(rx.packet_id);
+                    send_sd_status();                       // warns the operator if there is no SD card
                     send_all_actuator_positions();
                     egcp_rx_pos = 0; 
                     memset(egcp_rx_buf, 0, sizeof(egcp_rx_buf));
@@ -1359,6 +1762,7 @@ void loop() {
 #else
                             digitalWrite(pin, HIGH);
 #endif
+                            diag_event(EV_VSO, vid);
                             DBG_PRINT("VSO "); DBG_PRINT(get_valve_name(vid));
                             DBG_PRINT(" pin="); DBG_PRINTLN(pin);
                             LAST_HUMAN_UPDATE = micros();
@@ -1380,6 +1784,7 @@ void loop() {
                             if (ii >= 0) ign_cancel(ii);          // igniter off now + cancel its timer
 #endif
                             digitalWrite(pin, LOW);
+                            diag_event(EV_VSC, vid);
                             DBG_PRINT("VSC "); DBG_PRINT(get_valve_name(vid));
                             DBG_PRINT(" pin="); DBG_PRINTLN(pin);
                             LAST_HUMAN_UPDATE = micros();
@@ -1398,6 +1803,7 @@ void loop() {
                         int      idx = act_index(aid);
                         if (idx >= 0) {
                             act_set(idx, raw / 100.0f);
+                            diag_event(EV_POS, aid, raw);
                             DBG_PRINT("POS "); DBG_PRINT(ACTUATORS[idx].name);
                             DBG_PRINT(" = "); DBG_PRINT(act_pct[idx]);
                             DBG_PRINT("% pin="); DBG_PRINTLN(ACTUATORS[idx].pin);
@@ -1412,6 +1818,15 @@ void loop() {
                     }
                 }
 
+                // REC: the GUI's automatic recording started (1) / stopped (0)
+                else if (rx.packet_type == EGCPPacket::PKT_REC) {
+                    if (rx.body_length >= 1) {
+                        if (rx.body[0]) rec_start(); else rec_stop();
+                        send_ack(rx.packet_id);
+                        send_sd_status();
+                    }
+                }
+
                 // SFE: Abort from GUI
                 else if (rx.packet_type == EGCPPacket::PKT_SFE) {
                     DBG_PRINTLN("SFE from GUI");
@@ -1423,10 +1838,12 @@ void loop() {
                     }
                     DBG_PRINTLN("");
                     send_ack(rx.packet_id);
+                    diag_event(EV_SFE_RX);
                     trigger_shutdown("RX_SFE");
                     break;
                 }
             } else {
+                diag_rx_bad++; diag_event(EV_RX_BAD);
                 DBG_PRINT("RX DECODE FAILED, raw bytes: ");
                 for (int i = 0; i < total_sz; i++) {
                     DBG_PRINT(egcp_rx_buf[i], HEX); DBG_PRINT(' ');
@@ -1493,8 +1910,9 @@ void loop() {
                 if (lc_shared[ch]) {                    // averaged samples collected by lc_shared_service()
                     if (lc_acc_n[ch] > 0) {
                         double mean;
-                        if (lc_window_mean(ch, mean)) {      // outliers thrown out; false = keep the previous weight
-                            lc_weights[ch] = (float)(LC_SLOPE[ch] * mean + LC_INTERCEPT[ch]);
+                        if (lc_window_mean(ch, mean)) {      // outliers thrown out; false = keep the previous count
+                            lc_raw[ch] = (int32_t)llround(mean);
+                            lc_raw_new[ch] = true;
                         }
                         lc_acc_n[ch] = 0;
                     }
@@ -1502,16 +1920,18 @@ void loop() {
                 }
                 int32_t raw;
                 if (lc_read_raw(LC_MUX_CH[ch], raw)) {
-                    lc_weights[ch] = (float)(LC_SLOPE[ch] * (double)raw + LC_INTERCEPT[ch]);
+                    lc_raw[ch] = raw;
+                    lc_raw_new[ch] = true;
                 }
+            }
+            for (uint8_t ch = 0; ch < 6; ch++) {                // raw counts to the GUI (it applies the P&ID calibration)
+                if (lc_ok[ch] && lc_raw_new[ch]) { send_lc_raw(ch); lc_raw_new[ch] = false; }
             }
             lc_us_accum += micros() - t0;
         }
 
-        for (uint8_t ch = 0; ch < 6; ch++) {
-            if (!lc_ok[ch]) continue;
-            send_adc_packet(0x19 + ch, lc_weights[ch]);   // sensor ID 0x19 + ch = 25..30 = the P&ID's LC1..LC6 channels
-        }
+        diag_poll();    // Ethernet chip status for the event log and the recorder's link columns
+        rec_sample();   // flight recorder (RAM only, nothing if the GUI isn't recording)
 
         delay(1);
     }

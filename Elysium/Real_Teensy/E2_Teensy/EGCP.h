@@ -25,6 +25,15 @@ public:
     static constexpr uint8_t PKT_SFE = 0x8;   // Enter Safe Mode (Emergency Abort)
     static constexpr uint8_t PKT_ADC = 0x9;   // ADC Reading (sensor data)
     static constexpr uint8_t PKT_STA = 0xA;   // Connection Start/Handshake
+    static constexpr uint8_t PKT_RAW = 0xD;   // Load cell raw count (Teensy -> GUI): body = [sensor id:1][raw: int32 BE:4]
+                                              //   [info:1 = (JLC<<4)|(VIN<<1)|shared-chip]. Load cells are sent ONLY as raw
+                                              //   counts: the GUI converts them to pounds with the slope / intercept saved
+                                              //   in the P&ID (cal_gain / cal_offset on each load cell).
+    static constexpr uint8_t PKT_REC = 0xC;   // Flight recorder (GUI -> Teensy): body = [1 = start, 0 = stop]
+                                              //   sent when the GUI's automatic (sequence) recording starts / stops;
+                                              //   ACK'd like VSO/VSC. See "Flight recorder" in E2_Teensy.ino.
+                                              //   Teensy -> GUI: body = [1 = SD card ready, 0 = NO SD CARD], sent after
+                                              //   every STA handshake and every start / stop, so the GUI can warn.
     static constexpr uint8_t PKT_POS = 0xB;   // Actuator Position (either direction)
                                               //   body = [actuator id:1][position:2]
                                               //   position is big-endian uint16 in 0.01 % units (0..10000)

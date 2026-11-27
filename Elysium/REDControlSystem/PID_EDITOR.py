@@ -366,6 +366,18 @@ class PropertyPanel(QWidget):
             self._add_section_header("Reducer Properties")
         elif comp.type == COMP_IGNITER:
             self._add_section_header("Igniter Properties")
+        elif comp.type == COMP_LOAD_CELL:
+            self._add_section_header("Load Cell Calibration")
+            note = QLabel("The Teensy sends raw counts; pounds = slope × raw + intercept. The Health tab's "
+                          "Load Cell Calibration finds and saves these - or type them here.")
+            note.setStyleSheet("color: #777; font-size: 8pt;")
+            note.setWordWrap(True)
+            self.form.addRow(note)
+            for label, key, extra in (("Slope (lbf/count)", "lc_cal_gain", "cal_gain"),
+                                      ("Intercept (lbf)", "lc_cal_offset", "cal_offset")):
+                v = comp.extras.get(extra)
+                self._add(label, "" if v is None else repr(float(v)), key=key,
+                          tooltip="Saved in the P&ID as " + extra)
 
     def _add_section_header(self, text):
         header = QLabel(text)
@@ -838,6 +850,13 @@ class PIDEditorWindow(QWidget):
             except (ValueError, TypeError):
                 pass    # keep the previous value on unparseable input
             QTimer.singleShot(0, lambda: self.prop_panel.show_component(cid, comp))
+        elif key in ("lc_cal_gain", "lc_cal_offset"):
+            target = "cal_gain" if key == "lc_cal_gain" else "cal_offset"
+            try:
+                comp.extras[target] = float(value)
+            except (ValueError, TypeError):
+                if not str(value).strip():
+                    comp.extras.pop(target, None)       # cleared: no calibration
         elif key.startswith("extra_"):
             comp.extras[key[6:]] = value
         elif key == "hide_lbl":

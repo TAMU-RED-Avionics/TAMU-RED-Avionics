@@ -1279,7 +1279,9 @@
           "relief_close_below": null,
           "relief_state": "",
           "soak_ms": 0
-        }
+        },
+        "cal_gain": 0.0005506729223110641,
+        "cal_offset": 3.057886737593339
       },
       "rotation": 0,
       "hide_lbl": false,
@@ -1313,7 +1315,9 @@
           "relief_close_below": null,
           "relief_state": "",
           "soak_ms": 0
-        }
+        },
+        "cal_gain": 0.067810206366926,
+        "cal_offset": -12976.122914337333
       },
       "rotation": 0,
       "hide_lbl": false,
@@ -1347,7 +1351,9 @@
           "relief_close_below": null,
           "relief_state": "",
           "soak_ms": 0
-        }
+        },
+        "cal_gain": 0.025277549395484,
+        "cal_offset": -245.04637194987484
       },
       "rotation": 0,
       "hide_lbl": false,
@@ -1381,7 +1387,9 @@
           "relief_close_below": null,
           "relief_state": "",
           "soak_ms": 0
-        }
+        },
+        "cal_gain": 0.006635070788728,
+        "cal_offset": -195.85401954168768
       },
       "rotation": 0,
       "hide_lbl": false,
@@ -1415,7 +1423,9 @@
           "relief_close_below": null,
           "relief_state": "",
           "soak_ms": 0
-        }
+        },
+        "cal_gain": 9.4089290896e-05,
+        "cal_offset": -50.64314892945065
       },
       "rotation": 0,
       "hide_lbl": false,
@@ -1449,7 +1459,9 @@
           "relief_close_below": null,
           "relief_state": "",
           "soak_ms": 0
-        }
+        },
+        "cal_gain": 0.00686264839097,
+        "cal_offset": -116.99442976925212
       },
       "rotation": 0,
       "hide_lbl": false,

@@ -28,6 +28,8 @@ class EGCPPacket:
     PKT_ADC = 0x9   # ADC Reading
     PKT_STA = 0xA   # Connection Start/Handshake
     PKT_POS = 0xB   # Actuator Position: body = [actuator id:1][position:2, big-endian, 0.01 % units]
+    PKT_REC = 0xC   # Flight recorder (GUI -> Teensy): body = [1 = start, 0 = stop]
+    PKT_RAW = 0xD   # Load cell raw count (Teensy -> GUI): body = [sensor id:1][raw int32 BE:4][info:1]
     
     def __init__(self, packet_id: int, packet_type: int, body: bytes = b''):
         self.packet_id = packet_id & 0xFFFFFF  # 24-bit packet ID
@@ -113,6 +115,7 @@ class EthernetClient:
         self.heartbeat_tx_cadence: int = 10                 # ms
         self.heartbeat_rx_miss_interval: int = 150           # ms (15x missed heartbeats at 10ms cadence; occasionally missing at 151ms)
 
+        self.lc_info: dict = {}                             # load cell name -> hardware info byte of its last raw packet
         self.heartbeat_last_tx: int = 0                     # ms since Jan 1 1970
         self.heartbeat_last_rx: int = 0                     # ms since Jan 1 1970
         self.heartbeat_tx_count: int = 0
@@ -835,8 +838,25 @@ class EthernetClient:
                 # Convert to string format for backward compatibility
                 if self.receive_callback:
                     sensor_name = self.SENSOR_MAP.get(sensor_id, f"SENSOR_{sensor_id}")
-                    data_str = f"{teensy_us},{sensor_name}:{raw_value:.2f}"     # first field = Teensy timestamp (us)
+                    data_str = f"{teensy_us},{sensor_name}:{raw_value:.4f}"     # first field = Teensy timestamp (us)
                     self.receive_callback(data_str)
+
+        elif packet.packet_type == EGCPPacket.PKT_REC:
+            # Teensy -> GUI: whether the Teensy has an SD card for its flight recorder (1 = ready, 0 = none).
+            # Sent after every connect and every recorder start / stop. No ACK.
+            if len(packet.body) >= 1 and self.receive_callback:
+                self.receive_callback(f"0,SDSTATUS:{1 if packet.body[0] & 1 else 0}")
+
+        elif packet.packet_type == EGCPPacket.PKT_RAW:
+            # Load cell raw count. It enters the normal sensor pipeline as that sensor's wire value, where the
+            # calibration saved in the P&ID (gain = slope, offset = intercept) turns it into pounds. The LCRAW
+            # marker tells the controller this cell is sending raw counts. info = (JLC << 4) | (VIN << 1) | shared.
+            # No ACK, like ADC packets.
+            if len(packet.body) >= 6 and self.receive_callback:
+                name = self.SENSOR_MAP.get(packet.body[0], f"SENSOR_{packet.body[0]}")
+                raw_count = struct.unpack('>i', packet.body[1:5])[0]
+                self.lc_info[name.upper()] = packet.body[5]
+                self.receive_callback(f"0,LCRAW:{name},{name}:{raw_count}")
 
         elif packet.packet_type == EGCPPacket.PKT_POS:
             # Unsolicited position report from the MCU (e.g. an actuator
@@ -858,6 +878,19 @@ class EthernetClient:
 
     def stop_listening(self):
         self.listening_active = False
+
+    def send_recording_command(self, start: bool):
+        """Tell the Teensy's flight recorder that the GUI's automatic (sequence) recording started or
+        stopped. The Teensy keeps its own copy of the data in RAM while recording, discards it on
+        'stop', and writes it to its SD card only if it shuts down (e.g. comms loss) in between.
+        Best effort: a failure here never affects the run (old firmware just ignores the packet)."""
+        if not self.connected:
+            return
+        try:
+            self._send_packet(EGCPPacket(self._get_next_tx_id(), EGCPPacket.PKT_REC,
+                                         bytes([1 if start else 0])), track_ack=True)
+        except Exception:
+            pass
 
     def send_valve_command(self, valve_name, state):
         if not self.connected:

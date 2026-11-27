@@ -1,6 +1,6 @@
 import sys
 import time
-from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSlider, QDoubleSpinBox, QTextEdit, QCheckBox, QProgressBar, QGroupBox, QGridLayout
+from PyQt5.QtWidgets import QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QLabel, QSlider, QDoubleSpinBox, QTextEdit, QCheckBox, QProgressBar, QGroupBox, QGridLayout, QComboBox
 from PyQt5.QtCore import Qt, QTimer
 try:
     from vt_comms import VTComms
@@ -38,6 +38,13 @@ class VirtualTeensy(QMainWindow):
         self.hb_checkbox.stateChanged.connect(self.toggle_heartbeat)
         hb_layout.addWidget(self.hb_checkbox)
         sensors_layout.addLayout(hb_layout)
+
+        lc_note = QLabel("Load cells: enter POUNDS. Like the real firmware they are sent as raw counts; the GUI "
+                         "converts them with the slope / intercept saved in the P&ID (this simulator reads the "
+                         "same numbers from the E2 P&ID to go backwards).")
+        lc_note.setWordWrap(True)
+        lc_note.setStyleSheet("color: #777; font-size: 9px;")
+        sensors_layout.addWidget(lc_note)
 
 
         self.sensor_inputs = {}
@@ -83,6 +90,45 @@ class VirtualTeensy(QMainWindow):
         # Right Column: Valves and Logs
         right_layout = QVBoxLayout()
         main_layout.addLayout(right_layout)
+
+        # Teensy behaviour: comms loss, watchdog, flight recorder (mirrors E2_Teensy.ino)
+        beh_box = QGroupBox("Comms loss / flight recorder")
+        bl = QGridLayout(beh_box)
+        self.link_down_check = QCheckBox("Link down (simulate a comms loss)")
+        self.link_down_check.setStyleSheet("color: red; font-weight: bold;")
+        self.link_down_check.setToolTip("Nothing is received or sent while ticked. With the watchdog on, the Teensy "
+                                        "shuts down after 200 ms of silence (closes everything, saves the flight "
+                                        "recorder). Untick it and the GUI's auto-reconnect brings the link back.")
+        self.link_down_check.stateChanged.connect(lambda st: self.comms.set_link_down(st == Qt.Checked))
+        bl.addWidget(self.link_down_check, 0, 0)
+        self.watchdog_check = QCheckBox("200 ms watchdog (as the real Teensy)")
+        self.watchdog_check.setChecked(True)
+        self.watchdog_check.stateChanged.connect(lambda st: self.comms.set_watchdog_enabled(st == Qt.Checked))
+        bl.addWidget(self.watchdog_check, 0, 1)
+        self.sd_check = QCheckBox("SD card inserted")
+        self.sd_check.setChecked(True)
+        self.sd_check.setToolTip("Untick to simulate a Teensy with NO SD card: it refuses to start a recording, "
+                                 "writes nothing at shutdown, and the GUI shows a warning.")
+        self.sd_check.stateChanged.connect(lambda st: self.comms.set_sd_present(st == Qt.Checked))
+        bl.addWidget(self.sd_check, 4, 0)
+        bl.addWidget(QLabel("Bad Ethernet chip:"), 3, 0)
+        self.chip_combo = QComboBox()
+        self.chip_combo.addItems(["Healthy", "Chip reset itself (registers back to defaults)", "Chip stopped answering"])
+        self.chip_combo.setToolTip("Simulates a faulty Ethernet chip: the link goes down and the Teensy's diagnostics "
+                                   "report (SD folder) shows the matching verdict. Choose Healthy to clear it.")
+        self.chip_combo.currentIndexChanged.connect(
+            lambda i: self.comms.set_chip_fault(("", "reset", "silent")[i]))
+        bl.addWidget(self.chip_combo, 3, 1)
+        self.shutdown_label = QLabel("Teensy: running")
+        self.rec_label = QLabel("Flight recorder: idle")
+        for w in (self.shutdown_label, self.rec_label):
+            w.setWordWrap(True)
+        bl.addWidget(self.shutdown_label, 1, 0, 1, 2)
+        bl.addWidget(self.rec_label, 2, 0, 1, 2)
+        right_layout.addWidget(beh_box)
+        self.beh_timer = QTimer(self)
+        self.beh_timer.timeout.connect(self.refresh_behaviour)
+        self.beh_timer.start(250)
 
         # Valves (with failure checkboxes)
         valves_label = QLabel("Valve Status & Failure Simulation")
@@ -297,6 +343,22 @@ class VirtualTeensy(QMainWindow):
         self.leak_start_btn.setEnabled(True)
         self.leak_stop_btn.setEnabled(False)
         self.leak_status.setText("Stopped. PTs hold their last value.")
+
+    def refresh_behaviour(self):
+        c = self.comms
+        if c.shutdown_state:
+            self.shutdown_label.setText(f"Teensy: SHUTDOWN ({c.shutdown_reason}) - valves closed, waiting for the GUI's START")
+            self.shutdown_label.setStyleSheet("color: red; font-weight: bold;")
+        else:
+            self.shutdown_label.setText("Teensy: running" + (" - LINK DOWN" if c.link_down else ""))
+            self.shutdown_label.setStyleSheet("color: orange; font-weight: bold;" if c.link_down else "")
+        if c.rec_active:
+            self.rec_label.setText(f"Flight recorder: RECORDING in RAM - {len(c.rec_ring)} samples "
+                                   f"(written to {c.sd_dir} only if the Teensy shuts down)")
+        elif c.last_rec_file:
+            self.rec_label.setText(f"Flight recorder: idle. Last saved: {c.last_rec_file} in {c.sd_dir}")
+        else:
+            self.rec_label.setText("Flight recorder: idle")
 
     def toggle_heartbeat(self, state):
         self.comms.set_heartbeat_enabled(state == Qt.Checked)

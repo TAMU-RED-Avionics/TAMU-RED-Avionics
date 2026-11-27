@@ -214,6 +214,8 @@ class GUIController:
         self._rule_valve_open: dict = {}       # rule_id -> bool, tracks auto-opened valves
         self._sensor_rules: list = []          # compiled from component thresholds
         self._logic_rules: list = []           # AbortRule expression type
+        self.raw_sensor_names: set = set()     # load cells that send raw counts (calibrated here from the P&ID)
+        self.teensy_sd_ok = None               # None = not reported yet; False = the Teensy has no SD card
         self.expr_engine = ExprEngine()        # official sensor names / abs() / sequence timing in rules
         # Automatic reconnect after a comms loss (see _start_auto_reconnect)
         self._reconnect_active = False
@@ -384,6 +386,10 @@ class GUIController:
         if self.view_only:
             return              # the viewer link's hello message carries the controller's mode
         self.enter_safe_state("connected")
+        if self._auto_recording and self._recording_active():
+            # An automatic recording is still running (the link dropped mid-run and has come back): the
+            # Teensy stopped recording when it shut down, so tell it to start its own copy again.
+            self.ethernet_client.send_recording_command(True)
 
     # READ-ONLY SHARING --------------------------------------------------------------
     # The controller GUI (holding the Teensy link) streams to viewer GUIs via
@@ -1599,6 +1605,10 @@ class GUIController:
 
             self.recording = True
             self.log_event("RECORDING:START", "automatic (terminal count)" if auto else "")
+            if auto:
+                # The Teensy keeps its own RAM copy of an automatic recording and writes it to its SD
+                # card only if it shuts down mid-run (see "Flight recorder" in E2_Teensy.ino)
+                self.ethernet_client.send_recording_command(True)
             self.signals.recording_started.emit(file_path)
             self.signals.recording_state_changed.emit(True)
             return True
@@ -1620,6 +1630,8 @@ class GUIController:
         if not self._recording_active():
             return
         self.log_event("RECORDING:STOP")
+        if self._auto_recording:
+            self.ethernet_client.send_recording_command(False)     # the Teensy can discard its copy: this one is saved
         recorder = self._recorder
         name = os.path.basename(self._xlsx_path)
         self._recorder = None
@@ -1747,6 +1759,27 @@ class GUIController:
                     prev_state = self.valve_states.get(valve_name, False)
                     self.signals.valve_updated.emit(valve_name, "OPEN" if prev_state else "CLOSED")
 
+            # The Teensy says whether it has an SD card for its flight recorder / diagnostics reports
+            elif reading.startswith("SDSTATUS:"):
+                self.teensy_sd_ok = reading.split(':', 1)[1].strip() == "1"
+                if self.teensy_sd_ok:
+                    self._clear_warning("teensy_no_sd")
+                else:
+                    self._set_warning("teensy_no_sd",
+                                      "The Teensy has NO SD CARD - its flight recorder and diagnostics report cannot be "
+                                      "saved if it shuts down. Insert a FAT32 card and reboot the Teensy.")
+
+            # Marker: this load cell is sending a RAW count (its value follows in the same message)
+            elif reading.startswith("LCRAW:"):
+                name = reading.split(':', 1)[1].strip().upper()
+                self.raw_sensor_names.add(name)
+                if name not in self.calibrations:
+                    self._set_warning(f"lc_nocal__{name}",
+                                      f"{name} has no calibration in the P&ID - showing raw counts, not pounds. "
+                                      "Open Health > Load Cell Calibration.")
+                else:
+                    self._clear_warning(f"lc_nocal__{name}")
+
             # Sensor data
             elif ':' in reading:
                 try:
@@ -1760,7 +1793,7 @@ class GUIController:
                         recent = self.sensor_recent[sensor_name] = deque(maxlen=20)
                     recent.append(wire)
 
-                    gain, offset = self.calibrations.get(sensor_name, (1.0, 0.0))
+                    gain, offset = self._calibration_for(sensor_name)
                     raw = wire * gain + offset
                     self.raw_sensor_values[sensor_name] = raw
                     value = raw - self.tare_offsets.get(sensor_name, 0.0)
@@ -1823,8 +1856,18 @@ class GUIController:
     # whatever they had. Set to None to go back to fully independent per-PT calibration.
     SHARED_PT_CAL_SOURCE = "P1"
 
+    def _calibration_for(self, name: str):
+        """(gain, offset) to apply to a sensor's wire value. A load cell's P&ID calibration converts RAW counts
+        to pounds, so it is applied only to cells that send raw counts; an older firmware still sends pounds,
+        which must pass through untouched."""
+        if name not in self.raw_sensor_names and any(name == str(k).upper() for k in self.lc_keys):
+            return (1.0, 0.0)
+        return self.calibrations.get(name, (1.0, 0.0))
+
     def _refresh_calibrated_value(self, name: str, gain: float, offset: float):
         """Recompute a sensor's displayed value from its latest wire sample."""
+        if name not in self.raw_sensor_names and any(name == str(k).upper() for k in self.lc_keys):
+            return              # a load cell still sending pounds: nothing to recompute
         recent = self.sensor_recent.get(name)
         if recent:
             raw = recent[-1] * gain + offset
@@ -1851,8 +1894,9 @@ class GUIController:
         refresh the sensor's displayed value from its latest wire sample."""
         name = sensor_name.upper()
         self.calibrations[name] = (gain, offset)
+        self._clear_warning(f"lc_nocal__{name}")
         self._refresh_calibrated_value(name, gain, offset)
-        self.log_event("CALIBRATION", f"{name}: gain={gain:.6g} offset={offset:.6g}")
+        self.log_event("CALIBRATION", f"{name}: gain={gain:.9g} offset={offset:.9g}")
         if name == (self.SHARED_PT_CAL_SOURCE or "").upper():
             self._share_pt_calibration()
             self.log_event("CALIBRATION", f"{name} calibration applied to all PTs (shared, temporary)")
